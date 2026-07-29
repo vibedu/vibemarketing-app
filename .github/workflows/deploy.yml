@@ -18,9 +18,8 @@ jobs:
           server:   ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          # Folder on the server that maps to app.vibemarketing.in.
-          # If your FTP account already opens inside public_html, change this to ./app/
-          server-dir: ./public_html/app/
+          # This FTP account opens inside public_html, so the app subfolder is ./app/
+          server-dir: ./app/
           # Never touch secrets, runtime uploads, dev files, or the DB scripts.
           exclude: |
             **/.git*
