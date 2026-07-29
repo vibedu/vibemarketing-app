@@ -18,8 +18,9 @@ jobs:
           server:   ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          # This FTP account opens inside public_html, so the app subfolder is ./app/
-          server-dir: ./app/
+          # Absolute path from the FTP root so it can't drift with the login directory.
+          server-dir: /public_html/app/
+          log-level: verbose
           # Never touch secrets, runtime uploads, dev files, or the DB scripts.
           exclude: |
             **/.git*
