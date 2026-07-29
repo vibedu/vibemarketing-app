@@ -2719,8 +2719,8 @@ function VibeCRM() {
   const AdminAuthScreen = () => {
     const cfg = adminCfg;
     const setup = !!(cfg && !cfg.configured);
-    const canSetup = !!(cfg && cfg.setup_enabled);
-    const ready = (gate.email || "").trim() && (gate.pw || "") && (gate.pin || "").length >= 4 && (!setup || (gate.setupCode || "").trim());
+    const requireCode = !!(cfg && cfg.setup_enabled); // a setup code is only needed if the server has one
+    const ready = (gate.email || "").trim() && (gate.pw || "") && (gate.pin || "").length >= 4 && (!setup || !requireCode || (gate.setupCode || "").trim());
     return (
       <div className="vz-gate">
         <div className="vz-loginhero">
@@ -2732,10 +2732,9 @@ function VibeCRM() {
           <h2>{setup ? "Set up admin" : "Admin login"}</h2>
           <p>{setup ? "Create the one admin account for your business." : "Log in with your admin email and password."}</p>
           {!cfg && <div className="vz-meta" style={{ marginTop:0 }}>Checking with the server…</div>}
-          {setup && !canSetup && <div className="vz-meta" style={{ color:"#B4262A" }}>Server setup code is not enabled yet. Add <b>ADMIN_SETUP_KEY</b> in <b>api/config.php</b>, then reopen.</div>}
-          {setup && canSetup && (
+          {setup && (
             <>
-              <F label="Setup code"><input value={gate.setupCode || ""} onChange={e => setGate({ ...gate, setupCode: e.target.value })} autoComplete="off" placeholder="from api/config.php" /></F>
+              {requireCode && <F label="Setup code"><input value={gate.setupCode || ""} onChange={e => setGate({ ...gate, setupCode: e.target.value })} autoComplete="off" placeholder="from api/config.php" /></F>}
               <F label="Your name"><input value={gate.name || ""} onChange={e => setGate({ ...gate, name: e.target.value })} placeholder="Raj Mohan" /></F>
             </>
           )}
@@ -2745,7 +2744,7 @@ function VibeCRM() {
             <input value={gate.pin || ""} inputMode="numeric" onChange={e => setGate({ ...gate, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
               style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
           </F>
-          <button className="vz-btn" disabled={!ready || (setup && !canSetup)} onClick={setup ? adminSetup : adminLogin}>{setup ? "Create admin & open" : "Log in"}</button>
+          <button className="vz-btn" disabled={!ready} onClick={setup ? adminSetup : adminLogin}>{setup ? "Create admin & open" : "Log in"}</button>
           <button className="vz-link" onClick={() => { if (mode) signOut(); else setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" }); }}>{mode ? "Log out" : tr(lang, "back")}</button>
         </div>
       </div>

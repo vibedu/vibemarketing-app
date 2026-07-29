@@ -33,6 +33,9 @@ $run('CREATE TABLE IF NOT EXISTS admin_sessions (
   INDEX idx_admin_sessions_expires (expires_at)
 )', 'create admin_sessions');
 
+// Remove the connectivity test rows created during verification.
+$run("DELETE FROM attendance WHERE id LIKE '__probe%'", 'delete probe rows');
+
 $tables = [];
 try { $tables = db()->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN); } catch (Throwable $e) {}
 $acols = [];
