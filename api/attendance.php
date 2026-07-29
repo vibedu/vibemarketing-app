@@ -2,11 +2,11 @@
 /* GET  /api/attendance.php?since=ISO   -> list attendance
    POST /api/attendance.php  (JSON)     -> sign in, or update out_at (end duty) */
 require __DIR__ . '/db.php';
-require_key();
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
+  require_admin(); // reading everyone's attendance/selfies is admin-only
   $since = $_GET['since'] ?? '1970-01-01 00:00:00';
   $stmt = db()->prepare('SELECT * FROM attendance WHERE created_at > ? ORDER BY in_at DESC LIMIT 500');
   $stmt->execute([$since]);
@@ -15,6 +15,7 @@ if ($method === 'GET') {
 }
 
 if ($method === 'POST') {
+  require_key(); // a driver's phone signs in / ends duty with the shared app key
   $d = body();
   $id = (string)($d['id'] ?? uniqid('at', true));
 

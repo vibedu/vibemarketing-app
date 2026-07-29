@@ -605,11 +605,16 @@ const openMail = (to, subject, text) => {
 /* ---------------------------- backend (Hostinger PHP API) ---------------------------- */
 const API_BASE = "/api";
 const API_KEY = "4e6447365c464425131eddf1291d83a5ceff9d40c5cf29f9";
+// Admin session token (from a server login). Sent so the server hands over the
+// shared driver/attendance/proof data only to an authenticated admin.
+let ADMIN_TOKEN = "";
+let onAuthFail = null; // called when the server rejects the admin token (expired/invalid)
+const setAdminToken = (t) => { ADMIN_TOKEN = t || ""; };
 const apiPost = async (path, data) => {
   try {
     const r = await fetch(API_BASE + "/" + path, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
+      headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY, "X-Admin-Token": ADMIN_TOKEN },
       body: JSON.stringify(data),
     });
     return await r.json();
@@ -618,7 +623,8 @@ const apiPost = async (path, data) => {
 const apiGet = async (path) => {
   try {
     const sep = path.includes("?") ? "&" : "?";
-    const r = await fetch(API_BASE + "/" + path + sep + "key=" + encodeURIComponent(API_KEY));
+    const r = await fetch(API_BASE + "/" + path + sep + "key=" + encodeURIComponent(API_KEY), { headers: { "X-Admin-Token": ADMIN_TOKEN } });
+    if (r.status === 401) { if (onAuthFail) onAuthFail(); return null; }
     return await r.json();
   } catch (e) { return null; }
 };
@@ -634,6 +640,7 @@ const blankData = () => ({
   },
   users: [], vendors: [], vehicles: [], drivers: [], managers: [], orders: [], payments: [], jobs: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
+  adminToken: "", adminName: "",
 });
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
@@ -1476,10 +1483,12 @@ function VibeCRM() {
   const [full, setFull] = useState(false);
   const [locked, setLocked] = useState(false);   // admin session is locked until the PIN is re-entered
   const [lockPin, setLockPin] = useState("");
+  const [adminCfg, setAdminCfg] = useState(null); // { configured, setup_enabled } from the server
 
   useEffect(() => {
     (async () => {
       try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(seedOccasionsIfEmpty(seedInvoiceDefaults(seedFleetIfEmpty(base))));
+        setAdminToken(base && base.adminToken ? base.adminToken : "");
         // If an admin was left signed in, lock the app on open so the PIN is required again.
         if (base && base.role === "manager" && base.userId && (base.users || []).some(u => u.id === base.userId && u.pin)) setLocked(true);
       } catch (e) {}
@@ -1505,6 +1514,18 @@ function VibeCRM() {
     return () => { clearInterval(iv); window.removeEventListener("pointerdown", bump); window.removeEventListener("keydown", bump); document.removeEventListener("visibilitychange", onVis); };
   }, [mode, me]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_DATA, JSON.stringify(db)); } catch (e) {} })(); }, [db, loaded]);
+
+  // When the server rejects our admin token (expired/invalid), drop it so the login screen shows.
+  useEffect(() => {
+    onAuthFail = () => { setAdminToken(""); setDb(d => (d.adminToken ? { ...d, adminToken: "" } : d)); };
+    return () => { onAuthFail = null; };
+  }, []);
+
+  // Ask the server whether an admin exists yet (login) or needs first-time setup.
+  useEffect(() => {
+    if (!loaded) return;
+    apiGet("admin_status.php").then(r => { if (r) setAdminCfg(r); });
+  }, [loaded, gate.step, db.adminToken]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_PICS, JSON.stringify(pics)); setFull(false); } catch (e) { setFull(true); } })(); }, [pics, loaded]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
 
@@ -1527,7 +1548,7 @@ function VibeCRM() {
 
   /* office: pull photos + attendance from the shared server every 15s */
   useEffect(() => {
-    if (!loaded || mode !== "manager") return;
+    if (!loaded || mode !== "manager" || !db.adminToken) return; // only pull once the admin is authenticated
     const srvISO = (s) => (s && typeof s === "string") ? s.replace(" ", "T") + "Z" : (s || "");
     let stop = false;
     const pull = async () => {
@@ -1571,14 +1592,14 @@ function VibeCRM() {
     pull();
     const t = setInterval(pull, 15000);
     return () => { stop = true; clearInterval(t); };
-  }, [loaded, mode]);
+  }, [loaded, mode, db.adminToken]);
 
   /* office: push the driver roster to the shared server so drivers can log in on their phones */
   useEffect(() => {
-    if (!loaded || mode !== "manager") return; // only the office/admin pushes the roster
+    if (!loaded || mode !== "manager" || !db.adminToken) return; // only the authenticated admin pushes the roster
     (db.drivers || []).filter(d => !d.fromServer).forEach(d => apiPost("drivers.php", { id: d.id, name: d.name, phone: d.phone, pin: d.pin || "", active: 1,
       emergency: d.refPhone || "", dl: d.dl || "", dl_expiry: d.dlExpiry || "" }));
-  }, [loaded, mode]);
+  }, [loaded, mode, db.adminToken]);
 
   /* Drivers stay signed in all day; the app auto-signs them out at night.
      A shift left open on a past day is auto-closed once it's after 1am (a new day). */
@@ -2650,8 +2671,10 @@ function VibeCRM() {
 
   /* ---------------- driver mode ---------------- */
   const signOut = () => {
-    setDb(d => ({ ...d, role: "", userId: "" }));
-    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
+    if (ADMIN_TOKEN) { try { apiPost("admin_logout.php", {}); } catch (e) {} }  // best-effort: kill the server session
+    setAdminToken("");
+    setDb(d => ({ ...d, role: "", userId: "", adminToken: "", adminName: "" }));
+    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" });
     setLocked(false); setLockPin("");
     setTab("home");
   };
@@ -2659,6 +2682,74 @@ function VibeCRM() {
   const unlock = () => {
     if (me && lockPin === me.pin) { setLocked(false); setLockPin(""); }
     else { setToast("Wrong PIN"); setLockPin(""); }
+  };
+
+  // Server admin auth: password verified on the server, returns a session token that
+  // unlocks the shared driver/attendance/proof data. A local quick-PIN gates re-opening.
+  const finishAdminLogin = (res, pin, name) => {
+    setAdminToken(res.token);
+    const nm = name || res.name || "Admin";
+    const u = { id: "admin", name: nm, role: "Director", pin: pin };
+    setDb(d => ({ ...d, users: [u], userId: "admin", role: "manager", adminToken: res.token, adminName: nm }));
+    setLocked(false); setLockPin("");
+    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" });
+    setTab("home");
+  };
+  const adminLogin = async () => {
+    const email = (gate.email || "").trim(); const pw = gate.pw || ""; const pin = gate.pin || "";
+    if (!email || !pw || pin.length < 4) return;
+    const res = await apiPost("admin_login.php", { email, password: pw });
+    if (!res) { setToast("Could not reach the server — check your connection"); return; }
+    if (!res.ok || !res.token) { setToast(res.error === "wrong email or password" ? "Wrong email or password" : (res.error || "Login failed")); return; }
+    finishAdminLogin(res, pin, res.name);
+  };
+  const adminSetup = async () => {
+    const email = (gate.email || "").trim(); const pw = gate.pw || ""; const pin = gate.pin || "";
+    const code = (gate.setupCode || "").trim(); const name = (gate.name || "").trim();
+    if (!email || !pw || pin.length < 4 || !code) return;
+    const s = await apiPost("admin_setup.php", { setup_key: code, email, password: pw, name });
+    if (!s) { setToast("Could not reach the server — check your connection"); return; }
+    if (!s.ok) { setToast(s.error || "Setup failed"); return; }
+    const res = await apiPost("admin_login.php", { email, password: pw });
+    if (!res || !res.ok) { setToast("Admin created — now log in"); return; }
+    finishAdminLogin(res, pin, name || res.name);
+  };
+
+  // The Admin login / first-time setup screen (server-verified).
+  const AdminAuthScreen = () => {
+    const cfg = adminCfg;
+    const setup = !!(cfg && !cfg.configured);
+    const canSetup = !!(cfg && cfg.setup_enabled);
+    const ready = (gate.email || "").trim() && (gate.pw || "") && (gate.pin || "").length >= 4 && (!setup || (gate.setupCode || "").trim());
+    return (
+      <div className="vz-gate">
+        <div className="vz-loginhero">
+          <img src="icon.svg" alt="" className="vz-loginlogo" />
+          <div className="vz-loginname">Vibe Marketing</div>
+          <div className="vz-logintag">Admin</div>
+        </div>
+        <div className="vz-logincard">
+          <h2>{setup ? "Set up admin" : "Admin login"}</h2>
+          <p>{setup ? "Create the one admin account for your business." : "Log in with your admin email and password."}</p>
+          {!cfg && <div className="vz-meta" style={{ marginTop:0 }}>Checking with the server…</div>}
+          {setup && !canSetup && <div className="vz-meta" style={{ color:"#B4262A" }}>Server setup code is not enabled yet. Add <b>ADMIN_SETUP_KEY</b> in <b>api/config.php</b>, then reopen.</div>}
+          {setup && canSetup && (
+            <>
+              <F label="Setup code"><input value={gate.setupCode || ""} onChange={e => setGate({ ...gate, setupCode: e.target.value })} autoComplete="off" placeholder="from api/config.php" /></F>
+              <F label="Your name"><input value={gate.name || ""} onChange={e => setGate({ ...gate, name: e.target.value })} placeholder="Raj Mohan" /></F>
+            </>
+          )}
+          <F label="Email"><input type="email" value={gate.email || ""} onChange={e => setGate({ ...gate, email: e.target.value })} inputMode="email" autoComplete="username" placeholder="you@vibemarketing.in" /></F>
+          <F label="Password"><input type="password" value={gate.pw || ""} onChange={e => setGate({ ...gate, pw: e.target.value })} autoComplete="current-password" placeholder={setup ? "choose a strong password" : "your password"} /></F>
+          <F label="Set a quick unlock PIN (4–6 digits)">
+            <input value={gate.pin || ""} inputMode="numeric" onChange={e => setGate({ ...gate, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
+              style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
+          </F>
+          <button className="vz-btn" disabled={!ready || (setup && !canSetup)} onClick={setup ? adminSetup : adminLogin}>{setup ? "Create admin & open" : "Log in"}</button>
+          <button className="vz-link" onClick={() => { if (mode) signOut(); else setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" }); }}>{mode ? "Log out" : tr(lang, "back")}</button>
+        </div>
+      </div>
+    );
   };
 
   // Shown over the admin app when the session is locked; PIN required to continue.
@@ -2698,67 +2789,7 @@ function VibeCRM() {
       </div>
     );
 
-    if (gate.step === "office") {
-      const picked = users.find(u => u.id === gate.userId);
-      return (
-        <div className="vz-gate">
-          {hero}
-          <div className="vz-logincard">
-          <h2>{first ? "Create the admin account" : "Admin login"}</h2>
-          <p>{first
-            ? "This is the admin account — full access to everything in the app."
-            : "Enter your admin PIN."}</p>
-
-          {first ? (
-            <>
-              <F label="Your name"><input value={gate.name} onChange={e => setGate({ ...gate, name: e.target.value })} placeholder="Name" /></F>
-              <F label="Choose a PIN (4–6 digits)">
-                <input value={gate.pin} inputMode="numeric" onChange={e => setGate({ ...gate, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                  style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
-              </F>
-              <F label="Type it again">
-                <input value={gate.pin2} inputMode="numeric" onChange={e => setGate({ ...gate, pin2: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                  style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
-              </F>
-              <button className="vz-btn" disabled={!gate.name.trim() || gate.pin.length < 4 || gate.pin2.length < 4}
-                onClick={() => {
-                  if (gate.pin !== gate.pin2) { setToast("The two PINs do not match"); return; }
-                  const u = { id: uid(), name: gate.name.trim(), role: "Director", pin: gate.pin };
-                  setDb(d => ({ ...d, users: [u], userId: u.id, role: "manager" }));
-                  setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
-                  setToast("Welcome, " + u.name);
-                }}>Create account and open</button>
-            </>
-          ) : (
-            <>
-              <F label="Who are you?">
-                <select value={gate.userId} onChange={e => setGate({ ...gate, userId: e.target.value, pin: "" })}>
-                  <option value="">—</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name} · {u.role}</option>)}
-                </select>
-              </F>
-              {picked && (
-                <F label="PIN">
-                  <input value={gate.pin} inputMode="numeric" autoFocus
-                    onChange={e => setGate({ ...gate, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                    style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
-                </F>
-              )}
-              <button className="vz-btn" disabled={!picked || gate.pin.length < 4}
-                onClick={() => {
-                  if (picked && gate.pin === picked.pin) {
-                    setDb(d => ({ ...d, userId: picked.id, role: "manager" }));
-                    setTab(roleOf(picked).tabs[0]);
-                    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
-                  } else { setToast("Wrong PIN"); setGate({ ...gate, pin: "" }); }
-                }}>Open admin</button>
-            </>
-          )}
-          <button className="vz-link" onClick={() => setGate(resetGate)}>{t("back")}</button>
-          </div>
-        </div>
-      );
-    }
+    if (gate.step === "office") return AdminAuthScreen();
 
     return (
       <div className="vz-gate">
@@ -3060,8 +3091,10 @@ function VibeCRM() {
 
   /* ------------------------- chrome ------------------------- */
   const TITLES = { home:"Control room", vendors:"Vendors", orders:"Campaigns", field:"Field proof", fleet:"Fleet & drivers", money:"Finance" };
-  const adminLocked = mode === "manager" && locked;
-  const fabFor = (mode === "driver" || adminLocked) ? null : {
+  const needServerAuth = mode === "manager" && !db.adminToken;   // must log in on the server before the app opens
+  const adminLocked = mode === "manager" && locked && !!db.adminToken;
+  const adminGated = needServerAuth || adminLocked;
+  const fabFor = (mode === "driver" || adminGated) ? null : {
     vendors: perm.campaign ? ["Add vendor", () => setSheet({ type:"vendor" })] : null,
     orders: perm.campaign ? ["New campaign", () => setSheet({ type:"order" })] : null,
     fleet: fleetView === "drivers" ? (perm.fleetEdit ? ["Add driver", () => setSheet({ type:"driver" })] : null)
@@ -3092,13 +3125,13 @@ function VibeCRM() {
             {mode === "manager" && (pics[me && me.photoId] || (me && me.photoUrl)) && (
               <img className="vz-hdrav" src={pics[me && me.photoId] || me.photoUrl} alt="" />
             )}
-            {mode === "manager" && !adminLocked && (
+            {mode === "manager" && !adminGated && (
               <button className="vz-gear" onClick={() => setSheet({ type:"alerts" })} aria-label="Renewal alerts">
                 <Icon d={ICONS.bell} />
                 {stats.alerts.length > 0 && <span className="vz-badge">{stats.alerts.length}</span>}
               </button>
             )}
-            {mode === "manager" && !adminLocked && perm.settings && <button className="vz-gear" onClick={() => setSheet({ type:"settings" })}><Icon d={ICONS.gear} /></button>}
+            {mode === "manager" && !adminGated && perm.settings && <button className="vz-gear" onClick={() => setSheet({ type:"settings" })}><Icon d={ICONS.gear} /></button>}
             {mode === "manager" && <button className="vz-logout" onClick={signOut} aria-label="Log out"><Icon d={ICONS.out} />Log out</button>}
           </div>
         </div>
@@ -3106,9 +3139,10 @@ function VibeCRM() {
 
 
       {!mode && RoleGate()}
+      {needServerAuth && AdminAuthScreen()}
       {adminLocked && LockScreen()}
 
-      <main className="vz-body" style={{ display: (mode && !adminLocked) ? "block" : "none" }}>
+      <main className="vz-body" style={{ display: (mode && !adminGated) ? "block" : "none" }}>
         {full && (
           <div className="vz-card" style={{ background:"#FDE4E5", borderColor:"#F3B9BB" }}>
             <div className="vz-meta" style={{ marginTop:0, color:"#B4262A" }}>
@@ -3129,7 +3163,7 @@ function VibeCRM() {
 
       {fabFor && <button className="vz-fab" onClick={fabFor[1]}>+ {fabFor[0]}</button>}
 
-      {mode === "manager" && !adminLocked && (
+      {mode === "manager" && !adminGated && (
         <nav className="vz-nav">
           {[["home","Home"],["vendors","Vendors"],["orders","Orders"],["field","Field"],["fleet","Fleet"],["money","Money"]]
             .filter(([k]) => perm.tabs.includes(k)).map(([k, l]) => (

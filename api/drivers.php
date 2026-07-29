@@ -3,7 +3,7 @@
    POST /api/drivers.php  (JSON)  -> upsert a driver (active:0 removes)
         photo_data / dl_front_data / dl_back_data = data:image base64 (optional) */
 require __DIR__ . '/db.php';
-require_key();
+require_admin(); // the roster (read and write) is admin-only; drivers sign in via driver_login.php
 
 function dr_save($dataUrl) {
   if (!is_string($dataUrl) || !preg_match('#^data:image/(\w+);base64,#', $dataUrl, $m)) return '';

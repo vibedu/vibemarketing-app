@@ -2,11 +2,11 @@
 /* GET  /api/proofs.php?since=ISO&vehicle_id=veh2   -> list photos
    POST /api/proofs.php  (JSON with photo_data data-URL)  -> save photo */
 require __DIR__ . '/db.php';
-require_key();
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
+  require_admin(); // reading the full proof feed is admin-only
   $since = $_GET['since'] ?? '1970-01-01 00:00:00';
   $veh   = $_GET['vehicle_id'] ?? '';
   $sql = 'SELECT * FROM proofs WHERE created_at > ?';
@@ -20,6 +20,7 @@ if ($method === 'GET') {
 }
 
 if ($method === 'POST') {
+  require_key(); // a driver's phone submits proofs with the shared app key
   $d = body();
 
   // Save the photo (a data:image/...;base64 string) as a file.
