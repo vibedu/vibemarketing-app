@@ -2720,7 +2720,8 @@ function VibeCRM() {
     const cfg = adminCfg;
     const setup = !!(cfg && !cfg.configured);
     const requireCode = !!(cfg && cfg.setup_enabled); // a setup code is only needed if the server has one
-    const ready = (gate.email || "").trim() && (gate.pw || "") && (gate.pin || "").length >= 4 && (!setup || !requireCode || (gate.setupCode || "").trim());
+    const pinOk = (gate.pin || "").length === 0 || (gate.pin || "").length >= 4; // PIN is optional
+    const ready = (gate.email || "").trim() && (gate.pw || "") && pinOk && (!setup || !requireCode || (gate.setupCode || "").trim());
     return (
       <div className="vz-gate">
         <div className="vz-loginhero">
@@ -2740,8 +2741,8 @@ function VibeCRM() {
           )}
           <F label="Email"><input type="email" value={gate.email || ""} onChange={e => setGate({ ...gate, email: e.target.value })} inputMode="email" autoComplete="username" placeholder="you@vibemarketing.in" /></F>
           <F label="Password"><input type="password" value={gate.pw || ""} onChange={e => setGate({ ...gate, pw: e.target.value })} autoComplete="current-password" placeholder={setup ? "choose a strong password" : "your password"} /></F>
-          <F label="Set a quick unlock PIN (4–6 digits)">
-            <input value={gate.pin || ""} inputMode="numeric" onChange={e => setGate({ ...gate, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
+          <F label="Quick unlock PIN — optional (leave blank to use your password each time)">
+            <input value={gate.pin || ""} inputMode="numeric" placeholder="skip if you don't want one" onChange={e => setGate({ ...gate, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
               style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
           </F>
           <button className="vz-btn" disabled={!ready} onClick={setup ? adminSetup : adminLogin}>{setup ? "Create admin & open" : "Log in"}</button>
