@@ -516,6 +516,83 @@ const proofText = (pr, o, v, veh, drv) =>
    pr.lat ? "Map: " + mapLink(pr.lat, pr.lng) : "",
    pr.note ? "Note: " + pr.note : ""].filter(Boolean).join("\n");
 
+/* ---- customer reminder messages (positive, motivating) ---- */
+const firstName = (v) => String((v && (v.person || v.name)) || "there").trim().split(/\s+/)[0];
+
+// Welcome, sent when a new customer is added.
+const welcomeMsg = (v) =>
+  "Hi " + firstName(v) + "! 🎉\n\n" +
+  "Welcome to *Vibe Marketing* — Coimbatore's mobile hoarding & van branding specialists. " +
+  "Thank you for connecting with us!\n\n" +
+  "We turn our fleet of branded vans into moving billboards that take " + (v && v.name ? v.name : "your brand") +
+  " straight to your customers — markets, junctions, events, wherever the crowd is. 🚚✨\n\n" +
+  "Whenever you're planning a promotion or a festival campaign, we're one message away. Let's grow your brand together! 💪\n\n— Team Vibe Marketing";
+
+const welcomeSubject = () => "Welcome to Vibe Marketing 🎉";
+
+// General service reminder (no specific occasion).
+const serviceMsg = (v) =>
+  "Hi " + firstName(v) + "! 👋\n\n" +
+  "Is your brand getting the visibility it deserves? *Vibe Marketing*'s mobile van branding puts " +
+  (v && v.name ? v.name : "your business") + " in front of thousands of people every single day. 🚚📢\n\n" +
+  "Our branded vans cover the busiest routes across the city — high visibility, low cost, big impact. " +
+  "Book a van today and watch your footfall grow! 📈\n\n" +
+  "Reply to this message and we'll share available slots. 🙌\n\n— Team Vibe Marketing";
+
+// Festival / occasion countdown reminder, escalating tone by how many days are left.
+const occasionMsg = (v, occ, daysLeft) => {
+  const name = firstName(v);
+  const fest = occ.name;
+  let body;
+  if (daysLeft >= 55) {
+    body = "It's never too early to plan a winning " + fest + " campaign! 🎯\n\n" +
+      "Book your mobile van branding now and lock in the best routes and rates before the festive rush. " +
+      "Early birds always get the prime visibility. 🐦✨";
+  } else if (daysLeft >= 40) {
+    body = fest + " is around the corner and our vans are filling up fast! 🚚💨\n\n" +
+      "Reserve your branding slots now so " + (v.name || "your brand") + " shines all through the festive season. Don't miss out! 🌟";
+  } else if (daysLeft >= 25) {
+    body = "Just about a month to " + fest + "! ⏳\n\n" +
+      "This is the perfect window to launch your van branding so your offers reach every shopper before they buy. " +
+      "Let's make " + (v.name || "your brand") + " the talk of the town! 🎊";
+  } else {
+    body = "Final call for " + fest + "! 🚨\n\n" +
+      "Only a few vans left for the festive season. Grab yours today and ride the biggest shopping wave of the year. " +
+      "We'll have you on the road in no time! 🚚🔥";
+  }
+  return "Hi " + name + "! 🎉\n\n" + body + "\n\nReply *YES* and we'll reserve your slot. 🙌\n\n— Team Vibe Marketing";
+};
+
+const occasionSubject = (occ) => occ.name + " campaign — book your van branding now! 🚚";
+
+// Compute which reminders are due today: festival milestones + overdue general nudges.
+const remindersDue = (db) => {
+  const vendors = (db.vendors || []).filter(v => (v.phone || v.email));
+  const log = db.reminderLog || {};
+  const festival = [];
+  (db.occasions || []).filter(o => o.active && o.date).forEach(occ => {
+    const left = daysTo(occ.date);
+    if (left == null || left < 0) return;
+    const offsets = (occ.offsets && occ.offsets.length ? occ.offsets : [60, 45, 30, 15]);
+    // A milestone is "due" from its day until the next milestone (so a missed day still shows).
+    const hit = offsets.filter(o => left <= o).sort((a, b) => a - b)[0]; // smallest offset >= left
+    if (hit == null) return;
+    vendors.forEach(v => {
+      const key = v.id + "|" + occ.id + "|" + hit;
+      if (log[key]) return;
+      festival.push({ kind: "occasion", key, vendor: v, occ, daysLeft: left, milestone: hit });
+    });
+  });
+  const gapDays = +(db.settings && db.settings.serviceReminderDays) || 90;
+  const service = [];
+  vendors.forEach(v => {
+    const last = log["svc|" + v.id];
+    const overdue = !last || (daysTo(last) != null && Math.abs(daysTo(last)) >= gapDays);
+    if (overdue) service.push({ kind: "service", key: "svc|" + v.id, vendor: v });
+  });
+  return { festival, service };
+};
+
 const openWA = (phone, text) => {
   const n = String(phone || "").replace(/\D/g, "");
   const num = n.length === 10 ? "91" + n : n;
@@ -553,10 +630,21 @@ const blankData = () => ({
     autoProofToVendor: true, dailyProofRequired: true,
     leadEarly: 30, leadFinal: 7, browserAlerts: false, weeklyDigest: true, driverLang: "en",
     managerPhone: "", managerEmail: "", company: "Vibe Marketing", gstin: "", invPrefix: "VM/PI",
+    serviceReminderDays: 90,
   },
   users: [], vendors: [], vehicles: [], drivers: [], managers: [], orders: [], payments: [], jobs: [],
-  proofs: [], renewals: [], attendance: [], snoozes: {}, session: "", role: "", userId: "", mgr: null,
+  proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
 });
+
+/* Festival / occasion campaigns to remind customers about ahead of time.
+   Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
+const OCCASION_SEED = () => ([
+  { id:"occ_diwali",  name:"Diwali",         date:"2026-11-08", offsets:[60,45,30,15], active:true },
+  { id:"occ_xmas",    name:"Christmas & New Year", date:"2026-12-25", offsets:[60,45,30,15], active:true },
+  { id:"occ_pongal",  name:"Pongal",         date:"2027-01-14", offsets:[60,45,30,15], active:true },
+  { id:"occ_tamilny", name:"Tamil New Year", date:"2027-04-14", offsets:[60,45,30,15], active:true },
+]);
+const seedOccasionsIfEmpty = (d) => (d.occasions && d.occasions.length ? d : { ...d, occasions: OCCASION_SEED() });
 
 /* ---- real fleet register (from the office sheet — verify against source) ---- */
 const FLEET_SEED = () => ([
@@ -1071,6 +1159,102 @@ function AttendanceSheet({ db, vehOf, drvOf, onClose }) {
   );
 }
 
+/* ---------------------------- customer reminders ---------------------------- */
+function RemindersSheet({ db, onSend, onManage, onClose }) {
+  const due = remindersDue(db);
+  const total = due.festival.length + due.service.length;
+  const Row = ({ item, sub }) => (
+    <div className="vz-card" key={item.key}>
+      <div className="vz-row">
+        <div style={{ minWidth:0 }}>
+          <div className="vz-title">{item.vendor.name}</div>
+          <div className="vz-meta">{sub} · {item.vendor.phone || item.vendor.email || "no contact on file"}</div>
+        </div>
+        <button className="vz-chip c-green" onClick={() => onSend(item)}>Send</button>
+      </div>
+    </div>
+  );
+  return (
+    <Sheet title="Customer reminders" onClose={onClose}>
+      <div className="vz-row" style={{ marginBottom:10 }}>
+        <div className="vz-meta" style={{ marginTop:0 }}><b>{total}</b> reminder{total === 1 ? "" : "s"} ready to send today</div>
+        <button className="vz-chip c-blue" onClick={onManage}>Manage occasions</button>
+      </div>
+
+      {total === 0 && (
+        <div className="vz-card"><div className="vz-meta" style={{ marginTop:0 }}>
+          Nothing due today. 🎉 Add customers under <b>Vendors</b>, or set festival dates via <b>Manage occasions</b>.
+        </div></div>
+      )}
+
+      {due.festival.length > 0 && (
+        <>
+          <div className="vz-eyebrow">Festival reminders ({due.festival.length})</div>
+          {due.festival.map(item => <Row key={item.key} item={item} sub={item.occ.name + " · " + item.daysLeft + " days to go"} />)}
+        </>
+      )}
+
+      {due.service.length > 0 && (
+        <>
+          <div className="vz-eyebrow">Service reminders ({due.service.length})</div>
+          {due.service.map(item => <Row key={item.key} item={item} sub="Van-branding nudge" />)}
+        </>
+      )}
+
+      <div className="vz-meta" style={{ marginTop:12 }}>
+        Tip: tap Send to open WhatsApp or email with the message already written. It then drops off this list.
+      </div>
+    </Sheet>
+  );
+}
+
+function OccasionsSheet({ db, onAdd, onEdit, onClose }) {
+  const list = (db.occasions || []).slice().sort((a, b) => (String(a.date) < String(b.date) ? -1 : 1));
+  return (
+    <Sheet title="Festival occasions" onClose={onClose}>
+      <div className="vz-row" style={{ marginBottom:8 }}>
+        <div className="vz-meta" style={{ marginTop:0 }}>Reminders go out before each occasion</div>
+        <button className="vz-chip c-blue" onClick={onAdd}>+ Add</button>
+      </div>
+      {list.length === 0 && <Empty head="No occasions yet" sub="Add Diwali, Pongal, or any festival with its date." />}
+      {list.map(o => {
+        const left = daysTo(o.date);
+        return (
+          <button className="vz-card vz-tapcard" key={o.id} onClick={() => onEdit(o)}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title">{o.name}</div>
+                <div className="vz-meta">{dmy(o.date)} · {left != null && left >= 0 ? left + " days away" : "past"} · remind at {(o.offsets || []).join("/")}d</div>
+              </div>
+              <Chip c={o.active ? "c-green" : "c-grey"}>{o.active ? "On" : "Off"}</Chip>
+            </div>
+          </button>
+        );
+      })}
+    </Sheet>
+  );
+}
+
+function OccasionForm({ init, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { name:"", date:"", offsets:[60, 45, 30, 15], active:true });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  return (
+    <Sheet title={init ? "Edit occasion" : "Add occasion"} onClose={onClose}>
+      <F label="Occasion name"><input value={f.name} onChange={u("name")} placeholder="Diwali" /></F>
+      <F label="Occasion date"><input type="date" value={f.date} onChange={u("date")} /></F>
+      <F label="Remind before (days)">
+        <input value={(f.offsets || []).join(", ")}
+          onChange={e => set({ ...f, offsets: e.target.value.split(",").map(x => parseInt(x, 10)).filter(n => n > 0).sort((a, b) => b - a) })}
+          placeholder="60, 45, 30, 15" />
+      </F>
+      <label className="vz-check"><input type="checkbox" checked={f.active} onChange={e => set({ ...f, active: e.target.checked })} /> Active — send reminders for this occasion</label>
+      <button className="vz-btn" disabled={!f.name.trim() || !f.date}
+        onClick={() => onSave({ ...f, id: f.id || ("occ_" + uid()), name: f.name.trim(), offsets: (f.offsets && f.offsets.length ? f.offsets : [60, 45, 30, 15]) })}>Save occasion</button>
+      {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete occasion</button>}
+    </Sheet>
+  );
+}
+
 /* ---------------------------- renewals ---------------------------- */
 function RenewSheet({ alert, vehicle, onSave, onClose }) {
   const [f, set] = useState({ newDue: addMonths(alert.due, alert.doc.months), date: today(), cost:"", vendor:"", note:"", painting:false, tinkering:false });
@@ -1293,7 +1477,7 @@ function VibeCRM() {
 
   useEffect(() => {
     (async () => {
-      try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(seedInvoiceDefaults(seedFleetIfEmpty(base))); } catch (e) {}
+      try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(seedOccasionsIfEmpty(seedInvoiceDefaults(seedFleetIfEmpty(base)))); } catch (e) {}
       try { const r = await window.storage.get(KEY_PICS); if (r && r.value) setPics(JSON.parse(r.value)); } catch (e) {}
       setLoaded(true);
     })();
@@ -1669,6 +1853,27 @@ function VibeCRM() {
     });
   };
 
+  // Record that a customer reminder was sent so it drops off the "due" list.
+  const markReminded = (key) => setDb(d => ({ ...d, reminderLog: { ...(d.reminderLog || {}), [key]: today() } }));
+
+  // Open the send sheet for one customer reminder (festival, service, or welcome).
+  const sendCustomerReminder = (item) => {
+    const v = item.vendor;
+    let text, subject, title;
+    if (item.kind === "occasion") {
+      text = occasionMsg(v, item.occ, item.daysLeft); subject = occasionSubject(item.occ);
+      title = item.occ.name + " reminder — " + (v.name || firstName(v));
+    } else if (item.kind === "welcome") {
+      text = welcomeMsg(v); subject = welcomeSubject(); title = "Welcome message — " + (v.name || firstName(v));
+    } else {
+      text = serviceMsg(v); subject = "Mobile van branding by Vibe Marketing 🚚"; title = "Service reminder — " + (v.name || firstName(v));
+    }
+    setSend({
+      title, to: v.name || firstName(v), phone: v.phone, email: v.email, subject, text,
+      onSent: (ch) => { markReminded(item.key); setToast("Reminder sent · " + ch); },
+    });
+  };
+
   /* ------------------------- screens ------------------------- */
   const Home = () => (
     <>
@@ -1694,6 +1899,22 @@ function VibeCRM() {
         {!perm.money && <div className="vz-stat"><i>Drivers on duty</i><b>{(db.attendance || []).filter(a => a.date === today() && !a.outAt).length}</b><small>signed in right now</small></div>}
         {!perm.money && <div className="vz-stat"><i>Papers due</i><b style={{ color: stats.alerts.length ? "#E5484D" : "#178951" }}>{stats.alerts.length}</b><small>FC, insurance, PUC, permit</small></div>}
       </div>
+
+      {(() => {
+        const rd = remindersDue(db); const n = rd.festival.length + rd.service.length;
+        return (
+          <button className="vz-card vz-tapcard" onClick={() => setSheet({ type:"reminders" })}
+            style={{ background: n ? "#FFF7E6" : "#fff", borderColor: n ? "#F5DFA0" : "var(--line)" }}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title">📣 Customer reminders{n > 0 ? <span style={{ color:"#B4262A" }}> · {n} today</span> : ""}</div>
+                <div className="vz-meta">{n > 0 ? "Festival & service nudges ready to send" : "Festival & service nudges — tap to review"}</div>
+              </div>
+              <span className="vz-chip c-yellow">Open</span>
+            </div>
+          </button>
+        );
+      })()}
 
       {perm.fleetEdit && <div className="vz-inline" style={{ marginTop:2, marginBottom:2, display:"flex", gap:8 }}>
         <button className="vz-btn alt" style={{ margin:0, flex:1 }} onClick={() => { setTab("fleet"); setFleetView("drivers"); setSheet({ type:"driver" }); }}>+ Add driver</button>
@@ -2879,6 +3100,17 @@ function VibeCRM() {
           onDelete={(id) => { drop("users", id); setSheet(null); setToast("User removed"); }} />
       )}
       {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf} onClose={() => setSheet(null)} />}
+      {sheet?.type === "reminders" && (
+        <RemindersSheet db={db} onSend={sendCustomerReminder} onManage={() => setSheet({ type:"occasions" })} onClose={() => setSheet(null)} />
+      )}
+      {sheet?.type === "occasions" && (
+        <OccasionsSheet db={db} onAdd={() => setSheet({ type:"occasion" })} onEdit={(o) => setSheet({ type:"occasion", data:o })} onClose={() => setSheet({ type:"reminders" })} />
+      )}
+      {sheet?.type === "occasion" && (
+        <OccasionForm init={sheet.data} onClose={() => setSheet({ type:"occasions" })}
+          onSave={(x) => { put("occasions", x); setSheet({ type:"occasions" }); setToast("Occasion saved"); }}
+          onDelete={(id) => { drop("occasions", id); setSheet({ type:"occasions" }); setToast("Occasion deleted"); }} />
+      )}
       {sheet?.type === "alerts" && (
         <AlertsSheet list={stats.alerts} settings={db.settings} onClose={() => setSheet(null)}
           onRenew={(a) => setSheet({ type:"renew", data:a })}
@@ -2891,7 +3123,11 @@ function VibeCRM() {
       )}
       {sheet?.type === "vendor" && (
         <VendorForm init={sheet.data} canDel={perm.del} onClose={() => setSheet(null)}
-          onSave={(x) => { put("vendors", x); setSheet(null); }}
+          onSave={(x) => {
+            const isNew = !sheet.data;
+            put("vendors", x); setSheet(null);
+            if (isNew && (x.phone || x.email)) setTimeout(() => sendCustomerReminder({ kind:"welcome", key:"welcome|" + x.id, vendor:x }), 200);
+          }}
           onDelete={(id) => {
             if (db.orders.some(o => o.vendorId === id)) { setToast("This vendor has campaigns — delete those first"); return; }
             drop("vendors", id); setSheet(null); setToast("Vendor deleted");
