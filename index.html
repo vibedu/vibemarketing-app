@@ -189,17 +189,58 @@ const CSS = `
 .vz-nav button[data-on="1"] { color:var(--yellow); }
 .vz-nav svg { width:20px; height:20px; }
 
-/* Tablets & larger: widen the app to a comfortable column instead of a phone-width strip. */
+/* Tablets & larger: widen the app AND scale text/controls up so it's easy to read
+   and tap on a big screen (the base layout is sized for phones). */
 @media (min-width:700px){
-  .vz { max-width:760px; }
-  .vz-nav { max-width:760px; }
-  .vz-sheet { max-width:600px; }
-  .vz-body { padding-left:22px; padding-right:22px; }
-  /* keep login forms compact and centred even on a wide screen */
-  .vz-logincard { max-width:440px; width:100%; margin-left:auto; margin-right:auto; }
-  .vz-authwrap { max-width:460px; width:100%; margin-left:auto; margin-right:auto; }
-  /* use the extra width for the summary tiles */
+  .vz { max-width:820px; font-size:16px; }
+  .vz-nav { max-width:820px; }
+  .vz-sheet { max-width:640px; }
+  .vz-body { padding:18px 24px 30px; }
+  .vz-logincard { max-width:460px; width:100%; margin-left:auto; margin-right:auto; }
+  .vz-authwrap { max-width:480px; width:100%; margin-left:auto; margin-right:auto; }
   .vz-grid { grid-template-columns:repeat(4,1fr); }
+
+  /* header */
+  .vz-brand b { font-size:23px; }
+  .vz-sub { font-size:13.5px; }
+  .vz-logout { font-size:15px; height:38px; padding:0 15px; }
+  .vz-gear svg { width:24px; height:24px; }
+
+  /* content text */
+  .vz-title { font-size:18px; }
+  .vz-meta { font-size:14px; }
+  .vz-eyebrow { font-size:11.5px; }
+  .vz-eyebrow button { font-size:13px; }
+  .vz-stat i { font-size:11px; }
+  .vz-stat b { font-size:28px; }
+  .vz-stat small { font-size:13px; }
+  .vz-chip { font-size:11.5px; }
+  .vz-seg button { font-size:14.5px; padding:10px 6px; }
+  .vz-daysep { font-size:14px; }
+  .vz-kv { font-size:15px; }
+  .vz-check { font-size:15.5px; }
+  .vz-empty { font-size:15px; }
+  .vz-empty b { font-size:18px; }
+
+  /* controls & forms */
+  .vz-btn { font-size:17px; padding:16px; }
+  .vz-big { font-size:18px; }
+  .vz-backbtn { font-size:16px; height:40px; }
+  .vz-search { font-size:16px; padding:13px 15px; }
+  .vz-f label { font-size:11.5px; }
+  .vz-f input, .vz-f select, .vz-f textarea { font-size:17px; padding:13px 14px; }
+  .vz-sheet h3 { font-size:20px; }
+
+  /* bottom nav */
+  .vz-nav button { font-size:10.5px; }
+  .vz-nav svg { width:24px; height:24px; }
+
+  /* login screens */
+  .vz-loginname { font-size:26px; }
+  .vz-logincard h2 { font-size:21px; }
+  .vz-logincard p { font-size:14px; }
+  .vz-gate h2 { font-size:24px; }
+  .vz-gate p { font-size:15px; }
 }
 
 .vz-scrim { position:fixed; inset:0; background:rgba(10,14,24,.5); z-index:60; display:flex; align-items:flex-end; justify-content:center; }
