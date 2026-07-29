@@ -1474,14 +1474,36 @@ function VibeCRM() {
   const [toast, setToast] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [full, setFull] = useState(false);
+  const [locked, setLocked] = useState(false);   // admin session is locked until the PIN is re-entered
+  const [lockPin, setLockPin] = useState("");
 
   useEffect(() => {
     (async () => {
-      try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(seedOccasionsIfEmpty(seedInvoiceDefaults(seedFleetIfEmpty(base)))); } catch (e) {}
+      try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(seedOccasionsIfEmpty(seedInvoiceDefaults(seedFleetIfEmpty(base))));
+        // If an admin was left signed in, lock the app on open so the PIN is required again.
+        if (base && base.role === "manager" && base.userId && (base.users || []).some(u => u.id === base.userId && u.pin)) setLocked(true);
+      } catch (e) {}
       try { const r = await window.storage.get(KEY_PICS); if (r && r.value) setPics(JSON.parse(r.value)); } catch (e) {}
       setLoaded(true);
     })();
   }, []);
+
+  // Auto-lock the admin after idle time, and whenever the app returns to the foreground after a short absence.
+  useEffect(() => {
+    if (mode !== "manager" || !me || !me.pin) return;
+    let lastActive = Date.now();
+    const IDLE = 5 * 60 * 1000;   // 5 minutes idle
+    const AWAY = 60 * 1000;       // re-lock if backgrounded for over a minute
+    const doLock = () => { setLocked(true); setSheet(null); setSend(null); setInvoice(null); setOpenOrder(null); setOpenProof(null); };
+    const bump = () => { lastActive = Date.now(); };
+    const check = () => { if (Date.now() - lastActive > IDLE) doLock(); };
+    const onVis = () => { if (document.visibilityState === "visible" && Date.now() - lastActive > AWAY) doLock(); };
+    const iv = setInterval(check, 30000);
+    window.addEventListener("pointerdown", bump);
+    window.addEventListener("keydown", bump);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(iv); window.removeEventListener("pointerdown", bump); window.removeEventListener("keydown", bump); document.removeEventListener("visibilitychange", onVis); };
+  }, [mode, me]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_DATA, JSON.stringify(db)); } catch (e) {} })(); }, [db, loaded]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_PICS, JSON.stringify(pics)); setFull(false); } catch (e) { setFull(true); } })(); }, [pics, loaded]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
@@ -2630,8 +2652,37 @@ function VibeCRM() {
   const signOut = () => {
     setDb(d => ({ ...d, role: "", userId: "" }));
     setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
+    setLocked(false); setLockPin("");
     setTab("home");
   };
+
+  const unlock = () => {
+    if (me && lockPin === me.pin) { setLocked(false); setLockPin(""); }
+    else { setToast("Wrong PIN"); setLockPin(""); }
+  };
+
+  // Shown over the admin app when the session is locked; PIN required to continue.
+  const LockScreen = () => (
+    <div className="vz-gate">
+      <div className="vz-loginhero">
+        <img src="icon.svg" alt="" className="vz-loginlogo" />
+        <div className="vz-loginname">Vibe Marketing</div>
+        <div className="vz-logintag">Locked</div>
+      </div>
+      <div className="vz-logincard">
+        <h2>Welcome back{me ? ", " + String(me.name || "").split(/\s+/)[0] : ""}</h2>
+        <p>Enter your admin PIN to continue.</p>
+        <F label="PIN">
+          <input type="password" value={lockPin} inputMode="numeric" autoFocus
+            onChange={e => setLockPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            onKeyDown={e => { if (e.key === "Enter" && lockPin.length >= 4) unlock(); }}
+            style={{ fontFamily:"var(--mono)", letterSpacing:8, fontSize:20, textAlign:"center" }} />
+        </F>
+        <button className="vz-btn" disabled={lockPin.length < 4} onClick={unlock}>Unlock</button>
+        <button className="vz-link" onClick={signOut}>Not you? Log out</button>
+      </div>
+    </div>
+  );
 
   const RoleGate = () => {
     const t = (k) => tr(lang, k);
@@ -3009,7 +3060,8 @@ function VibeCRM() {
 
   /* ------------------------- chrome ------------------------- */
   const TITLES = { home:"Control room", vendors:"Vendors", orders:"Campaigns", field:"Field proof", fleet:"Fleet & drivers", money:"Finance" };
-  const fabFor = mode === "driver" ? null : {
+  const adminLocked = mode === "manager" && locked;
+  const fabFor = (mode === "driver" || adminLocked) ? null : {
     vendors: perm.campaign ? ["Add vendor", () => setSheet({ type:"vendor" })] : null,
     orders: perm.campaign ? ["New campaign", () => setSheet({ type:"order" })] : null,
     fleet: fleetView === "drivers" ? (perm.fleetEdit ? ["Add driver", () => setSheet({ type:"driver" })] : null)
@@ -3040,13 +3092,13 @@ function VibeCRM() {
             {mode === "manager" && (pics[me && me.photoId] || (me && me.photoUrl)) && (
               <img className="vz-hdrav" src={pics[me && me.photoId] || me.photoUrl} alt="" />
             )}
-            {mode === "manager" && (
+            {mode === "manager" && !adminLocked && (
               <button className="vz-gear" onClick={() => setSheet({ type:"alerts" })} aria-label="Renewal alerts">
                 <Icon d={ICONS.bell} />
                 {stats.alerts.length > 0 && <span className="vz-badge">{stats.alerts.length}</span>}
               </button>
             )}
-            {mode === "manager" && perm.settings && <button className="vz-gear" onClick={() => setSheet({ type:"settings" })}><Icon d={ICONS.gear} /></button>}
+            {mode === "manager" && !adminLocked && perm.settings && <button className="vz-gear" onClick={() => setSheet({ type:"settings" })}><Icon d={ICONS.gear} /></button>}
             {mode === "manager" && <button className="vz-logout" onClick={signOut} aria-label="Log out"><Icon d={ICONS.out} />Log out</button>}
           </div>
         </div>
@@ -3054,8 +3106,9 @@ function VibeCRM() {
 
 
       {!mode && RoleGate()}
+      {adminLocked && LockScreen()}
 
-      <main className="vz-body" style={{ display: mode ? "block" : "none" }}>
+      <main className="vz-body" style={{ display: (mode && !adminLocked) ? "block" : "none" }}>
         {full && (
           <div className="vz-card" style={{ background:"#FDE4E5", borderColor:"#F3B9BB" }}>
             <div className="vz-meta" style={{ marginTop:0, color:"#B4262A" }}>
@@ -3076,7 +3129,7 @@ function VibeCRM() {
 
       {fabFor && <button className="vz-fab" onClick={fabFor[1]}>+ {fabFor[0]}</button>}
 
-      {mode === "manager" && (
+      {mode === "manager" && !adminLocked && (
         <nav className="vz-nav">
           {[["home","Home"],["vendors","Vendors"],["orders","Orders"],["field","Field"],["fleet","Fleet"],["money","Money"]]
             .filter(([k]) => perm.tabs.includes(k)).map(([k, l]) => (
