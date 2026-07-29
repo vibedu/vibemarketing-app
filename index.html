@@ -189,6 +189,19 @@ const CSS = `
 .vz-nav button[data-on="1"] { color:var(--yellow); }
 .vz-nav svg { width:20px; height:20px; }
 
+/* Tablets & larger: widen the app to a comfortable column instead of a phone-width strip. */
+@media (min-width:700px){
+  .vz { max-width:760px; }
+  .vz-nav { max-width:760px; }
+  .vz-sheet { max-width:600px; }
+  .vz-body { padding-left:22px; padding-right:22px; }
+  /* keep login forms compact and centred even on a wide screen */
+  .vz-logincard { max-width:440px; width:100%; margin-left:auto; margin-right:auto; }
+  .vz-authwrap { max-width:460px; width:100%; margin-left:auto; margin-right:auto; }
+  /* use the extra width for the summary tiles */
+  .vz-grid { grid-template-columns:repeat(4,1fr); }
+}
+
 .vz-scrim { position:fixed; inset:0; background:rgba(10,14,24,.5); z-index:60; display:flex; align-items:flex-end; justify-content:center; }
 .vz-sheet { background:#fff; width:100%; max-width:480px; border-radius:18px 18px 0 0; max-height:92vh; overflow-y:auto; padding:8px 16px 30px; }
 .vz-handle { width:38px; height:4px; background:#D2D7E0; border-radius:2px; margin:6px auto 12px; }
