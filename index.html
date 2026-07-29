@@ -2240,12 +2240,15 @@ function VibeCRM() {
         </div>
         <div className="vz-invoice">
           <div className="inv-head">
-            <div>
-              <div className="inv-co">{s.company}</div>
-              <div className="inv-sm">{s.address}</div>
-              <div className="inv-sm">Mob: {s.bizPhone}  ·  {s.website}</div>
-              <div className="inv-sm">Email: {s.bizEmail}</div>
-              <div className="inv-sm"><b>GSTIN: {s.gstin}</b></div>
+            <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
+              <img src="icon.svg" alt="" style={{ width:56, height:56, borderRadius:13, flex:"0 0 auto" }} />
+              <div>
+                <div className="inv-co">{s.company}</div>
+                <div className="inv-sm">{s.address}</div>
+                <div className="inv-sm">Mob: {s.bizPhone}  ·  {s.website}</div>
+                <div className="inv-sm">Email: {s.bizEmail}</div>
+                <div className="inv-sm"><b>GSTIN: {s.gstin}</b></div>
+              </div>
             </div>
             <div className="inv-title">TAX INVOICE</div>
           </div>
