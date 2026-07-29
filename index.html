@@ -1087,6 +1087,14 @@ function AttendanceSheet({ db, vehOf, drvOf, onClose }) {
                 <div className="vz-meta" style={{ fontFamily:"var(--mono)" }}>{a.vehiclePlate || (v ? v.plate : "—")}</div>
                 <div className="vz-meta">In {clock(a.inAt)}{a.outAt ? " · Out " + clock(a.outAt) : ""}{a.autoClosed ? " · auto" : ""}</div>
                 <div className="vz-meta">KM {a.openKm != null ? a.openKm : "—"} → {a.closeKm != null ? a.closeKm : "—"}{(a.openKm != null && a.closeKm != null) ? "  (" + (a.closeKm - a.openKm) + " km)" : ""}</div>
+                {a.selfieUrl && (
+                  <a href={a.selfieUrl} target="_blank" rel="noreferrer" style={{ display:"inline-block", marginTop:6 }}>
+                    <img src={a.selfieUrl} alt="punch-in selfie" style={{ width:64, height:84, objectFit:"cover", borderRadius:8, border:"1px solid var(--line)" }} />
+                  </a>
+                )}
+                {(a.lat != null && a.lng != null) && (
+                  <a className="vz-meta" style={{ color:"#2C6FD1", display:"block" }} href={mapLink(a.lat, a.lng)} target="_blank" rel="noreferrer">Open punch-in location</a>
+                )}
               </div>
               <Chip c={a.outAt ? "c-grey" : "c-green"}>{a.outAt ? "Done" : "On duty"}</Chip>
             </div>
@@ -1320,10 +1328,11 @@ function VibeCRM() {
   const [openOrder, setOpenOrder] = useState(null);
   const [openProof, setOpenProof] = useState(null);
   const [invoice, setInvoice] = useState(null);
-  const [login, setLogin] = useState({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"" });
+  const [login, setLogin] = useState({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null });
   const [verified, setVerified] = useState(null);
   const [closing, setClosing] = useState(false);
   const [closeKm, setCloseKm] = useState("");
+  const [snapping, setSnapping] = useState(false);
   const [toast, setToast] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [full, setFull] = useState(false);
@@ -1400,7 +1409,8 @@ function VibeCRM() {
             id: r.id, date: r.date, vehicleId: r.vehicle_id, vehiclePlate: r.vehicle_plate || "", driverName: r.driver_name,
             inAt: srvISO(r.in_at), outAt: srvISO(r.out_at), lat: r.lat != null ? +r.lat : null,
             lng: r.lng != null ? +r.lng : null, autoClosed: !!(+r.auto_closed),
-            openKm: r.open_km != null ? +r.open_km : null, closeKm: r.close_km != null ? +r.close_km : null }; });
+            openKm: r.open_km != null ? +r.open_km : null, closeKm: r.close_km != null ? +r.close_km : null,
+            selfieUrl: r.selfie_url || "" }; });
           next = { ...next, attendance: Object.values(byId) };
         }
         return next;
@@ -1549,20 +1559,56 @@ function VibeCRM() {
     setVerified(driver);
   };
 
-  // Step 2: opening kilometres entered -> start the shift.
+  // Step 2a: capture a punch-in selfie with a GPS + time stamp burned into it.
+  const selfieRef = useRef(null);
+  const grabSelfie = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (e.target) e.target.value = "";
+    if (!file) return;
+    setSnapping(true);
+    const veh = vehOf(login.vehicleId);
+    const fix = await getFix();
+    const stamp = [
+      (verified && verified.name ? verified.name : (login.driverName || "Driver")) + (veh ? " · " + veh.plate : ""),
+      new Date().toLocaleString(),
+      fix.ok ? ("GPS " + fix.lat + ", " + fix.lng + " (±" + fix.acc + "m)") : "GPS unavailable",
+    ];
+    try {
+      const dataUrl = await processShot(file, stamp);
+      const id = "self_" + uid();
+      savePic(id, dataUrl);
+      setLogin(l => ({ ...l, selfieId: id, selfieLat: fix.ok ? fix.lat : null, selfieLng: fix.ok ? fix.lng : null, selfieAcc: fix.ok ? fix.acc : null }));
+    } catch (err) {
+      setToast(lang === "ta" ? "படத்தை படிக்க முடியவில்லை, மீண்டும் முயற்சிக்கவும்" : "Couldn't read that photo — try again");
+    }
+    setSnapping(false);
+  };
+
+  // Step 2b: opening kilometres entered -> start the shift.
   const beginDuty = async () => {
     const veh = vehOf(login.vehicleId);
     const driver = verified;
     const openKm = (login.openKm || "").replace(/\D/g, "");
     if (!veh || !driver || openKm === "") return;
-    const fix = await getFix();
+    if (!login.selfieId || !pics[login.selfieId]) { setToast(lang === "ta" ? "முதலில் உங்கள் செல்தியை எடுக்கவும்" : "Please take your punch-in selfie first"); return; }
+    // Sanity-check the odometer: opening km should not be below the vehicle's last recorded reading.
+    const last = (db.attendance || []).filter(a => a.vehicleId === veh.id && (a.closeKm != null || a.openKm != null))
+      .sort((a, b) => (String(a.inAt) < String(b.inAt) ? 1 : -1))[0];
+    const lastKm = last ? (last.closeKm != null ? last.closeKm : last.openKm) : null;
+    if (lastKm != null && +openKm < lastKm) {
+      setToast((lang === "ta" ? "ஆரம்ப KM " : "Opening km ") + openKm + (lang === "ta" ? " கடந்த பதிவு " : " is below the last reading ") + lastKm + " — " + (lang === "ta" ? "மீட்டரை சரிபார்க்கவும்" : "check the odometer"));
+      return;
+    }
+    const selfie = pics[login.selfieId] || "";
     const rec = { id: uid(), driverId: driver.id || "", driverName: driver.name, driverPhoto: driver.photoUrl || "", vehicleId: veh.id, date: today(),
       inAt: new Date().toISOString(), outAt: "", substitute: false, openKm: +openKm, closeKm: null,
-      lat: fix.ok ? fix.lat : null, lng: fix.ok ? fix.lng : null };
+      lat: login.selfieLat != null ? login.selfieLat : null, lng: login.selfieLng != null ? login.selfieLng : null,
+      selfieId: login.selfieId, selfieUrl: "" };
     setDb(d => ({ ...d, attendance: [rec, ...(d.attendance || [])], session: rec.id }));
     apiPost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: veh.id, vehicle_plate: veh.plate,
-      driver_name: driver.name, in_at: rec.inAt, out_at: "", lat: rec.lat, lng: rec.lng, open_km: +openKm });
-    setLogin({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"" });
+      driver_name: driver.name, in_at: rec.inAt, out_at: "", lat: rec.lat, lng: rec.lng, open_km: +openKm, selfie_data: selfie })
+      .then(res => { if (res && res.selfie_url) setDb(d => ({ ...d, attendance: (d.attendance || []).map(a => a.id === rec.id ? { ...a, selfieUrl: res.selfie_url } : a) })); });
+    setLogin({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null });
     setVerified(null);
     setToast(tr(lang, "dutyStarted") + " · " + veh.plate);
   };
@@ -2590,7 +2636,7 @@ function VibeCRM() {
         </div>
 
         <F label={t("vehicleNo")}>
-          <select value={login.vehicleId} onChange={e => { setVerified(null); setLogin({ vehicleId: e.target.value, driverId:"", driverName: login.driverName, pin:"", openKm:"" }); }}>
+          <select value={login.vehicleId} onChange={e => { setVerified(null); setLogin({ vehicleId: e.target.value, driverId:"", driverName: login.driverName, pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null }); }}>
             <option value="">—</option>
             {db.vehicles.map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}
           </select>
@@ -2620,14 +2666,32 @@ function VibeCRM() {
             <div className="vz-card" style={{ background:"#EAF6EE", borderColor:"#BFE6CC" }}>
               <div className="vz-meta" style={{ marginTop:0, color:"#12703A" }}>{lang === "ta" ? "வரவேற்பு" : "Welcome"}, <b>{verified.name}</b>{veh ? " · " + veh.plate : ""}</div>
             </div>
+
+            <F label={lang === "ta" ? "பஞ்ச்-இன் செல்தி (Punch-in selfie)" : "Punch-in selfie"}>
+              {login.selfieId && pics[login.selfieId] && (
+                <img src={pics[login.selfieId]} alt="punch-in selfie" style={{ width:"100%", borderRadius:12, marginBottom:8, border:"1px solid var(--line)" }} />
+              )}
+              <button type="button" className="vz-big" disabled={snapping} onClick={() => selfieRef.current && selfieRef.current.click()}>
+                <Icon d={ICONS.field} />
+                {snapping
+                  ? (lang === "ta" ? "படம் சேமிக்கிறது…" : "Saving…")
+                  : (login.selfieId ? (lang === "ta" ? "மீண்டும் எடு" : "Retake selfie") : (lang === "ta" ? "செல்தி எடு" : "Take selfie"))}
+              </button>
+              <input ref={selfieRef} className="vz-hidden" type="file" accept="image/*" capture="user" onChange={grabSelfie} />
+              <div className="vz-meta" style={{ marginTop:6 }}>
+                {lang === "ta" ? "உங்கள் முகம் தெரியும்படி புகைப்படம் எடுக்கவும் — நேரம் & இடம் பதிவாகும்." : "Take a clear photo of your face — time & location are stamped on it."}
+              </div>
+            </F>
+
             <F label={lang === "ta" ? "ஆரம்ப கிலோமீட்டர் (Opening KM)" : "Opening kilometers"}>
               <input value={login.openKm} onChange={e => setLogin({ ...login, openKm: e.target.value.replace(/\D/g, "").slice(0, 8) })}
                 inputMode="numeric" placeholder={lang === "ta" ? "மீட்டர் அளவை உள்ளிடவும்" : "Enter the odometer reading"} style={{ fontFamily:"var(--mono)", fontSize:19 }} />
             </F>
-            <button className="vz-btn go" disabled={(login.openKm || "") === ""} onClick={beginDuty}>
+            <button className="vz-btn go" disabled={(login.openKm || "") === "" || !login.selfieId || snapping} onClick={beginDuty}>
               {t("startDuty")}
             </button>
-            <button className="vz-link" onClick={() => { setVerified(null); setLogin({ ...login, pin:"", openKm:"" }); }}>{lang === "ta" ? "மாற்று" : "Not you? Go back"}</button>
+            {!login.selfieId && <div className="vz-meta" style={{ textAlign:"center", color:"#8A6100" }}>{lang === "ta" ? "தொடங்க செல்தி தேவை" : "A punch-in selfie is required to start"}</div>}
+            <button className="vz-link" onClick={() => { setVerified(null); setLogin({ ...login, pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null }); }}>{lang === "ta" ? "மாற்று" : "Not you? Go back"}</button>
           </>
         )}
 
