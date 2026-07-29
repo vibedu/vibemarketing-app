@@ -715,20 +715,30 @@ const INVOICE_DEFAULTS = {
   bankBranch: "R.S Puram Coimbatore",
   bankAcType: "Current",
   nextInvNo: 29,
+  invTermsVer: 2,
   invTerms:
-    "1. The rates mentioned above are inclusive of 18% tax.\n" +
-    "2. Vehicle includes up to 40 kilometers per day free of charge (from 10 AM to 6 PM). Extra charges for light: ₹100 per hour.\n" +
-    "3. Additional charges apply for extra travelling kilometres — ₹15 per km per vehicle; tollgate charges extra.\n" +
-    "4. Labour charges are payable separately; driver accommodation to be arranged and paid by you.\n" +
-    "5. For campaigns running outside Coimbatore, the driver's accommodation must be arranged and paid by the vendor.\n" +
-    "6. Before the campaign begins, an advance payment of 50% of the total amount is required.",
+    "1. All rates are inclusive of 18% GST.\n" +
+    "2. A 50% advance of the total is payable before the campaign begins; the balance is due on or before the last day of the campaign.\n" +
+    "3. Each vehicle covers up to 40 kilometres per day, between 10 AM and 6 PM, at no extra cost.\n" +
+    "4. Extra running beyond 40 km/day is charged at ₹15 per kilometre, per vehicle.\n" +
+    "5. Running beyond 6 PM with lights is charged at ₹100 per hour, per vehicle.\n" +
+    "6. Tollgate, parking and permit charges are extra, on actuals.\n" +
+    "7. Flex, fabrication and labour are charged separately. Please approve the flex design before printing; reprints due to changes from your side are chargeable.\n" +
+    "8. For campaigns outside Coimbatore, you must arrange and pay for the driver's accommodation and food. If these are not provided, an allowance of ₹600 per driver per day will be charged.\n" +
+    "9. Please do NOT give any tips, cash or extra amount to our drivers. All payments must be made only to Vibe Marketing, through the bank details on this invoice.\n" +
+    "10. Any complaint about a driver or the campaign must be reported to us IMMEDIATELY — not at the end of the campaign — so we can sort it out at once. Contact: Raj Mohan, 91500 70422.\n" +
+    "11. Daily running photos with GPS location and time stamp are shared as proof of the campaign.\n" +
+    "12. Delays caused by vehicle breakdown, strike, weather or other reasons beyond our control will be adjusted by extending the affected days.",
 };
 /* fill any missing business/bank/invoice settings with the defaults above (one-time) */
 const seedInvoiceDefaults = (d) => {
   const s = { ...(d.settings || {}) };
-  if (s._invSeeded) return d;
-  Object.keys(INVOICE_DEFAULTS).forEach(k => { if (s[k] === undefined || s[k] === "" || s[k] === null) s[k] = INVOICE_DEFAULTS[k]; });
-  s._invSeeded = true;
+  if (!s._invSeeded) {
+    Object.keys(INVOICE_DEFAULTS).forEach(k => { if (s[k] === undefined || s[k] === "" || s[k] === null) s[k] = INVOICE_DEFAULTS[k]; });
+    s._invSeeded = true;
+  }
+  // Always keep the Terms & Conditions at the latest version (updates existing installs too).
+  if (s.invTermsVer !== INVOICE_DEFAULTS.invTermsVer) { s.invTerms = INVOICE_DEFAULTS.invTerms; s.invTermsVer = INVOICE_DEFAULTS.invTermsVer; }
   return { ...d, settings: s };
 };
 
