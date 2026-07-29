@@ -2697,7 +2697,7 @@ function VibeCRM() {
   };
   const adminLogin = async () => {
     const email = (gate.email || "").trim(); const pw = gate.pw || ""; const pin = gate.pin || "";
-    if (!email || !pw || pin.length < 4) return;
+    if (!email || !pw) return; // PIN is optional
     const res = await apiPost("admin_login.php", { email, password: pw });
     if (!res) { setToast("Could not reach the server — check your connection"); return; }
     if (!res.ok || !res.token) { setToast(res.error === "wrong email or password" ? "Wrong email or password" : (res.error || "Login failed")); return; }
@@ -2706,7 +2706,7 @@ function VibeCRM() {
   const adminSetup = async () => {
     const email = (gate.email || "").trim(); const pw = gate.pw || ""; const pin = gate.pin || "";
     const code = (gate.setupCode || "").trim(); const name = (gate.name || "").trim();
-    if (!email || !pw || pin.length < 4 || !code) return;
+    if (!email || !pw) return; // PIN and setup code are optional (code is enforced server-side only if configured)
     const s = await apiPost("admin_setup.php", { setup_key: code, email, password: pw, name });
     if (!s) { setToast("Could not reach the server — check your connection"); return; }
     if (!s.ok) { setToast(s.error || "Setup failed"); return; }
