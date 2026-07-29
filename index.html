@@ -351,7 +351,7 @@ const TX = {
   office:       ["Office login", "அலுவலக உள்நுழைவு"],
   officeSub:    ["Passcode needed", "கடவு எண் தேவை"],
   signOut:      ["Sign out", "வெளியேறு"],
-  notDriver:    ["Not a driver? Office login", "ஓட்டுநர் இல்லையா? அலுவலக உள்நுழைவு"],
+  notDriver:    ["Not a driver? Admin login", "ஓட்டுநர் இல்லையா? நிர்வாக உள்நுழைவு"],
   back:         ["Back", "பின் செல்"],
 };
 const tr = (lang, k) => { const e = TX[k]; return e ? (lang === "ta" ? e[1] : e[0]) : k; };
@@ -367,11 +367,8 @@ const ROLES = {
   "Director":      { tabs:["home","vendors","orders","field","fleet","money"], money:true, settings:true, users:true,  fleetEdit:true,  del:true,  invoice:true,  campaign:true },
   "Finance":       { tabs:["home","vendors","orders","money"],                 money:true, settings:true, users:false, fleetEdit:true,  del:true,  invoice:true,  campaign:true },
   "Field manager": { tabs:["home","orders","field","fleet"],                   money:false, settings:false, users:false, fleetEdit:true, del:true,  invoice:false, campaign:true },
-  // View-everything manager: can create campaigns/proformas/quotes, but cannot add/edit/delete
-  // vehicles/drivers/managers, cannot delete anything, and cannot generate invoices.
-  "Manager":       { tabs:["home","vendors","orders","field","fleet","money"], money:true, settings:false, users:false, fleetEdit:false, del:false, invoice:false, campaign:true },
 };
-// office roles a Director can assign to office users (Manager is created separately in Fleet)
+// office roles a Director can assign to office users
 const ROLE_NAMES = ["Director", "Finance", "Field manager"];
 const roleOf = (u) => ROLES[u && u.role] || ROLES["Field manager"];
 const addMonths = (iso, n) => {
@@ -941,49 +938,6 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
   );
 }
 
-function ManagerForm({ init, pics, onPhoto, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { name:"", phone:"", address:"", userid:"", password:"", photoId:"" });
-  const faceRef = useRef(null);
-  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
-  const grab = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const dataUrl = await processShot(file, null);
-    const id = uid();
-    onPhoto(id, dataUrl);
-    set(prev => ({ ...prev, photoId: id }));
-    e.target.value = "";
-  };
-  const faceSrc = pics[f.photoId] || f.photoUrl;
-  const ready = f.name.trim() && String(f.phone || "").replace(/\D/g, "").length >= 10 && f.userid.trim() && f.password;
-  return (
-    <Sheet title={init ? "Manager profile" : "Add manager"} onClose={onClose}>
-      <div className="vz-shot" style={{ marginBottom:14, alignItems:"center" }}>
-        {faceSrc ? <img className="vz-thumb av" src={faceSrc} alt="" onClick={() => faceSrc && window.open(faceSrc, "_blank")} />
-          : <div className="vz-avblank">{(f.name || "?").slice(0, 1)}</div>}
-        <div style={{ flex:1 }}>
-          <button className="vz-btn alt" style={{ margin:0 }} onClick={() => faceRef.current && faceRef.current.click()}>
-            {faceSrc ? "Retake photo" : "Take manager photo"}
-          </button>
-        </div>
-        <input ref={faceRef} className="vz-hidden" type="file" accept="image/*" capture="user" onChange={grab} />
-      </div>
-      <div className="vz-2">
-        <F label="Name *"><input value={f.name} onChange={u("name")} /></F>
-        <F label="Mobile number *"><input value={f.phone} onChange={u("phone")} inputMode="tel" placeholder="10-digit" /></F>
-      </div>
-      <F label="Address"><textarea rows={2} value={f.address} onChange={u("address")} /></F>
-      <div className="vz-eyebrow" style={{ marginTop:14 }}>Login (you give these to the manager)</div>
-      <F label="User ID *"><input value={f.userid} onChange={u("userid")} autoComplete="off" placeholder="e.g. ramesh" /></F>
-      <F label="Password *"><input value={f.password} onChange={u("password")} autoComplete="off" placeholder="any text or number" /></F>
-      <button className="vz-btn" disabled={!ready}
-        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), userid: f.userid.trim() })}>Save manager</button>
-      {!ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name, 10-digit mobile, user ID and password.</div>}
-      {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete manager</button>}
-    </Sheet>
-  );
-}
-
 function PaymentForm({ orders, vendors, onSave, onClose }) {
   const [f, set] = useState({ orderId: orders[0]?.id || "", date: today(), amount:"", mode:"UPI", kind:"Advance", ref:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
@@ -1311,9 +1265,9 @@ function CaptureSheet({ ctx, pics, lang, onPhoto, onSave, onClose }) {
 function VibeCRM() {
   const [db, setDb] = useState(blankData);
   const [pics, setPics] = useState({});
-  // db.mgr is set when a restricted Manager is signed in (they are not office users)
-  const me = db.mgr || (db.users || []).find(u => u.id === db.userId) || null;
-  const perm = db.mgr ? ROLES["Manager"] : roleOf(me);
+  // The admin (office) user has complete rights over everything in the app.
+  const me = (db.users || []).find(u => u.id === db.userId) || null;
+  const perm = ROLES["Director"];
   const mode = db.role || "";
   const setMode = (v) => setDb(d => ({ ...d, role: v }));
   const [gate, setGate] = useState({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
@@ -1371,7 +1325,7 @@ function VibeCRM() {
     const srvISO = (s) => (s && typeof s === "string") ? s.replace(" ", "T") + "Z" : (s || "");
     let stop = false;
     const pull = async () => {
-      const [pr, at, dr, mg] = await Promise.all([apiGet("proofs.php"), apiGet("attendance.php"), apiGet("drivers.php"), apiGet("managers.php")]);
+      const [pr, at, dr] = await Promise.all([apiGet("proofs.php"), apiGet("attendance.php"), apiGet("drivers.php")]);
       if (stop || (!Array.isArray(pr) && !Array.isArray(at) && !Array.isArray(dr) && !Array.isArray(mg))) return;
       setDb(d => {
         let next = d;
@@ -1383,14 +1337,6 @@ function VibeCRM() {
             photoUrl: r.photo_url || "", dlFrontUrl: r.dl_front_url || "", dlBackUrl: r.dl_back_url || "", fromServer: true,
           }));
           if (add.length) next = { ...next, drivers: [...add, ...(next.drivers || [])] };
-        }
-        if (Array.isArray(mg)) {
-          const have = new Set((next.managers || []).map(x => x.id));
-          const add = mg.filter(r => !have.has(r.id)).map(r => ({
-            id: r.id, name: r.name, phone: r.phone, address: r.address || "", userid: r.userid || "",
-            password: "", photoId: "", photoUrl: r.photo_url || "", fromServer: true,
-          }));
-          if (add.length) next = { ...next, managers: [...add, ...(next.managers || [])] };
         }
         if (Array.isArray(pr)) {
           const have = new Set((d.proofs || []).map(p => p.id));
@@ -1423,11 +1369,9 @@ function VibeCRM() {
 
   /* office: push the driver roster to the shared server so drivers can log in on their phones */
   useEffect(() => {
-    if (!loaded || mode !== "manager" || db.mgr) return; // only the office/admin pushes the roster
+    if (!loaded || mode !== "manager") return; // only the office/admin pushes the roster
     (db.drivers || []).filter(d => !d.fromServer).forEach(d => apiPost("drivers.php", { id: d.id, name: d.name, phone: d.phone, pin: d.pin || "", active: 1,
       emergency: d.refPhone || "", dl: d.dl || "", dl_expiry: d.dlExpiry || "" }));
-    (db.managers || []).filter(m => !m.fromServer && m.password).forEach(m => apiPost("managers.php", { id: m.id, name: m.name, phone: m.phone,
-      address: m.address || "", userid: m.userid, password: m.password, active: 1 }));
   }, [loaded, mode]);
 
   /* Drivers stay signed in all day; the app auto-signs them out at night.
@@ -2175,7 +2119,6 @@ function VibeCRM() {
       <div className="vz-seg">
         <button data-on={fleetView === "vehicles" ? "1" : "0"} onClick={() => setFleetView("vehicles")}>Vehicles ({db.vehicles.length})</button>
         <button data-on={fleetView === "drivers" ? "1" : "0"} onClick={() => setFleetView("drivers")}>Drivers ({db.drivers.length})</button>
-        <button data-on={fleetView === "managers" ? "1" : "0"} onClick={() => setFleetView("managers")}>Managers ({(db.managers || []).length})</button>
         <button data-on={fleetView === "jobs" ? "1" : "0"} onClick={() => setFleetView("jobs")}>Workshop</button>
         <button data-on={fleetView === "docs" ? "1" : "0"} onClick={() => setFleetView("docs")}>
           Papers{stats.alerts.length ? " (" + stats.alerts.length + ")" : ""}
@@ -2304,28 +2247,6 @@ function VibeCRM() {
           </button>
         );
       })}
-
-      {fleetView === "managers" && (
-        <div className="vz-eyebrow" style={{ marginTop:0 }}>
-          Managers view everything but can't add/edit/delete or make invoices
-          {perm.users && <button onClick={() => setSheet({ type:"manager" })}>+ Add</button>}
-        </div>
-      )}
-      {fleetView === "managers" && (db.managers || []).length === 0 && (
-        <Empty head="No managers yet" sub="Add a manager with a user ID and password so they can sign in from their own phone." />
-      )}
-      {fleetView === "managers" && (db.managers || []).map(m => (
-        <button className="vz-card vz-tapcard" key={m.id} onClick={() => { if (perm.users) setSheet({ type:"manager", data:m }); }}>
-          <div className="vz-shot">
-            {(pics[m.photoId] || m.photoUrl) ? <img className="vz-thumb av" src={pics[m.photoId] || m.photoUrl} alt="" /> : <div className="vz-avblank">{(m.name || "?").slice(0, 1)}</div>}
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="vz-title">{m.name}</div>
-              <div className="vz-meta">{m.phone}<br />User ID: {m.userid}</div>
-            </div>
-            <Chip c="c-blue">Manager</Chip>
-          </div>
-        </button>
-      ))}
 
       {fleetView === "jobs" && (
         <>
@@ -2486,26 +2407,9 @@ function VibeCRM() {
 
   /* ---------------- driver mode ---------------- */
   const signOut = () => {
-    setDb(d => ({ ...d, role: "", userId: "", mgr: null }));
-    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", mgrId:"", mgrPw:"" });
+    setDb(d => ({ ...d, role: "", userId: "" }));
+    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
     setTab("home");
-  };
-
-  // Manager sign-in: validate user id + password against the registered managers.
-  const managerLogin = async () => {
-    const userid = (gate.mgrId || "").trim();
-    const password = gate.mgrPw || "";
-    if (!userid || !password) return;
-    const res = await apiPost("manager_login.php", { userid, password });
-    let mgr = res && res.ok && res.manager ? res.manager : null;
-    if (!mgr) {
-      const m0 = (db.managers || []).find(x => String(x.userid || "").trim() === userid && String(x.password || "") === password);
-      if (m0) mgr = { id: m0.id, name: m0.name, photo_url: m0.photoUrl || "" };
-    }
-    if (!mgr) { setToast("Wrong user ID or password"); return; }
-    setDb(d => ({ ...d, role: "manager", userId: "", mgr: { id: mgr.id, name: mgr.name, role: "Manager", photoUrl: mgr.photo_url || "" } }));
-    setTab("home");
-    setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", mgrId:"", mgrPw:"" });
   };
 
   const RoleGate = () => {
@@ -2513,7 +2417,7 @@ function VibeCRM() {
     const users = db.users || [];
     const first = users.length === 0;
 
-    const resetGate = { step:"choose", userId:"", name:"", pin:"", pin2:"", mgrId:"", mgrPw:"" };
+    const resetGate = { step:"choose", userId:"", name:"", pin:"", pin2:"" };
     const hero = (
       <div className="vz-loginhero">
         <img src="icon.svg" alt="" className="vz-loginlogo" />
@@ -2522,32 +2426,16 @@ function VibeCRM() {
       </div>
     );
 
-    if (gate.step === "mgr") {
-      return (
-        <div className="vz-gate">
-          {hero}
-          <div className="vz-logincard">
-            <h2>Manager sign in</h2>
-            <p>Enter the user ID and password your admin gave you.</p>
-            <F label="User ID"><input value={gate.mgrId || ""} onChange={e => setGate({ ...gate, mgrId: e.target.value })} autoComplete="off" placeholder="user id" /></F>
-            <F label="Password"><input type="password" value={gate.mgrPw || ""} onChange={e => setGate({ ...gate, mgrPw: e.target.value })} placeholder="password" /></F>
-            <button className="vz-btn" disabled={!(gate.mgrId || "").trim() || !(gate.mgrPw || "")} onClick={managerLogin}>Sign in</button>
-            <button className="vz-link" onClick={() => setGate(resetGate)}>{t("back")}</button>
-          </div>
-        </div>
-      );
-    }
-
     if (gate.step === "office") {
       const picked = users.find(u => u.id === gate.userId);
       return (
         <div className="vz-gate">
           {hero}
           <div className="vz-logincard">
-          <h2>{first ? "Create your account" : "Office login"}</h2>
+          <h2>{first ? "Create the admin account" : "Admin login"}</h2>
           <p>{first
-            ? "You are the first user, so you get the Director role — full access, and you can add the others afterwards."
-            : "Pick your name and enter your PIN."}</p>
+            ? "This is the admin account — full access to everything in the app."
+            : "Enter your admin PIN."}</p>
 
           {first ? (
             <>
@@ -2591,7 +2479,7 @@ function VibeCRM() {
                     setTab(roleOf(picked).tabs[0]);
                     setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
                   } else { setToast("Wrong PIN"); setGate({ ...gate, pin: "" }); }
-                }}>Open office</button>
+                }}>Open admin</button>
             </>
           )}
           <button className="vz-link" onClick={() => setGate(resetGate)}>{t("back")}</button>
@@ -2604,17 +2492,13 @@ function VibeCRM() {
       <div className="vz-gate">
         {hero}
         <div className="vz-logincard">
-          <button className="vz-pick" onClick={() => setGate({ ...resetGate, step:"mgr" })}>
-            <span className="vz-ic" style={{ background:"#EAF0FB", color:"#2C6FD1" }}><Icon d={ICONS.chart || ICONS.bell} /></span>
-            <span><b>Manager Sign in</b><small>View campaigns, fleet &amp; driver activity</small></span>
-          </button>
           <button className="vz-pick dark" onClick={() => setMode("driver")}>
             <span className="vz-ic"><Icon d={ICONS.field} /></span>
             <span><b>{t("iAmDriver")}</b><small>{t("iAmDriverSub")}</small></span>
           </button>
           <button className="vz-pick" onClick={() => setGate({ ...resetGate, step:"office" })}>
             <span className="vz-ic" style={{ background:"#E5E8EE" }}><Icon d={ICONS.lock} /></span>
-            <span><b>{t("office")}</b><small>{first ? "First time — create your account" : t("officeSub")}</small></span>
+            <span><b>Admin</b><small>{first ? "First time — create the admin account" : "Full access — fleet, campaigns, finance"}</small></span>
           </button>
         </div>
         <div className="vz-mode" style={{ margin:"18px auto 0", width:"fit-content" }}>
@@ -2908,7 +2792,6 @@ function VibeCRM() {
     vendors: perm.campaign ? ["Add vendor", () => setSheet({ type:"vendor" })] : null,
     orders: perm.campaign ? ["New campaign", () => setSheet({ type:"order" })] : null,
     fleet: fleetView === "drivers" ? (perm.fleetEdit ? ["Add driver", () => setSheet({ type:"driver" })] : null)
-      : fleetView === "managers" ? (perm.users ? ["Add manager", () => setSheet({ type:"manager" })] : null)
       : fleetView === "jobs" ? (perm.fleetEdit ? ["Log job", () => setSheet({ type:"job" })] : null)
       : fleetView === "docs" ? ["Send renewal list", () => remindRenewal(null)]
       : (perm.fleetEdit ? ["Add vehicle", () => setSheet({ type:"vehicle" })] : null),
@@ -3052,22 +2935,6 @@ function VibeCRM() {
             if (d0) apiPost("drivers.php", { id: d0.id, name: d0.name, phone: d0.phone, pin: d0.pin || "", active: 0 });
             setDb(d => ({ ...d, vehicles: d.vehicles.map(v => v.driverId === id ? { ...v, driverId: "" } : v) }));
             setSheet(null); setToast("Driver deleted");
-          }} />
-      )}
-      {sheet?.type === "manager" && (
-        <ManagerForm init={sheet.data} pics={pics} onPhoto={savePic} onClose={() => setSheet(null)}
-          onSave={(x) => {
-            put("managers", x); setSheet(null);
-            apiPost("managers.php", {
-              id: x.id, name: x.name, phone: x.phone, address: x.address || "", userid: x.userid, password: x.password || "", active: 1,
-              photo_data: pics[x.photoId] || "",
-            }).then(res => { if (res && res.photo_url) put("managers", { ...x, photoUrl: res.photo_url }); });
-          }}
-          onDelete={(id) => {
-            const m0 = (db.managers || []).find(x => x.id === id);
-            drop("managers", id);
-            if (m0) apiPost("managers.php", { id: m0.id, name: m0.name, phone: m0.phone, userid: m0.userid, password: m0.password || "", active: 0 });
-            setSheet(null); setToast("Manager deleted");
           }} />
       )}
       {sheet?.type === "payment" && (
