@@ -1,0 +1,17 @@
+# Secrets & runtime data — must NEVER be in the repo or deployed over the top
+api/config.php
+uploads/
+
+# Old / local-only working files (kept off the repo and the deploy)
+backend/
+*.zip
+logo-src.png
+icon-preview.png
+pothys_text.txt
+vibe-marketing-crm.jsx
+supabase-phase1.sql
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+node_modules/

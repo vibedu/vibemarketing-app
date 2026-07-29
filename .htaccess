@@ -1,0 +1,15 @@
+RewriteEngine On
+DirectoryIndex index.html
+
+# Never cache the app HTML or the service worker, so updates reach every phone
+# (including installed home-screen apps) on the next open.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+  <FilesMatch "sw\.js$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+</IfModule>
