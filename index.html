@@ -1167,7 +1167,7 @@ function PayLinkSheet({ order, vendor, math, paid, busy, status, onCreate, onClo
   const preset = (label, value) => (
     <button className="vz-chip c-blue" onClick={() => { setKind(label); setAmount(String(value)); }}>{label} · {inr(value)}</button>
   );
-  const notReady = status && !status.ready;
+  const notReady = status && !status.error && !status.ready;
   return (
     <Sheet title="Payment link" onClose={onClose}>
       {notReady && (
@@ -1693,10 +1693,26 @@ function VibeCRM() {
   }, [loaded, gate.step, db.adminToken]);
 
   // Razorpay setup state, refreshed when Settings or the payment-link sheet opens.
+  // Uses fetch directly so a server error can be reported instead of silently
+  // leaving the panel on "Checking…".
   useEffect(() => {
     if (!loaded || !db.adminToken) { setRzpStatus(null); return; }
     if (sheet?.type !== "settings" && sheet?.type !== "paylink") return;
-    apiGet("razorpay_status.php").then(r => { if (r) setRzpStatus(r); });
+    let gone = false;
+    (async () => {
+      try {
+        const r = await fetch(API_BASE + "/razorpay_status.php?key=" + encodeURIComponent(API_KEY),
+                              { headers: { "X-Admin-Token": ADMIN_TOKEN } });
+        const text = await r.text();
+        if (gone) return;
+        if (!r.ok) { setRzpStatus({ error: "Server error " + r.status, detail: text.slice(0, 120) }); return; }
+        try { setRzpStatus(JSON.parse(text)); }
+        catch (e) { setRzpStatus({ error: "Unexpected reply from the server", detail: text.slice(0, 120) }); }
+      } catch (e) {
+        if (!gone) setRzpStatus({ error: "Could not reach the server", detail: String(e.message || e) });
+      }
+    })();
+    return () => { gone = true; };
   }, [loaded, db.adminToken, sheet?.type]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_PICS, JSON.stringify(pics)); setFull(false); } catch (e) { setFull(true); } })(); }, [pics, loaded]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
@@ -3301,7 +3317,17 @@ function VibeCRM() {
       <div className="vz-eyebrow">Online payments (Razorpay)</div>
       <div className="vz-card">
         {!rzpStatus && <div className="vz-meta" style={{ marginTop:0 }}>Checking…</div>}
-        {rzpStatus && (
+        {rzpStatus && rzpStatus.error && (
+          <>
+            <div className="vz-row">
+              <div className="vz-title">Could not check</div>
+              <Chip c="c-red">Error</Chip>
+            </div>
+            <div className="vz-meta">{rzpStatus.error}</div>
+            {rzpStatus.detail && <div className="vz-pre" style={{ marginTop:8 }}>{rzpStatus.detail}</div>}
+          </>
+        )}
+        {rzpStatus && !rzpStatus.error && (
           <>
             <div className="vz-row">
               <div className="vz-title">{rzpStatus.ready ? "Ready to take payments" : "Setup incomplete"}</div>
