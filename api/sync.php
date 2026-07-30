@@ -10,6 +10,15 @@ require_admin();
 
 const SYNC_KINDS = ['vendor', 'order', 'payment', 'vehicle'];
 
+/* Say plainly when the table hasn't been created yet, rather than dying with an
+   empty 500 that reaches the app as "could not send changes". */
+try { db()->query('SELECT 1 FROM records LIMIT 1'); }
+catch (Throwable $e) {
+  http_response_code(503);
+  echo json_encode(['error' => 'The sync table does not exist yet — run db/db-sync.sql in phpMyAdmin.']);
+  exit;
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 /* Always report the server's clock so the client can page from it next time
