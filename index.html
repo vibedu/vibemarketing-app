@@ -509,6 +509,168 @@ const processShot = (file, lines) =>
     img.src = url;
   });
 
+/* ---------------------------- formal documents ----------------------------
+   Draws a quotation / proforma / tax invoice onto a canvas so it can be shared
+   straight into WhatsApp as an image, saved, or printed to PDF. Canvas rather
+   than HTML because a single image is what actually attaches to a chat. */
+const loadImg = (src) => new Promise((res, rej) => {
+  const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src;
+});
+
+const docImage = async ({ title, s, v, o, m }) => {
+  const W = 1240, PAD = 34, INK = "#2E2E2E", ORANGE = "#E5601F", LINE = "#B9B9B9";
+  const big = document.createElement("canvas");
+  big.width = W; big.height = 3600;
+  const g = big.getContext("2d");
+  const F = (w, sz) => { g.font = w + " " + sz + "px -apple-system, 'Segoe UI', Roboto, sans-serif"; };
+  const wrap = (text, maxW) => {
+    const out = []; let line = "";
+    String(text || "").split(/\s+/).forEach(word => {
+      const t = line ? line + " " + word : word;
+      if (g.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t;
+    });
+    if (line) out.push(line);
+    return out;
+  };
+  const box = (x1, y1, x2, y2) => { g.strokeStyle = LINE; g.lineWidth = 1.5; g.strokeRect(x1, y1, x2 - x1, y2 - y1); };
+
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, big.height);
+  g.textBaseline = "alphabetic";
+
+  /* ---- dark header: logo centred, then contact lines and GSTIN ---- */
+  let y = 0;
+  const HDR_TOP = 26;
+  let logo = null;
+  try { logo = await loadImg("logo-dark.png"); } catch (e) {}
+  let hy = HDR_TOP;
+  if (logo) { const lw = 470, lh = Math.round(lw * logo.height / logo.width); hy += lh + 18; }
+  g.textAlign = "center";
+  F("500", 20);
+  const addr = wrap(s.address || "", W - 200);
+  const contact = "Mob: " + (s.bizPhone || "") + ".  " + (s.website || "") + "  Email: " + (s.bizEmail || "");
+  const hdrH = hy + addr.length * 27 + 30 + 40 + 24;
+  g.fillStyle = "#2E2E2E"; g.fillRect(0, 0, W, hdrH);
+  if (logo) { const lw = 470, lh = Math.round(lw * logo.height / logo.width); g.drawImage(logo, (W - lw) / 2, HDR_TOP, lw, lh); }
+  let ty = (logo ? HDR_TOP + Math.round(470 * logo.height / logo.width) + 40 : HDR_TOP + 40);
+  g.fillStyle = "#E4E7EC"; F("500", 20);
+  addr.forEach(l => { g.fillText(l, W / 2, ty); ty += 27; });
+  F("600", 19); g.fillText(contact, W / 2, ty); ty += 34;
+  g.fillStyle = "#fff"; F("800", 24); g.fillText("GSTIN: " + (s.gstin || ""), W / 2, ty);
+  y = hdrH;
+
+  /* ---- orange title band ---- */
+  const bandH = 74;
+  g.fillStyle = ORANGE; g.fillRect(0, y, W, bandH);
+  g.fillStyle = "#fff"; F("800", 40);
+  g.fillText(title, W / 2, y + 52);
+  y += bandH;
+
+  /* ---- bill-to / document meta ---- */
+  g.textAlign = "left";
+  const midX = Math.round(W * 0.56), rowH = 46, metaTop = y;
+  const billLines = [
+    (v ? v.name : "—") + (v && v.person ? " (" + v.person + ")" : ""),
+    v && v.area ? v.area : "",
+    v && v.gst ? "GSTIN: " + v.gst : "",
+  ].filter(Boolean);
+  const metaRows = Math.max(billLines.length + 1, 3);
+  const metaH = metaRows * rowH;
+  g.fillStyle = ORANGE; F("800", 20); g.fillText("BILL TO", PAD + 12, y + 30);
+  g.fillStyle = INK; F("500", 22);
+  billLines.forEach((l, i) => g.fillText(l, PAD + 12, y + 30 + (i + 1) * rowH));
+  F("800", 22); g.fillStyle = INK;
+  g.fillText(title === "TAX INVOICE" ? "Tax Invoice No. :" : "Quotation No. :", midX + 14, y + 30);
+  g.fillText("Date:", midX + 14, y + 30 + rowH);
+  F("500", 22);
+  g.fillText(" " + (o.invNo || o.no || ""), midX + 250, y + 30);
+  g.fillText(" " + dmy(o.invDate || o.created || today()), midX + 250, y + 30 + rowH);
+  if (o.title) { F("500", 20); g.fillText("Campaign: " + o.title, midX + 14, y + 30 + rowH * 2); }
+  box(PAD, metaTop, midX, metaTop + metaH);
+  box(midX, metaTop, W - PAD, metaTop + metaH);
+  y = metaTop + metaH + 18;
+
+  /* ---- line-item table ---- */
+  const cols = [PAD, Math.round(W * 0.55), Math.round(W * 0.655), Math.round(W * 0.79), Math.round(W * 0.885), W - PAD];
+  const head = ["DESCRIPTION", "DAYS", "No. Vehicle", "Rate", "TOTAL"];
+  const thH = 50;
+  g.fillStyle = ORANGE; g.fillRect(PAD, y, W - PAD * 2, thH);
+  g.fillStyle = "#fff"; F("800", 20);
+  g.textAlign = "left";  g.fillText(head[0], cols[0] + 12, y + 33);
+  g.textAlign = "right";
+  for (let i = 1; i < 5; i++) g.fillText(head[i], cols[i + 1] - 12, y + 33);
+  y += thH;
+
+  const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const row = (desc, days, veh, rate, total) => {
+    const h = 48;
+    g.fillStyle = INK; F("500", 22);
+    g.textAlign = "left";  g.fillText(desc, cols[0] + 12, y + 32);
+    g.textAlign = "right";
+    [days, veh, rate, total].forEach((val, i) => g.fillText(val, cols[i + 2] - 12, y + 32));
+    box(PAD, y, W - PAD, y + h);
+    [cols[1], cols[2], cols[3], cols[4]].forEach(cx => { g.beginPath(); g.moveTo(cx, y); g.lineTo(cx, y + h); g.stroke(); });
+    y += h;
+  };
+  const area = (o.route || "").split("→")[0].split("-")[0].trim() || "Coimbatore";
+  row("Vehicle Charges " + area, String(m.days), String(o.vehicles || 0), money(o.rate), money(m.base));
+  if (m.extras > 0) row("Regular Flex & Fabrication Work", "0", String(o.vehicles || 1), money(m.extras), money(m.extras));
+
+  /* ---- totals ---- */
+  const totRow = (label, value, bold) => {
+    const h = 48;
+    box(PAD, y, W - PAD, y + h);
+    g.beginPath(); g.moveTo(cols[4], y); g.lineTo(cols[4], y + h); g.stroke();
+    g.beginPath(); g.moveTo(midX, y); g.lineTo(midX, y + h); g.stroke();
+    g.fillStyle = INK; F(bold ? "800" : "600", 22); g.textAlign = "right";
+    if (label) g.fillText(label, cols[4] - 12, y + 32);
+    F("800", 22); g.fillText(value, W - PAD - 12, y + 32);
+    y += h;
+  };
+  totRow("", money(m.sub), true);
+  if (o.gst) { totRow("CGST 9%", money(Math.round(m.sub * 0.09)), false); totRow("SGST 9%", money(Math.round(m.sub * 0.09)), false); }
+  totRow("GRAND TOTAL", money(m.total), true);
+
+  /* ---- terms ---- */
+  y += 4;
+  const secTitle = (t) => { const h = 48; box(PAD, y, W - PAD, y + h); g.fillStyle = INK; F("800", 24); g.textAlign = "left"; g.fillText(t, PAD + 12, y + 32); y += h; };
+  secTitle("Terms & Conditions");
+  F("500", 21);
+  String(s.invTerms || "").split("\n").filter(Boolean).forEach(line => {
+    const body = line.replace(/^\s*\d+\.\s*/, "");
+    const ls = wrap(body, W - PAD * 2 - 30);
+    const h = Math.max(48, ls.length * 30 + 18);
+    box(PAD, y, W - PAD, y + h);
+    g.fillStyle = INK; F("500", 21); g.textAlign = "left";
+    ls.forEach((l, i) => g.fillText(l, PAD + 12, y + 30 + i * 30));
+    y += h;
+  });
+
+  /* ---- bank details ---- */
+  secTitle("Bank details:");
+  const bank = [["Bank Name", s.bankName], ["Account Holder Name", s.bankHolder],
+                ["Account Number", s.bankAcNo], ["IFSC", s.bankIFSC],
+                ["Branch", s.bankBranch], ["Account Type", s.bankAcType]];
+  bank.forEach(([k, val]) => {
+    const h = 46; box(PAD, y, W - PAD, y + h);
+    g.fillStyle = INK; F("800", 21); g.textAlign = "left"; g.fillText(k, PAD + 12, y + 30);
+    F("500", 21); g.fillText(": " + (val || ""), PAD + 330, y + 30);
+    y += h;
+  });
+
+  const h = 52; box(PAD, y, W - PAD, y + h);
+  g.fillStyle = INK; F("500", 22); g.textAlign = "center";
+  g.fillText("Thank you for your business!", W / 2, y + 34);
+  y += h + PAD;
+
+  /* crop to the content we actually drew */
+  const out = document.createElement("canvas");
+  out.width = W; out.height = y;
+  const og = out.getContext("2d");
+  og.fillStyle = "#fff"; og.fillRect(0, 0, W, y);
+  og.drawImage(big, 0, 0);
+  return out.toDataURL("image/jpeg", 0.92);
+};
+
 const getFix = () =>
   new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({ ok: false, why: "This device has no location service." });
@@ -1901,6 +2063,24 @@ function VibeCRM() {
   /* Razorpay: create a payment link for a campaign, then share it with the customer.
      Once they pay, Razorpay calls our webhook and the payment appears here by itself. */
   const [payBusy, setPayBusy] = useState(false);
+  const [doc, setDoc] = useState(null);      // generated quotation / invoice image
+  const [docBusy, setDocBusy] = useState(false);
+
+  /* Build the formal document image for a campaign and open the viewer. */
+  const openDoc = async (o, title) => {
+    const v = vendorOf(o.vendorId), m = orderMath(o), s = db.settings;
+    setDocBusy(true);
+    try {
+      const url = await docImage({ title, s, v, o, m });
+      setOpenOrder(null); setSheet(null);
+      setDoc({
+        url, title, order: o, vendor: v,
+        text: proformaText(o, v, m),
+        subject: (title === "TAX INVOICE" ? "Tax invoice " : "Quotation ") + (o.invNo || o.no) + " — Vibe Marketing",
+      });
+    } catch (e) { setToast("Could not build the document"); }
+    setDocBusy(false);
+  };
   const makePayLink = async (o, amount, kind) => {
     const v = vendorOf(o.vendorId);
     const amt = Math.round(+amount || 0);
@@ -2338,7 +2518,10 @@ function VibeCRM() {
           <div className="vz-kv"><span>Balance</span><b className="vz-money" style={{ color: m.total - paid > 0 ? "#E5484D" : "#178951" }}>{inr(m.total - paid)}</b></div>
         </div>}
 
-        {perm.money && <button className="vz-btn pop" onClick={() => sendProforma(o, false)}>Send proforma to {v ? v.person || v.name : "vendor"}</button>}
+        {perm.money && <button className="vz-btn pop" disabled={docBusy} onClick={() => openDoc(o, "QUOTATION")}>
+          {docBusy ? "Preparing…" : "Quotation / proforma (PDF)"}
+        </button>}
+        {perm.money && <button className="vz-btn alt" onClick={() => sendProforma(o, false)}>Send as text instead</button>}
         {perm.invoice && <button className="vz-btn alt" onClick={() => { setOpenOrder(null); openInvoice(o); }}>Tax invoice</button>}
         {perm.money && <button className="vz-btn" onClick={() => { setOpenOrder(null); setSheet({ type:"paylink", data:o }); }}>Payment link</button>}
 
@@ -3582,6 +3765,38 @@ function VibeCRM() {
       {sheet?.type === "job" && <JobForm vehicles={db.vehicles} onClose={() => setSheet(null)} onSave={(x) => { put("jobs", x); setSheet(null); }} />}
 
       {invoice && InvoiceView()}
+
+      {doc && (
+        <div className="vz-invoice-overlay">
+          <div className="vz-invoice-actions vz-noprint" style={{ flexWrap:"wrap" }}>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => setDoc(null)}>← Close</button>
+            <button className="vz-btn go" style={{ margin:0 }} onClick={async () => {
+              const ok = await sharePhoto(doc.url, doc.text);
+              if (ok) { logSend(doc.order, doc.title === "TAX INVOICE" ? "Invoice" : "Quotation", "WhatsApp"); setToast("Shared"); }
+              else { openWA(doc.vendor?.phone, doc.text); setToast("Image sharing not supported here — text opened instead"); }
+            }}>Send on WhatsApp</button>
+            <button className="vz-btn" style={{ margin:0 }} onClick={() => window.print()}>Print / Save PDF</button>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
+              const a = document.createElement("a");
+              a.href = doc.url;
+              a.download = (doc.title === "TAX INVOICE" ? "invoice-" : "quotation-") + (doc.order.invNo || doc.order.no || "").replace(/\W+/g, "-") + ".jpg";
+              document.body.appendChild(a); a.click(); document.body.removeChild(a);
+              setToast("Saved to your downloads");
+            }}>Save image</button>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
+              openMail(doc.vendor?.email, doc.subject, doc.text);
+              setToast("Email opened — attach the saved image");
+            }}>Email</button>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
+              try { navigator.clipboard.writeText(doc.text); } catch (e) {}
+              setToast("Text copied");
+            }}>Copy text</button>
+          </div>
+          <div className="vz-invoice" style={{ padding:0, background:"#fff" }}>
+            <img src={doc.url} alt={doc.title} style={{ width:"100%", display:"block" }} />
+          </div>
+        </div>
+      )}
 
       {closing && (
         <Sheet title={lang === "ta" ? "பணி முடி" : "Stop duty"} onClose={() => setClosing(false)}>
