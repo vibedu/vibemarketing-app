@@ -1159,7 +1159,7 @@ function ChangePwSheet({ onSave, onClose }) {
 }
 
 /* Create a Razorpay payment link for a campaign and share it with the customer. */
-function PayLinkSheet({ order, vendor, math, paid, busy, onCreate, onClose }) {
+function PayLinkSheet({ order, vendor, math, paid, busy, status, onCreate, onClose }) {
   const due = Math.max(0, math.total - paid);
   const advanceLeft = Math.max(0, math.advance - paid);
   const [kind, setKind] = useState(paid > 0 ? "Balance" : "Advance");
@@ -1167,8 +1167,26 @@ function PayLinkSheet({ order, vendor, math, paid, busy, onCreate, onClose }) {
   const preset = (label, value) => (
     <button className="vz-chip c-blue" onClick={() => { setKind(label); setAmount(String(value)); }}>{label} · {inr(value)}</button>
   );
+  const notReady = status && !status.ready;
   return (
     <Sheet title="Payment link" onClose={onClose}>
+      {notReady && (
+        <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+          <div className="vz-title" style={{ color:"#8A6100" }}>Razorpay is not set up yet</div>
+          <div className="vz-meta" style={{ color:"#8A6100" }}>
+            {!status.keys && <>• Add <b>RAZORPAY_KEY_ID</b> and <b>RAZORPAY_KEY_SECRET</b> in api/config.php<br /></>}
+            {!status.webhook && <>• Add <b>RAZORPAY_WEBHOOK_SECRET</b> in api/config.php<br /></>}
+            {!status.table && <>• Run <b>db/db-payments.sql</b> in phpMyAdmin</>}
+          </div>
+        </div>
+      )}
+      {status && status.ready && status.mode === "test" && (
+        <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+          <div className="vz-meta" style={{ marginTop:0, color:"#8A6100" }}>
+            <b>Test mode</b> — this link will not take real money.
+          </div>
+        </div>
+      )}
       <div className="vz-card" style={{ background:"#FAFBFC" }}>
         <div className="vz-title">{vendor ? vendor.name : "—"}</div>
         <div className="vz-meta">{order.no} · {order.title}</div>
@@ -1191,8 +1209,8 @@ function PayLinkSheet({ order, vendor, math, paid, busy, onCreate, onClose }) {
         </select></F>
       </div>
 
-      <button className="vz-btn go" disabled={busy || !(+amount > 0)} onClick={() => onCreate(+amount, kind)}>
-        {busy ? "Creating link…" : "Create link & share"}
+      <button className="vz-btn go" disabled={busy || notReady || !(+amount > 0)} onClick={() => onCreate(+amount, kind)}>
+        {busy ? "Creating link…" : notReady ? "Finish the setup above first" : "Create link & share"}
       </button>
       <div className="vz-meta" style={{ textAlign:"center" }}>
         The customer pays online and it records here automatically.
@@ -1674,10 +1692,10 @@ function VibeCRM() {
     apiGet("admin_status.php").then(r => { if (r) setAdminCfg(r); });
   }, [loaded, gate.step, db.adminToken]);
 
-  // Razorpay setup state, refreshed whenever Settings is opened.
+  // Razorpay setup state, refreshed when Settings or the payment-link sheet opens.
   useEffect(() => {
     if (!loaded || !db.adminToken) { setRzpStatus(null); return; }
-    if (sheet?.type !== "settings") return;
+    if (sheet?.type !== "settings" && sheet?.type !== "paylink") return;
     apiGet("razorpay_status.php").then(r => { if (r) setRzpStatus(r); });
   }, [loaded, db.adminToken, sheet?.type]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_PICS, JSON.stringify(pics)); setFull(false); } catch (e) { setFull(true); } })(); }, [pics, loaded]);
@@ -3523,7 +3541,7 @@ function VibeCRM() {
       )}
       {sheet?.type === "paylink" && (
         <PayLinkSheet order={sheet.data} vendor={vendorOf(sheet.data.vendorId)} math={orderMath(sheet.data)}
-          paid={paidOn(sheet.data.id)} busy={payBusy}
+          paid={paidOn(sheet.data.id)} busy={payBusy} status={rzpStatus}
           onCreate={(amt, kind) => makePayLink(sheet.data, amt, kind)}
           onClose={() => setSheet(null)} />
       )}
