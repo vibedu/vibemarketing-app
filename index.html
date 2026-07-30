@@ -556,7 +556,7 @@ const docImage = async ({ title, s, v, o, m }) => {
   g.textAlign = "center";
   F("500", 20);
   const addr = wrap(s.address || "", W - 200);
-  const contact = "Mob: " + (s.bizPhone || "") + ".  " + (s.website || "") + "  Email: " + (s.bizEmail || "");
+  const contact = "Mob: " + (s.contactPhone || s.bizPhone || "") + "   " + (s.website || "") + "   Email: " + (s.contactEmail || s.bizEmail || "");
   const hdrH = hy + addr.length * 27 + 30 + 40 + 24;
   g.fillStyle = "#2E2E2E"; g.fillRect(0, 0, W, hdrH);
   if (logo) { const lw = 470, lh = Math.round(lw * logo.height / logo.width); g.drawImage(logo, (W - lw) / 2, HDR_TOP, lw, lh); }
@@ -734,18 +734,18 @@ const proformaText = (o, v, m) =>
    "Balance on completion: " + inr(m.total - m.advance),
    "",
    "Reply CONFIRM and we will block the vehicles for your dates.",
-   "— Vibe Marketing"].filter(Boolean).join("\n");
+   signOff()].filter(Boolean).join("\n");
 
 const reminderText = (o, v, m, days) =>
   "Hello " + (v ? v.person || v.name : "") + ", gentle reminder on proforma " + o.no + " for \"" + o.title +
   "\" (" + inr(m.total) + "), sent " + days + " days back. Shall we block " + o.vehicles +
-  (o.dayWise || !o.start ? " vehicles for " + m.days + " days? — Vibe Marketing"
-                         : " vehicles from " + dmy(o.start) + "? — Vibe Marketing");
+  (o.dayWise || !o.start ? " vehicles for " + m.days + " days?\n" + signOff()
+                         : " vehicles from " + dmy(o.start) + "?\n" + signOff());
 
 const receiptText = (o, v, p, paid, m) =>
   "Received with thanks: " + inr(p.amount) + " (" + p.kind + ", " + p.mode + (p.ref ? ", ref " + p.ref : "") +
   ") against " + o.no + " — " + o.title + ".\nPaid so far " + inr(paid) + " of " + inr(m.total) +
-  ". Balance " + inr(m.total - paid) + ".\n— Vibe Marketing";
+  ". Balance " + inr(m.total - paid) + ".\n" + signOff();
 
 const proofText = (pr, o, v, veh, drv) =>
   ["*VIBE MARKETING* — campaign running proof",
@@ -755,6 +755,21 @@ const proofText = (pr, o, v, veh, drv) =>
    pr.lat ? "Location: " + pr.lat + ", " + pr.lng + " (±" + pr.acc + "m)" : "Location: " + (pr.place || "not captured"),
    pr.lat ? "Map: " + mapLink(pr.lat, pr.lng) : "",
    pr.note ? "Note: " + pr.note : ""].filter(Boolean).join("\n");
+
+/* Everything the app sends goes out in one person's name with one number to
+   reply to. Held here so the message templates — which are plain functions
+   without access to settings — can all use it; kept in step with Settings by
+   an effect in the app below. */
+let CONTACT = { name: "Raj Mohan", phone: "9150070422", email: "rajmohanvibemarketing@gmail.com", company: "Vibe Marketing" };
+const setContact = (s) => {
+  CONTACT = {
+    name:    s.contactName  || CONTACT.name,
+    phone:   s.contactPhone || CONTACT.phone,
+    email:   s.contactEmail || CONTACT.email,
+    company: s.company      || CONTACT.company,
+  };
+};
+const signOff = () => "— " + CONTACT.name + ", " + CONTACT.company + "\n" + CONTACT.phone;
 
 /* ---- customer reminder messages (positive, motivating) ---- */
 const firstName = (v) => String((v && (v.person || v.name)) || "there").trim().split(/\s+/)[0];
@@ -766,7 +781,7 @@ const welcomeMsg = (v) =>
   "Thank you for connecting with us!\n\n" +
   "We turn our fleet of branded vans into moving billboards that take " + (v && v.name ? v.name : "your brand") +
   " straight to your customers — markets, junctions, events, wherever the crowd is. 🚚✨\n\n" +
-  "Whenever you're planning a promotion or a festival campaign, we're one message away. Let's grow your brand together! 💪\n\n— Team Vibe Marketing";
+  "Whenever you're planning a promotion or a festival campaign, we're one message away. Let's grow your brand together! 💪\n\n" + signOff();
 
 const welcomeSubject = () => "Welcome to Vibe Marketing 🎉";
 
@@ -777,7 +792,7 @@ const serviceMsg = (v) =>
   (v && v.name ? v.name : "your business") + " in front of thousands of people every single day. 🚚📢\n\n" +
   "Our branded vans cover the busiest routes across the city — high visibility, low cost, big impact. " +
   "Book a van today and watch your footfall grow! 📈\n\n" +
-  "Reply to this message and we'll share available slots. 🙌\n\n— Team Vibe Marketing";
+  "Reply to this message and we'll share available slots. 🙌\n\n" + signOff();
 
 // Festival / occasion countdown reminder, escalating tone by how many days are left.
 const occasionMsg = (v, occ, daysLeft) => {
@@ -800,7 +815,7 @@ const occasionMsg = (v, occ, daysLeft) => {
       "Only a few vans left for the festive season. Grab yours today and ride the biggest shopping wave of the year. " +
       "We'll have you on the road in no time! 🚚🔥";
   }
-  return "Hi " + name + "! 🎉\n\n" + body + "\n\nReply *YES* and we'll reserve your slot. 🙌\n\n— Team Vibe Marketing";
+  return "Hi " + name + "! 🎉\n\n" + body + "\n\nReply *YES* and we'll reserve your slot. 🙌\n\n" + signOff();
 };
 
 const occasionSubject = (occ) => occ.name + " campaign — book your van branding now! 🚚";
@@ -993,6 +1008,12 @@ const INVOICE_DEFAULTS = {
   company: "Vibe Marketing",
   gstin: "33DYDPS9365C2Z6",
   address: "50-Q, 3rd Floor, Red Rose Plaza, D.B. Road, R.S.Puram, Coimbatore, Tamil Nadu - 641 002",
+  /* Everything the app sends — quotations, invoices, payment links, greetings and
+     reminders — goes out in this person's name, and this is the number printed on
+     the documents so a customer always has one place to reply to. */
+  contactName:  "Raj Mohan",
+  contactPhone: "9150070422",
+  contactEmail: "rajmohanvibemarketing@gmail.com",
   bizPhone: "97860 11101",
   website: "www.vibemarketing.in",
   bizEmail: "info@vibemarketing.in",
@@ -1021,10 +1042,10 @@ const INVOICE_DEFAULTS = {
 /* fill any missing business/bank/invoice settings with the defaults above (one-time) */
 const seedInvoiceDefaults = (d) => {
   const s = { ...(d.settings || {}) };
-  if (!s._invSeeded) {
-    Object.keys(INVOICE_DEFAULTS).forEach(k => { if (s[k] === undefined || s[k] === "" || s[k] === null) s[k] = INVOICE_DEFAULTS[k]; });
-    s._invSeeded = true;
-  }
+  // Fill anything still blank, every load — not just on a fresh install, or
+  // settings added later would never reach an existing phone.
+  Object.keys(INVOICE_DEFAULTS).forEach(k => { if (s[k] === undefined || s[k] === "" || s[k] === null) s[k] = INVOICE_DEFAULTS[k]; });
+  s._invSeeded = true;
   // Always keep the Terms & Conditions at the latest version (updates existing installs too).
   if (s.invTermsVer !== INVOICE_DEFAULTS.invTermsVer) { s.invTerms = INVOICE_DEFAULTS.invTerms; s.invTermsVer = INVOICE_DEFAULTS.invTermsVer; }
   return { ...d, settings: s };
@@ -1967,6 +1988,9 @@ function VibeCRM() {
   }, [mode, me]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_DATA, JSON.stringify(db)); } catch (e) {} })(); }, [db, loaded]);
 
+  // Keep the sender identity used by every outgoing message in step with Settings.
+  useEffect(() => { if (loaded) setContact(db.settings || {}); }, [loaded, db.settings]);
+
   /* ---- office record sync -------------------------------------------------
      Vendors, campaigns, payments and vehicles used to live only in this
      device's storage, so losing the phone lost the business. They are now
@@ -2348,7 +2372,7 @@ function VibeCRM() {
       text: "Hello " + (v ? (v.person || v.name) : "") + ",\n\n" +
             kind + " for " + o.title + " (" + o.no + ").\n" +
             "Amount: " + inr(amt) + "\n\nPay securely here:\n" + res.url +
-            "\n\nThank you!\n— Vibe Marketing",
+            "\n\nThank you!\n" + signOff(),
       onSent: (ch) => { logSend(o, "Payment link", ch); setToast("Payment link sent · " + ch); },
     });
   };
@@ -2895,7 +2919,7 @@ function VibeCRM() {
             <div style={{ minWidth:0 }}>
               <img src="logo-dark.png" alt={s.company} className="inv-logo" />
               <div className="inv-sm">{s.address}</div>
-              <div className="inv-sm">Mob: {s.bizPhone}  ·  {s.website}  ·  {s.bizEmail}</div>
+              <div className="inv-sm">Mob: {s.contactPhone || s.bizPhone}  ·  {s.website}  ·  {s.contactEmail || s.bizEmail}</div>
               <div className="inv-gstin">GSTIN: {s.gstin}</div>
             </div>
             <div className="inv-title">TAX INVOICE</div>
@@ -3676,6 +3700,19 @@ function VibeCRM() {
     <Sheet title="Automation & settings" onClose={() => setSheet(null)}>
       <div className="vz-eyebrow" style={{ marginTop:0 }}>Account</div>
       <button className="vz-btn alt" onClick={signOut}>Log out</button>
+
+      <div className="vz-eyebrow">Who the app sends as</div>
+      <div className="vz-card" style={{ background:"#FAFBFC" }}>
+        <div className="vz-meta" style={{ marginTop:0 }}>
+          Quotations, invoices, payment links, greetings and reminders all go out in this name,
+          and this number is printed on every document so customers have one place to reply.
+        </div>
+      </div>
+      <F label="Contact name"><input value={db.settings.contactName || ""} onChange={e => setSetting("contactName", e.target.value)} placeholder="Raj Mohan" /></F>
+      <div className="vz-2">
+        <F label="WhatsApp / mobile"><input value={db.settings.contactPhone || ""} onChange={e => setSetting("contactPhone", e.target.value)} inputMode="tel" placeholder="9150070422" /></F>
+        <F label="Email"><input value={db.settings.contactEmail || ""} onChange={e => setSetting("contactEmail", e.target.value)} inputMode="email" placeholder="name@example.com" /></F>
+      </div>
 
       <div className="vz-eyebrow">Business &amp; GST (on invoices)</div>
       <F label="Business name"><input value={db.settings.company || ""} onChange={e => setSetting("company", e.target.value)} /></F>
