@@ -87,7 +87,10 @@ const CSS = `
   min-height: calc(100vh / var(--z));
   position: relative; padding-bottom: 80px;
 }
-.vz button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+/* Bare-button reset. Wrapped in :where() so it carries no specificity — otherwise
+   ".vz button" (0,1,1) beats single-class styles like .vz-btn / .vz-chip (0,1,0)
+   and strips their background, colour and font-size. */
+.vz :where(button) { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
 .vz input, .vz select, .vz textarea { font: inherit; }
 
 .vz-top { position: sticky; top: 0; z-index: 20; background: var(--ink); color: #fff;
