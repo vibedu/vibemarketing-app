@@ -189,28 +189,6 @@ const CSS = `
 .vz-nav button[data-on="1"] { color:var(--yellow); }
 .vz-nav svg { width:20px; height:20px; }
 
-/* Tablets: the base UI is sized for phones, so on a big screen everything looks tiny.
-   Zoom the whole interface up uniformly (text, padding, icons) instead of tweaking
-   individual sizes. The max-width is kept small enough that width × zoom never
-   exceeds the screen, so there's no sideways scroll. */
-@media (min-width:700px){
-  .vz { zoom:1.28; max-width:540px; }
-  .vz-nav { max-width:540px; }
-  .vz-sheet { max-width:520px; }
-  .vz-logincard { max-width:360px; width:100%; margin-left:auto; margin-right:auto; }
-  .vz-authwrap { max-width:380px; width:100%; margin-left:auto; margin-right:auto; }
-  .vz-grid { grid-template-columns:repeat(4,1fr); }
-}
-/* Larger tablets have room for a bigger zoom (and still no overflow: 540 × 1.5 = 810 ≤ 840). */
-@media (min-width:840px){
-  .vz { zoom:1.5; }
-}
-/* Big landscape tablets: fill more of the screen. */
-@media (min-width:1100px){
-  .vz { zoom:1.7; max-width:560px; }
-  .vz-nav { max-width:560px; }
-}
-
 .vz-scrim { position:fixed; inset:0; background:rgba(10,14,24,.5); z-index:60; display:flex; align-items:flex-end; justify-content:center; }
 .vz-sheet { background:#fff; width:100%; max-width:480px; border-radius:18px 18px 0 0; max-height:92vh; overflow-y:auto; padding:8px 16px 30px; }
 .vz-handle { width:38px; height:4px; background:#D2D7E0; border-radius:2px; margin:6px auto 12px; }
@@ -220,12 +198,22 @@ const CSS = `
 .vz-backbtn { flex:none; display:flex; align-items:center; gap:5px; height:34px; padding:0 12px 0 9px; border-radius:17px; border:none; background:#EEF1F6; color:#12192A; font-size:14px; font-weight:700; cursor:pointer; }
 .vz-backbtn:active { background:#E0E5EE; }
 
-.vz-f { margin-bottom:11px; }
-.vz-f label { display:block; font-size:10px; letter-spacing:1.2px; text-transform:uppercase; font-weight:700; color:var(--muted); margin-bottom:5px; }
-.vz-f input, .vz-f select, .vz-f textarea { width:100%; padding:11px 12px; border:1px solid var(--line);
-  border-radius:9px; background:#FAFBFC; font-size:15px; color:var(--ink); }
-.vz-f input:focus, .vz-f select:focus, .vz-f textarea:focus { outline:2px solid var(--blue); outline-offset:-1px; background:#fff; }
-.vz-2 { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+.vz-f { margin-bottom:11px; min-width:0; }
+.vz-f label { display:block; font-size:10px; letter-spacing:1.1px; text-transform:uppercase; font-weight:700; color:var(--muted); margin-bottom:5px; line-height:1.3; }
+/* One shared box shape for every field type so heights and text line up exactly. */
+.vz-f input, .vz-f select, .vz-f textarea { display:block; width:100%; box-sizing:border-box;
+  padding:0 12px; height:44px; line-height:normal; border:1px solid var(--line);
+  border-radius:9px; background:#FAFBFC; font-size:15px; color:var(--ink);
+  -webkit-appearance:none; appearance:none; }
+.vz-f textarea { height:auto; padding:11px 12px; line-height:1.5; resize:vertical; }
+/* selects and date fields get their own chevron so they match the plain inputs */
+.vz-f select, .vz-f input[type="date"] {
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236B7488' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 13px center; padding-right:34px; }
+.vz-f input[type="date"]::-webkit-calendar-picker-indicator { opacity:0; }
+.vz-f input:focus, .vz-f select:focus, .vz-f textarea:focus { outline:2px solid var(--blue); outline-offset:-1px; background-color:#fff; }
+.vz-f input:disabled, .vz-f input[readonly] { background:#F1F3F6; color:var(--muted); }
+.vz-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; }
 .vz-btn { width:100%; background:var(--ink); color:#fff; padding:14px; border-radius:11px; font-weight:700; font-size:15px; margin-top:6px; }
 .vz-btn.alt { background:#EDEFF3; color:var(--ink); }
 .vz-btn.warn { background:var(--red); color:#fff; }
@@ -302,6 +290,33 @@ const CSS = `
   font-family:var(--mono); font-size:11px; line-height:1.65; white-space:pre-wrap; color:#33405C; max-height:230px; overflow-y:auto; }
 .vz-toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%); background:var(--ink);
   color:#fff; padding:11px 18px; border-radius:24px; font-size:13px; font-weight:600; z-index:80; max-width:90%; text-align:center; }
+
+/* ===== Tablets =====================================================
+   The base UI is sized for phones, so on a big screen everything looks tiny.
+   Zoom the whole interface up uniformly (text, padding, icons) rather than
+   re-sizing dozens of elements. max-width is kept small enough that
+   width × zoom never exceeds the screen, so there is no sideways scroll.
+   These rules live at the END of the stylesheet so they win the cascade. */
+@media (min-width:700px){
+  .vz { zoom:1.28; max-width:540px; }
+  .vz-nav { max-width:540px; }
+  .vz-grid { grid-template-columns:repeat(4,1fr); }
+  /* Forms: keep them at a comfortable entry width and centre the sheet, so
+     fields don't stretch into wide boxes with the text stranded on the left. */
+  .vz-scrim { align-items:center; }
+  .vz-sheet { max-width:400px; border-radius:16px; max-height:88vh; }
+  .vz-logincard { max-width:360px; width:100%; margin-left:auto; margin-right:auto; }
+  .vz-authwrap { max-width:380px; width:100%; margin-left:auto; margin-right:auto; }
+}
+/* Larger tablets: room for a bigger zoom (540 × 1.5 = 810 ≤ 840, so still no overflow). */
+@media (min-width:840px){
+  .vz { zoom:1.5; }
+}
+/* Big landscape tablets. */
+@media (min-width:1100px){
+  .vz { zoom:1.7; max-width:560px; }
+  .vz-nav { max-width:560px; }
+}
 `;
 
 /* ---------------------------- helpers ---------------------------- */
