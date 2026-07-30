@@ -701,7 +701,7 @@ const blankData = () => ({
   },
   users: [], vendors: [], vehicles: [], drivers: [], managers: [], orders: [], payments: [], jobs: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
-  adminToken: "", adminName: "",
+  adminToken: "", adminName: "", payLinks: [],
 });
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
@@ -1127,6 +1127,54 @@ function PaymentForm({ orders, vendors, onSave, onClose }) {
       </div>
       <F label="Reference / UTR"><input value={f.ref} onChange={u("ref")} /></F>
       <button className="vz-btn" onClick={() => +f.amount > 0 && onSave({ ...f, id: uid(), amount: +f.amount })}>Save payment</button>
+    </Sheet>
+  );
+}
+
+/* Create a Razorpay payment link for a campaign and share it with the customer. */
+function PayLinkSheet({ order, vendor, math, paid, busy, onCreate, onClose }) {
+  const due = Math.max(0, math.total - paid);
+  const advanceLeft = Math.max(0, math.advance - paid);
+  const [kind, setKind] = useState(paid > 0 ? "Balance" : "Advance");
+  const [amount, setAmount] = useState(String(paid > 0 ? due : (math.advance || due)));
+  const preset = (label, value) => (
+    <button className="vz-chip c-blue" onClick={() => { setKind(label); setAmount(String(value)); }}>{label} · {inr(value)}</button>
+  );
+  return (
+    <Sheet title="Payment link" onClose={onClose}>
+      <div className="vz-card" style={{ background:"#FAFBFC" }}>
+        <div className="vz-title">{vendor ? vendor.name : "—"}</div>
+        <div className="vz-meta">{order.no} · {order.title}</div>
+        <div className="vz-kv" style={{ marginTop:6 }}><span>Grand total</span><b>{inr(math.total)}</b></div>
+        <div className="vz-kv"><span>Received so far</span><b>{inr(paid)}</b></div>
+        <div className="vz-kv"><span>Balance due</span><b className="vz-money">{inr(due)}</b></div>
+      </div>
+
+      <div className="vz-eyebrow">Quick amounts</div>
+      <div className="vz-inline" style={{ flexWrap:"wrap", marginBottom:12 }}>
+        {advanceLeft > 0 && preset("Advance", advanceLeft)}
+        {due > 0 && preset("Balance", due)}
+      </div>
+
+      <div className="vz-2">
+        <F label="Amount ₹"><input type="number" inputMode="numeric" value={amount}
+          onChange={e => setAmount(e.target.value.replace(/[^\d]/g, ""))} /></F>
+        <F label="For"><select value={kind} onChange={e => setKind(e.target.value)}>
+          {["Advance","Balance","Part payment"].map(k => <option key={k}>{k}</option>)}
+        </select></F>
+      </div>
+
+      <button className="vz-btn go" disabled={busy || !(+amount > 0)} onClick={() => onCreate(+amount, kind)}>
+        {busy ? "Creating link…" : "Create link & share"}
+      </button>
+      <div className="vz-meta" style={{ textAlign:"center" }}>
+        The customer pays online and it records here automatically.
+      </div>
+      {!vendor?.phone && !vendor?.email && (
+        <div className="vz-meta" style={{ color:"#8A6100" }}>
+          This customer has no phone or email saved — you can still create the link and copy it.
+        </div>
+      )}
     </Sheet>
   );
 }
@@ -1623,8 +1671,8 @@ function VibeCRM() {
     const srvISO = (s) => (s && typeof s === "string") ? s.replace(" ", "T") + "Z" : (s || "");
     let stop = false;
     const pull = async () => {
-      const [pr, at, dr] = await Promise.all([apiGet("proofs.php"), apiGet("attendance.php"), apiGet("drivers.php")]);
-      if (stop || (!Array.isArray(pr) && !Array.isArray(at) && !Array.isArray(dr) && !Array.isArray(mg))) return;
+      const [pr, at, dr, pay] = await Promise.all([apiGet("proofs.php"), apiGet("attendance.php"), apiGet("drivers.php"), apiGet("payments.php")]);
+      if (stop || (!Array.isArray(pr) && !Array.isArray(at) && !Array.isArray(dr) && !Array.isArray(pay))) return;
       setDb(d => {
         let next = d;
         if (Array.isArray(dr)) {
@@ -1635,6 +1683,18 @@ function VibeCRM() {
             photoUrl: r.photo_url || "", dlFrontUrl: r.dl_front_url || "", dlBackUrl: r.dl_back_url || "", fromServer: true,
           }));
           if (add.length) next = { ...next, drivers: [...add, ...(next.drivers || [])] };
+        }
+        if (Array.isArray(pay)) {
+          // Paid Razorpay links become payment entries; pending links are kept so the
+          // office can see what is still awaiting payment.
+          const have = new Set((next.payments || []).map(p => p.id));
+          const add = pay.filter(r => r.status === "paid" && !have.has(r.id)).map(r => ({
+            id: r.id, orderId: r.order_id, amount: +r.amount, date: (r.paid_at || r.created_at || "").slice(0, 10),
+            kind: r.kind || "Advance", mode: "Razorpay" + (r.method ? " · " + r.method : ""),
+            ref: r.payment_id || "", online: true, fromServer: true,
+          }));
+          if (add.length) next = { ...next, payments: [...add, ...(next.payments || [])] };
+          next = { ...next, payLinks: pay.filter(r => r.status === "created") };
         }
         if (Array.isArray(pr)) {
           const have = new Set((d.proofs || []).map(p => p.id));
@@ -1766,6 +1826,33 @@ function VibeCRM() {
       title: "Send reminder", to: v ? v.name : "—", phone: v?.phone, email: v?.email,
       subject: "Reminder — proforma " + o.no, text: reminderText(o, v, m, Math.abs(daysTo(o.created) || 0)),
       onSent: (ch) => { logSend(o, "Reminder", ch); setToast("Reminder sent · " + ch); },
+    });
+  };
+
+  /* Razorpay: create a payment link for a campaign, then share it with the customer.
+     Once they pay, Razorpay calls our webhook and the payment appears here by itself. */
+  const [payBusy, setPayBusy] = useState(false);
+  const makePayLink = async (o, amount, kind) => {
+    const v = vendorOf(o.vendorId);
+    const amt = Math.round(+amount || 0);
+    if (amt < 1) { setToast("Enter an amount first"); return; }
+    setPayBusy(true);
+    const res = await apiPost("razorpay_link.php", {
+      order_id: o.id, order_no: o.no, vendor_name: v ? v.name : "",
+      phone: v?.phone || "", email: v?.email || "", amount: amt, kind,
+    });
+    setPayBusy(false);
+    if (!res) { setToast("Could not reach the server"); return; }
+    if (!res.ok || !res.url) { setToast(res.error || "Could not create the payment link"); return; }
+    setSheet(null);
+    setSend({
+      title: "Send payment link", to: v ? v.name : "customer", phone: v?.phone, email: v?.email,
+      subject: kind + " payment — " + o.no + " — Vibe Marketing",
+      text: "Hello " + (v ? (v.person || v.name) : "") + ",\n\n" +
+            kind + " for " + o.title + " (" + o.no + ").\n" +
+            "Amount: " + inr(amt) + "\n\nPay securely here:\n" + res.url +
+            "\n\nThank you!\n— Vibe Marketing",
+      onSent: (ch) => { logSend(o, "Payment link", ch); setToast("Payment link sent · " + ch); },
     });
   };
   const sendReceipt = (o, p) => {
@@ -2184,6 +2271,7 @@ function VibeCRM() {
 
         {perm.money && <button className="vz-btn pop" onClick={() => sendProforma(o, false)}>Send proforma to {v ? v.person || v.name : "vendor"}</button>}
         {perm.invoice && <button className="vz-btn alt" onClick={() => { setOpenOrder(null); openInvoice(o); }}>Tax invoice</button>}
+        {perm.money && <button className="vz-btn" onClick={() => { setOpenOrder(null); setSheet({ type:"paylink", data:o }); }}>Payment link</button>}
 
         <div className="vz-eyebrow">Sent history</div>
         {(o.sends || []).length === 0 && <div className="vz-meta" style={{ marginBottom:6 }}>Nothing sent yet.</div>}
@@ -2707,6 +2795,31 @@ function VibeCRM() {
             </div>
           );
         })}
+
+        {(db.payLinks || []).length > 0 && <>
+          <div className="vz-eyebrow">Payment links awaiting payment ({(db.payLinks || []).length})</div>
+          {(db.payLinks || []).map(l => (
+            <div className="vz-card" key={l.id}>
+              <div className="vz-row">
+                <div style={{ minWidth:0 }}>
+                  <div className="vz-title">{l.vendor_name || "—"}</div>
+                  <div className="vz-meta">{l.order_no} · {l.kind} · sent {dmy(l.created_at)}</div>
+                </div>
+                <b className="vz-money">{inr(l.amount)}</b>
+              </div>
+              <div className="vz-inline" style={{ marginTop:9, flexWrap:"wrap" }}>
+                <button className="vz-chip c-green" onClick={() => { try { navigator.clipboard.writeText(l.link_url); } catch (e) {} setToast("Link copied"); }}>Copy link</button>
+                <button className="vz-chip c-blue" onClick={() => window.open(l.link_url, "_blank")}>Open</button>
+                <button className="vz-chip c-grey" onClick={async () => {
+                  if (!window.confirm("Cancel this payment link?")) return;
+                  await apiPost("payments.php", { id: l.id });
+                  setDb(d => ({ ...d, payLinks: (d.payLinks || []).filter(x => x.id !== l.id) }));
+                  setToast("Link cancelled");
+                }}>Cancel</button>
+              </div>
+            </div>
+          ))}
+        </>}
 
         <div className="vz-eyebrow">Payments received</div>
         {db.payments.length === 0 && <div className="vz-card"><div className="vz-meta">No payments recorded.</div></div>}
@@ -3324,6 +3437,12 @@ function VibeCRM() {
             setDb(d => ({ ...d, vehicles: d.vehicles.map(v => v.driverId === id ? { ...v, driverId: "" } : v) }));
             setSheet(null); setToast("Driver deleted");
           }} />
+      )}
+      {sheet?.type === "paylink" && (
+        <PayLinkSheet order={sheet.data} vendor={vendorOf(sheet.data.vendorId)} math={orderMath(sheet.data)}
+          paid={paidOn(sheet.data.id)} busy={payBusy}
+          onCreate={(amt, kind) => makePayLink(sheet.data, amt, kind)}
+          onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "payment" && (
         <PaymentForm orders={db.orders} vendors={db.vendors} onClose={() => setSheet(null)}
