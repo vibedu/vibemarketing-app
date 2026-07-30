@@ -1001,7 +1001,10 @@ const FLEET_SEED = () => ([
 /* one-time: load the real fleet when the app has no vehicles yet */
 const seedFleetIfEmpty = (d) =>
   ((!d.vehicles || d.vehicles.length === 0) && !d._fleetSeeded)
-    ? { ...d, vehicles: FLEET_SEED(), _fleetSeeded: true } : d;
+    // Stamped now, not backdated: after an erase the server holds a tombstone for
+    // each vehicle, and a freshly seeded fleet has to win against it or the vans
+    // would silently disappear again on the next sync.
+    ? { ...d, vehicles: FLEET_SEED().map(v => ({ ...v, updatedAt: new Date().toISOString() })), _fleetSeeded: true } : d;
 
 /* Vibe Marketing business / bank / GST / invoice terms (from the Pothys invoice) */
 const INVOICE_DEFAULTS = {
