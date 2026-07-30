@@ -1,5 +1,5 @@
 <?php
-/* POST /api/admin_login.php  {username, password}
+/* POST /api/admin_login.php  {email, password}
    Verifies the admin against the hashed password and returns a session token
    the app must send (as X-Admin-Token) to read the shared driver/attendance/proof data. */
 require __DIR__ . '/db.php';

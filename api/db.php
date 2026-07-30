@@ -43,7 +43,7 @@ function current_admin() {
   $t = $_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '';
   if (!is_string($t) || strlen($t) < 32) return null;
   $stmt = db()->prepare(
-    'SELECT a.id, a.username, a.name
+    'SELECT a.id, a.email, a.name
        FROM admin_sessions s JOIN admins a ON a.id = s.admin_id
       WHERE s.token = ? AND s.expires_at > UTC_TIMESTAMP() LIMIT 1'
   );

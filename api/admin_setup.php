@@ -1,5 +1,5 @@
 <?php
-/* POST /api/admin_setup.php  {setup_key, username, password, name}
+/* POST /api/admin_setup.php  {setup_key, email, password, name}
    Creates the FIRST admin account. Only works while no admin exists yet AND the
    setup_key matches config.php's ADMIN_SETUP_KEY (known only to whoever has server access). */
 require __DIR__ . '/db.php';
