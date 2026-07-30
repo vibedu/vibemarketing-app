@@ -1630,6 +1630,7 @@ function VibeCRM() {
   const [locked, setLocked] = useState(false);   // admin session is locked until the PIN is re-entered
   const [lockPin, setLockPin] = useState("");
   const [adminCfg, setAdminCfg] = useState(null); // { configured, setup_enabled } from the server
+  const [rzpStatus, setRzpStatus] = useState(null); // Razorpay setup state (booleans only)
 
   useEffect(() => {
     (async () => {
@@ -1672,6 +1673,13 @@ function VibeCRM() {
     if (!loaded) return;
     apiGet("admin_status.php").then(r => { if (r) setAdminCfg(r); });
   }, [loaded, gate.step, db.adminToken]);
+
+  // Razorpay setup state, refreshed whenever Settings is opened.
+  useEffect(() => {
+    if (!loaded || !db.adminToken) { setRzpStatus(null); return; }
+    if (sheet?.type !== "settings") return;
+    apiGet("razorpay_status.php").then(r => { if (r) setRzpStatus(r); });
+  }, [loaded, db.adminToken, sheet?.type]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_PICS, JSON.stringify(pics)); setFull(false); } catch (e) { setFull(true); } })(); }, [pics, loaded]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
 
@@ -3271,6 +3279,36 @@ function VibeCRM() {
           </div>
         </>
       )}
+
+      <div className="vz-eyebrow">Online payments (Razorpay)</div>
+      <div className="vz-card">
+        {!rzpStatus && <div className="vz-meta" style={{ marginTop:0 }}>Checking…</div>}
+        {rzpStatus && (
+          <>
+            <div className="vz-row">
+              <div className="vz-title">{rzpStatus.ready ? "Ready to take payments" : "Setup incomplete"}</div>
+              <Chip c={rzpStatus.ready ? "c-green" : "c-yellow"}>
+                {rzpStatus.ready ? (rzpStatus.mode === "test" ? "TEST MODE" : "LIVE") : "Action needed"}
+              </Chip>
+            </div>
+            <div className="vz-kv"><span>API keys</span><b>{rzpStatus.keys ? "✓ set" : "— missing"}</b></div>
+            <div className="vz-kv"><span>Webhook secret</span><b>{rzpStatus.webhook ? "✓ set" : "— missing"}</b></div>
+            <div className="vz-kv"><span>Payments table</span><b>{rzpStatus.table ? "✓ created" : "— missing"}</b></div>
+            {!rzpStatus.ready && (
+              <div className="vz-meta" style={{ color:"#8A6100" }}>
+                {!rzpStatus.keys && <>Add <b>RAZORPAY_KEY_ID</b> and <b>RAZORPAY_KEY_SECRET</b> in api/config.php.<br /></>}
+                {!rzpStatus.webhook && <>Add <b>RAZORPAY_WEBHOOK_SECRET</b> in api/config.php.<br /></>}
+                {!rzpStatus.table && <>Run <b>db/db-payments.sql</b> in phpMyAdmin.</>}
+              </div>
+            )}
+            {rzpStatus.ready && rzpStatus.mode === "test" && (
+              <div className="vz-meta" style={{ color:"#8A6100" }}>
+                Test keys are in use — payments are not real. Swap to live keys when you are ready.
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="vz-eyebrow">Admin password</div>
       <div className="vz-card">
