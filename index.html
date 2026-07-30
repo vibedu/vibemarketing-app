@@ -1329,6 +1329,8 @@ function PayLinkSheet({ order, vendor, math, paid, busy, status, onCreate, onClo
   const preset = (label, value) => (
     <button className="vz-chip c-blue" onClick={() => { setKind(label); setAmount(String(value)); }}>{label} · {inr(value)}</button>
   );
+  // Guard against sending a link for more than is actually outstanding.
+  const overDue = due > 0 && +amount > due;
   const notReady = status && !status.error && !status.ready;
   return (
     <Sheet title="Payment link" onClose={onClose}>
@@ -1360,16 +1362,23 @@ function PayLinkSheet({ order, vendor, math, paid, busy, status, onCreate, onClo
       <div className="vz-eyebrow">Quick amounts</div>
       <div className="vz-inline" style={{ flexWrap:"wrap", marginBottom:12 }}>
         {advanceLeft > 0 && preset("Advance", advanceLeft)}
-        {due > 0 && preset("Balance", due)}
+        {paid > 0 && due > 0 && preset("Balance", due)}
+        {math.total > 0 && preset("Full payment", math.total)}
       </div>
 
       <div className="vz-2">
         <F label="Amount ₹"><input type="number" inputMode="numeric" value={amount}
           onChange={e => setAmount(e.target.value.replace(/[^\d]/g, ""))} /></F>
         <F label="For"><select value={kind} onChange={e => setKind(e.target.value)}>
-          {["Advance","Balance","Part payment"].map(k => <option key={k}>{k}</option>)}
+          {["Advance","Balance","Part payment","Full payment"].map(k => <option key={k}>{k}</option>)}
         </select></F>
       </div>
+
+      {overDue && (
+        <div className="vz-meta" style={{ color:"#8A6100", marginTop:-4, marginBottom:8 }}>
+          This is more than the balance due of <b>{inr(due)}</b>{paid > 0 ? " — " + inr(paid) + " has already been received." : "."} Send it only if you mean to.
+        </div>
+      )}
 
       <button className="vz-btn go" disabled={busy || notReady || !(+amount > 0)} onClick={() => onCreate(+amount, kind)}>
         {busy ? "Creating link…" : notReady ? "Finish the setup above first" : "Create link & share"}
