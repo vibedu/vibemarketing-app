@@ -466,7 +466,11 @@ const digestText = (list) =>
     .concat(["", "Please book the workshop and RTO slot in advance.", "\u2014 Vibe Marketing"]).join("\n");
 
 const orderMath = (o) => {
-  const days = spanDays(o.start, o.end) || (+o.days || 0) || ((+o.months || 0) * 30);
+  // Day-wise campaigns are quoted for a number of days with no fixed dates,
+  // so the typed day count wins over anything left in the date fields.
+  const days = o.dayWise
+    ? (+o.days || 0)
+    : (spanDays(o.start, o.end) || (+o.days || 0) || ((+o.months || 0) * 30));
   const base = Math.round((+o.vehicles || 0) * (+o.rate || 0) * days);
   const extras = (+o.fabrication || 0) + (+o.flex || 0);
   const sub = base + extras;
@@ -573,7 +577,8 @@ const docImage = async ({ title, s, v, o, m }) => {
     v && v.area ? v.area : "",
     v && v.gst ? "GSTIN: " + v.gst : "",
   ].filter(Boolean);
-  const metaRows = Math.max(billLines.length + 1, 3);
+  // right column holds: doc no, date, campaign, period
+  const metaRows = Math.max(billLines.length + 1, 4);
   const metaH = metaRows * rowH;
   g.fillStyle = ORANGE; F("800", 20); g.fillText("BILL TO", PAD + 12, y + 30);
   g.fillStyle = INK; F("500", 22);
@@ -585,6 +590,10 @@ const docImage = async ({ title, s, v, o, m }) => {
   g.fillText(" " + (o.invNo || o.no || ""), midX + 250, y + 30);
   g.fillText(" " + dmy(o.invDate || o.created || today()), midX + 250, y + 30 + rowH);
   if (o.title) { F("500", 20); g.fillText("Campaign: " + o.title, midX + 14, y + 30 + rowH * 2); }
+  F("500", 20);
+  g.fillText("Period: " + (o.dayWise || !o.start || !o.end
+    ? "Not specified (" + m.days + " days)"
+    : dmy(o.start) + " to " + dmy(o.end)), midX + 14, y + 30 + rowH * 3);
   box(PAD, metaTop, midX, metaTop + metaH);
   box(midX, metaTop, W - PAD, metaTop + metaH);
   y = metaTop + metaH + 18;
@@ -705,7 +714,9 @@ const proformaText = (o, v, m) =>
    "To: " + (v ? v.name : "—"),
    "",
    "Campaign: " + o.title,
-   "Period: " + dmy(o.start) + " to " + dmy(o.end),
+   o.dayWise || !o.start || !o.end
+     ? "Duration: " + m.days + " day(s) — dates not specified"
+     : "Period: " + dmy(o.start) + " to " + dmy(o.end),
    o.route ? "Route: " + o.route : "",
    "",
    "Display charges: " + o.vehicles + " vehicles x " + inr(o.rate) + "/day x " + m.days + " day(s) = " + inr(m.base),
@@ -723,7 +734,8 @@ const proformaText = (o, v, m) =>
 const reminderText = (o, v, m, days) =>
   "Hello " + (v ? v.person || v.name : "") + ", gentle reminder on proforma " + o.no + " for \"" + o.title +
   "\" (" + inr(m.total) + "), sent " + days + " days back. Shall we block " + o.vehicles +
-  " vehicles from " + dmy(o.start) + "? — Vibe Marketing";
+  (o.dayWise || !o.start ? " vehicles for " + m.days + " days? — Vibe Marketing"
+                         : " vehicles from " + dmy(o.start) + "? — Vibe Marketing");
 
 const receiptText = (o, v, p, paid, m) =>
   "Received with thanks: " + inr(p.amount) + " (" + p.kind + ", " + p.mode + (p.ref ? ", ref " + p.ref : "") +
@@ -1099,12 +1111,24 @@ function OrderForm({ init, vendors, onSave, onClose }) {
         <F label="Vehicles"><input type="number" value={f.vehicles} onChange={u("vehicles")} inputMode="numeric" /></F>
         <F label="Rate / vehicle / day"><input type="number" value={f.rate} onChange={u("rate")} inputMode="numeric" /></F>
       </div>
+      <label className="vz-check">
+        <input type="checkbox" checked={!!f.dayWise} onChange={(e) => set({ ...f, dayWise: e.target.checked })} />
+        Day wise — quote for a number of days, no fixed dates
+      </label>
       <div className="vz-2">
-        <F label="Start date"><input type="date" value={f.start} onChange={u("start")} /></F>
-        <F label="End date"><input type="date" value={f.end} onChange={u("end")} min={f.start || undefined} /></F>
+        <F label="Start date"><input type="date" value={f.dayWise ? "" : f.start} onChange={u("start")}
+          disabled={!!f.dayWise} placeholder={f.dayWise ? "not specified" : undefined} /></F>
+        <F label="End date"><input type="date" value={f.dayWise ? "" : f.end} onChange={u("end")}
+          disabled={!!f.dayWise} min={f.start || undefined} /></F>
       </div>
       <div className="vz-2">
-        <F label="Duration (days)"><input type="number" value={m.days || ""} readOnly placeholder="pick the dates" style={{ background:"#EEF1F6", color:"#12192A", fontWeight:700 }} /></F>
+        <F label="Days">
+          {f.dayWise
+            ? <input type="number" inputMode="numeric" value={f.days || ""} autoFocus placeholder="e.g. 10"
+                onChange={e => set({ ...f, days: e.target.value.replace(/[^\d]/g, "") })} />
+            : <input type="number" value={m.days || ""} readOnly placeholder="pick the dates"
+                style={{ background:"#EEF1F6", color:"#12192A", fontWeight:700 }} />}
+        </F>
         <F label="Advance %"><input type="number" value={f.advancePct} onChange={u("advancePct")} inputMode="numeric" /></F>
       </div>
       <div className="vz-2">
@@ -1121,8 +1145,9 @@ function OrderForm({ init, vendors, onSave, onClose }) {
         <div className="vz-kv"><span style={{ fontWeight:700, color:"#12192A" }}>Proforma total</span><b className="vz-money" style={{ fontSize:16 }}>{inr(m.total)}</b></div>
         <div className="vz-kv"><span>Advance to start</span><b className="vz-money">{inr(m.advance)}</b></div>
       </div>
-      <button className="vz-btn" disabled={!f.title.trim() || !f.start || !f.end || m.days <= 0}
-        onClick={() => onSave({ ...f, id: f.id || uid(), days: m.days, months: Math.max(1, Math.round(m.days / 30)) })}>
+      <button className="vz-btn" disabled={!f.title.trim() || m.days <= 0 || (!f.dayWise && (!f.start || !f.end))}
+        onClick={() => onSave({ ...f, id: f.id || uid(), days: m.days, months: Math.max(1, Math.round(m.days / 30)),
+          start: f.dayWise ? "" : f.start, end: f.dayWise ? "" : f.end })}>
         {init ? "Save changes" : "Raise proforma invoice"}
       </button>
       {(!f.start || !f.end || m.days <= 0) && <div className="vz-meta">Pick a start and end date — the campaign length in days is worked out automatically.</div>}
@@ -2488,7 +2513,7 @@ function VibeCRM() {
             <div className="vz-row">
               <div>
                 <div className="vz-title">{o.title}</div>
-                <div className="vz-meta">{v ? v.name : "—"} · {o.no}<br />{o.vehicles} vehicles · {dmy(o.start)} → {dmy(o.end)}</div>
+                <div className="vz-meta">{v ? v.name : "—"} · {o.no}<br />{o.vehicles} vehicles · {o.dayWise || !o.start || !o.end ? orderMath(o).days + " days (dates not set)" : dmy(o.start) + " → " + dmy(o.end)}</div>
               </div>
               <Chip c={STAGE_COLOR[o.stage]}>{o.stage}</Chip>
             </div>
