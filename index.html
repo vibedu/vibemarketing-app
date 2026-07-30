@@ -118,11 +118,22 @@ const CSS = `
 .vz-invoice-overlay { position:fixed; inset:0; z-index:80; background:#4A5262; overflow-y:auto; padding:12px; }
 .vz-invoice-actions { display:flex; gap:8px; max-width:760px; margin:0 auto 10px; }
 .vz-invoice-actions .vz-btn { flex:1; }
-.vz-invoice { background:#fff; max-width:760px; margin:0 auto; padding:26px 28px; color:#12192A; }
-.inv-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; border-bottom:2px solid #12192A; padding-bottom:12px; }
-.inv-co { font-size:20px; font-weight:800; color:#E5601F; letter-spacing:-.3px; }
+/* --px/--py are the sheet's padding; the header cancels them out with negative
+   margins so the dark band runs to the paper edge. Print shrinks them below. */
+.vz-invoice { --px:28px; --py:26px;
+  background:#fff; max-width:760px; margin:0 auto; padding:var(--py) var(--px); color:#12192A; }
+.inv-head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px;
+  background:#12192A; color:#fff;
+  margin:calc(var(--py) * -1) calc(var(--px) * -1) 0;
+  padding:22px var(--px) 20px;
+  /* keep the dark band when printing / saving to PDF */
+  -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.inv-logo { height:34px; width:auto; display:block; margin-bottom:10px; }
+.inv-co { font-size:20px; font-weight:800; color:#fff; letter-spacing:-.3px; }
 .inv-sm { font-size:11.5px; color:#333; margin-top:2px; line-height:1.45; }
-.inv-title { font-size:15px; font-weight:800; letter-spacing:1.5px; white-space:nowrap; }
+.inv-head .inv-sm { color:#C6CEDC; }
+.inv-gstin { font-size:13.5px; font-weight:800; color:#fff; margin-top:9px; letter-spacing:.2px; }
+.inv-title { font-size:16px; font-weight:800; letter-spacing:1.5px; white-space:nowrap; color:#fff; }
 .inv-meta { display:flex; justify-content:space-between; gap:12px; margin:14px 0; }
 .inv-lbl { font-size:9.5px; letter-spacing:1px; text-transform:uppercase; color:#8A94A6; font-weight:700; margin-bottom:4px; }
 .inv-table { width:100%; border-collapse:collapse; margin:6px 0; font-size:12.5px; }
@@ -140,7 +151,7 @@ const CSS = `
   .vz-invoice-overlay, .vz-invoice-overlay * { visibility:visible !important; }
   .vz-invoice-overlay { position:absolute; top:0; left:0; width:100%; background:#fff; padding:0; overflow:visible; }
   .vz-noprint { display:none !important; }
-  .vz-invoice { max-width:100%; margin:0; padding:6px 4px; }
+  .vz-invoice { --px:14px; --py:10px; max-width:100%; margin:0; padding:var(--py) var(--px); }
 }
 .vz-badge { position:absolute; top:-2px; right:-4px; background:var(--red); color:#fff; font-size:9px;
   font-weight:800; min-width:16px; height:16px; border-radius:8px; display:flex; align-items:center;
@@ -2268,15 +2279,11 @@ function VibeCRM() {
         </div>
         <div className="vz-invoice">
           <div className="inv-head">
-            <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-              <img src="icon.svg" alt="" style={{ width:56, height:56, borderRadius:13, flex:"0 0 auto" }} />
-              <div>
-                <div className="inv-co">{s.company}</div>
-                <div className="inv-sm">{s.address}</div>
-                <div className="inv-sm">Mob: {s.bizPhone}  ·  {s.website}</div>
-                <div className="inv-sm">Email: {s.bizEmail}</div>
-                <div className="inv-sm"><b>GSTIN: {s.gstin}</b></div>
-              </div>
+            <div style={{ minWidth:0 }}>
+              <img src="logo-dark.png" alt={s.company} className="inv-logo" />
+              <div className="inv-sm">{s.address}</div>
+              <div className="inv-sm">Mob: {s.bizPhone}  ·  {s.website}  ·  {s.bizEmail}</div>
+              <div className="inv-gstin">GSTIN: {s.gstin}</div>
             </div>
             <div className="inv-title">TAX INVOICE</div>
           </div>
