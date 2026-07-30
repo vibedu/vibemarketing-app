@@ -4,7 +4,17 @@ require __DIR__ . '/config.php';
 
 header('Content-Type: application/json; charset=utf-8');
 // App is same-origin (app.vibemarketing.in), but allow the headers we use.
-header('Access-Control-Allow-Origin: *');
+/* Only our own app may call the API from a browser. This was '*', which let any
+   website on the internet issue requests with the public app key. */
+$ALLOWED_ORIGINS = ['https://app.vibemarketing.in', 'https://vibemarketing.in'];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if ($origin !== '' && in_array($origin, $ALLOWED_ORIGINS, true)) {
+  header('Access-Control-Allow-Origin: ' . $origin);
+  header('Vary: Origin');
+} elseif ($origin === '') {
+  // Same-origin requests and non-browser callers (Razorpay's webhook) send no Origin.
+  header('Access-Control-Allow-Origin: https://app.vibemarketing.in');
+}
 header('Access-Control-Allow-Headers: Content-Type, X-Api-Key, X-Admin-Token');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }

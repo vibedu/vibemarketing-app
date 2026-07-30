@@ -811,16 +811,26 @@ const remindersDue = (db) => {
   const log = db.reminderLog || {};
   const festival = [];
   (db.occasions || []).filter(o => o.active && o.date).forEach(occ => {
-    const left = daysTo(occ.date);
+    // Festivals come round every year. Once the date passes, roll it forward so
+    // Diwali keeps generating reminders instead of going quiet after 2026.
+    let when = String(occ.date).slice(0, 10);
+    let left = daysTo(when);
+    let year = +when.slice(0, 4);
+    for (let i = 0; i < 5 && left != null && left < 0; i++) {
+      year += 1;
+      when = year + when.slice(4);
+      left = daysTo(when);
+    }
     if (left == null || left < 0) return;
     const offsets = (occ.offsets && occ.offsets.length ? occ.offsets : [60, 45, 30, 15]);
     // A milestone is "due" from its day until the next milestone (so a missed day still shows).
     const hit = offsets.filter(o => left <= o).sort((a, b) => a - b)[0]; // smallest offset >= left
     if (hit == null) return;
     vendors.forEach(v => {
-      const key = v.id + "|" + occ.id + "|" + hit;
+      // Year is part of the key so the same festival can fire again next year.
+      const key = v.id + "|" + occ.id + "|" + year + "|" + hit;
       if (log[key]) return;
-      festival.push({ kind: "occasion", key, vendor: v, occ, daysLeft: left, milestone: hit });
+      festival.push({ kind: "occasion", key, vendor: v, occ: { ...occ, date: when }, daysLeft: left, milestone: hit });
     });
   });
   const gapDays = +(db.settings && db.settings.serviceReminderDays) || 90;
@@ -859,6 +869,42 @@ const apiPost = async (path, data) => {
     });
     return await r.json();
   } catch (e) { return null; }
+};
+
+/* ---- outbox -------------------------------------------------------------
+   A van is often out of signal. Driver writes used to be fired once and the
+   failure swallowed, so the office simply never saw that shift. Anything
+   critical now goes through here: it is kept on the device until the server
+   confirms it, and retried whenever we are online again. */
+const OUTBOX_KEY = "vibe-outbox-v1";
+const outboxRead = () => { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch (e) { return []; } };
+const outboxWrite = (list) => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list.slice(-200))); } catch (e) {} };
+let outboxRunning = false;
+
+const queuePost = async (path, data) => {
+  const res = await apiPost(path, data);
+  if (res && !res.error) return res;                 // went through first time
+  const q = outboxRead();
+  q.push({ id: Math.random().toString(36).slice(2), path, data, at: Date.now(), tries: 1 });
+  outboxWrite(q);
+  return null;
+};
+
+const flushOutbox = async () => {
+  if (outboxRunning || !navigator.onLine) return;
+  let q = outboxRead();
+  if (!q.length) return;
+  outboxRunning = true;
+  const keep = [];
+  for (const item of q) {
+    const res = await apiPost(item.path, item.data);
+    if (res && !res.error) continue;                 // delivered — drop it
+    // Give up only after ~3 days of failures so nothing is lost to a bad week.
+    if (item.tries >= 200 || Date.now() - item.at > 3 * 24 * 3600 * 1000) continue;
+    keep.push({ ...item, tries: (item.tries || 1) + 1 });
+  }
+  outboxWrite(keep);
+  outboxRunning = false;
 };
 const apiGet = async (path) => {
   try {
@@ -1897,6 +1943,19 @@ function VibeCRM() {
   }, [mode, me]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_DATA, JSON.stringify(db)); } catch (e) {} })(); }, [db, loaded]);
 
+  /* Keep retrying anything the outbox is holding: on load, when the network
+     comes back, and every couple of minutes while the app is open. */
+  const [pending, setPending] = useState(0);
+  useEffect(() => {
+    if (!loaded) return;
+    const tick = async () => { await flushOutbox(); setPending(outboxRead().length); };
+    tick();
+    const iv = setInterval(tick, 120000);
+    window.addEventListener("online", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => { clearInterval(iv); window.removeEventListener("online", tick); document.removeEventListener("visibilitychange", tick); };
+  }, [loaded]);
+
   // When the server rejects our admin token (expired/invalid), drop it so the login screen shows.
   useEffect(() => {
     onAuthFail = () => { setAdminToken(""); setDb(d => (d.adminToken ? { ...d, adminToken: "" } : d)); };
@@ -2257,7 +2316,7 @@ function VibeCRM() {
       lat: login.selfieLat != null ? login.selfieLat : null, lng: login.selfieLng != null ? login.selfieLng : null,
       selfieId: login.selfieId, selfieUrl: "" };
     setDb(d => ({ ...d, attendance: [rec, ...(d.attendance || [])], session: rec.id }));
-    apiPost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: veh.id, vehicle_plate: veh.plate,
+    queuePost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: veh.id, vehicle_plate: veh.plate,
       driver_name: driver.name, in_at: rec.inAt, out_at: "", lat: rec.lat, lng: rec.lng, open_km: +openKm, selfie_data: selfie })
       .then(res => { if (res && res.selfie_url) setDb(d => ({ ...d, attendance: (d.attendance || []).map(a => a.id === rec.id ? { ...a, selfieUrl: res.selfie_url } : a) })); });
     setLogin({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null });
@@ -2282,7 +2341,7 @@ function VibeCRM() {
     setDb(d => ({ ...d,
       attendance: (d.attendance || []).map(a => a.id === d.session ? { ...a, outAt: out, closeKm: +km } : a),
       session: "" }));
-    if (rec) apiPost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: rec.vehicleId,
+    if (rec) queuePost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: rec.vehicleId,
       vehicle_plate: (vehOf(rec.vehicleId) || {}).plate || "", driver_name: rec.driverName || "",
       in_at: rec.inAt, out_at: out, lat: rec.lat, lng: rec.lng, open_km: rec.openKm, close_km: +km });
     setClosing(false); setCloseKm("");
@@ -2385,7 +2444,14 @@ function VibeCRM() {
   };
 
   // Record that a customer reminder was sent so it drops off the "due" list.
-  const markReminded = (key) => setDb(d => ({ ...d, reminderLog: { ...(d.reminderLog || {}), [key]: today() } }));
+  const markReminded = (key) => setDb(d => {
+    const log = { ...(d.reminderLog || {}), [key]: today() };
+    // Keep the log from growing forever — anything older than two years has
+    // served its purpose and is only consuming the device's storage budget.
+    const cutoff = String(new Date().getFullYear() - 2);
+    Object.keys(log).forEach(k => { if (String(log[k]).slice(0, 4) < cutoff) delete log[k]; });
+    return { ...d, reminderLog: log };
+  });
 
   // Open the send sheet for one customer reminder (festival, service, or welcome).
   const sendCustomerReminder = (item) => {
@@ -3424,6 +3490,16 @@ function VibeCRM() {
           <button className="vz-btn alt" style={{ marginTop:12 }} onClick={endDuty}>{t("endDuty")}</button>
         </div>
 
+        {pending > 0 && (
+          <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+            <div className="vz-meta" style={{ marginTop:0, color:"#8A6100" }}>
+              {lang === "ta"
+                ? pending + " பதிவு அனுப்பப்படவில்லை — நெட்வொர்க் வந்ததும் தானாக அனுப்பப்படும். செயலியை மூடாதீர்கள்."
+                : pending + " record(s) still to send — they will go automatically when there is signal. Nothing is lost."}
+            </div>
+          </div>
+        )}
+
         <button className="vz-big" style={{ marginTop:2 }} onClick={() => setCapture({ order:null, vendor:null, vehicle:myVeh, driver:me, kind:"Vehicle photo" })}>
           <Icon d={ICONS.field} />{lang === "ta" ? "வாகன புகைப்படம் எடு" : "Take vehicle photo"}
         </button>
@@ -3915,7 +3991,7 @@ function VibeCRM() {
             setToast("Photo saved with GPS stamp");
             const dataUrl = pics[pr.photoId];
             const ord = pr.orderId ? orderOf(pr.orderId) : null;
-            apiPost("proofs.php", {
+            queuePost("proofs.php", {
               id: pr.id, at: pr.at, kind: pr.kind,
               vehicle_id: pr.vehicleId, vehicle_plate: (vehOf(pr.vehicleId) || {}).plate || "",
               driver_name: pr.driverName || "", order_id: pr.orderId || "",
