@@ -1131,6 +1131,33 @@ function PaymentForm({ orders, vendors, onSave, onClose }) {
   );
 }
 
+/* Change the admin password. The current password is required, so a device that
+   is merely still signed in cannot change it. */
+function ChangePwSheet({ onSave, onClose }) {
+  const [f, set] = useState({ cur:"", nw:"", nw2:"" });
+  const [busy, setBusy] = useState(false);
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  const short = f.nw.length > 0 && f.nw.length < 6;
+  const mismatch = f.nw2.length > 0 && f.nw !== f.nw2;
+  const ready = f.cur && f.nw.length >= 6 && f.nw === f.nw2;
+  return (
+    <Sheet title="Change admin password" onClose={onClose}>
+      <F label="Current password"><input type="password" value={f.cur} onChange={u("cur")} autoComplete="current-password" /></F>
+      <F label="New password (at least 6 characters)"><input type="password" value={f.nw} onChange={u("nw")} autoComplete="new-password" /></F>
+      <F label="Type the new password again"><input type="password" value={f.nw2} onChange={u("nw2")} autoComplete="new-password" /></F>
+      {short && <div className="vz-meta" style={{ color:"#B4262A" }}>Use at least 6 characters.</div>}
+      {mismatch && <div className="vz-meta" style={{ color:"#B4262A" }}>The two new passwords do not match.</div>}
+      <button className="vz-btn" disabled={!ready || busy}
+        onClick={async () => { setBusy(true); await onSave(f.cur, f.nw); setBusy(false); }}>
+        {busy ? "Saving…" : "Change password"}
+      </button>
+      <div className="vz-meta" style={{ textAlign:"center" }}>
+        Every other signed-in device will be signed out.
+      </div>
+    </Sheet>
+  );
+}
+
 /* Create a Razorpay payment link for a campaign and share it with the customer. */
 function PayLinkSheet({ order, vendor, math, paid, busy, onCreate, onClose }) {
   const due = Math.max(0, math.total - paid);
@@ -3245,6 +3272,14 @@ function VibeCRM() {
         </>
       )}
 
+      <div className="vz-eyebrow">Admin password</div>
+      <div className="vz-card">
+        <div className="vz-meta" style={{ marginTop:0 }}>
+          Signed in as <b>{db.adminName || "Admin"}</b>. Changing the password signs out every other device.
+        </div>
+        <button className="vz-btn alt" style={{ marginTop:10 }} onClick={() => setSheet({ type:"chgpw" })}>Change password</button>
+      </div>
+
       <div className="vz-eyebrow">Backup</div>
       <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
         <div className="vz-meta" style={{ marginTop:0, color:"#8A6100" }}>
@@ -3436,6 +3471,16 @@ function VibeCRM() {
             if (d0) apiPost("drivers.php", { id: d0.id, name: d0.name, phone: d0.phone, pin: d0.pin || "", active: 0 });
             setDb(d => ({ ...d, vehicles: d.vehicles.map(v => v.driverId === id ? { ...v, driverId: "" } : v) }));
             setSheet(null); setToast("Driver deleted");
+          }} />
+      )}
+      {sheet?.type === "chgpw" && (
+        <ChangePwSheet onClose={() => setSheet(null)}
+          onSave={async (cur, nw) => {
+            const res = await apiPost("admin_password.php", { current_password: cur, new_password: nw });
+            if (!res) { setToast("Could not reach the server"); return; }
+            if (!res.ok) { setToast(res.error || "Could not change the password"); return; }
+            setSheet(null);
+            setToast("Password changed · other devices signed out");
           }} />
       )}
       {sheet?.type === "paylink" && (
