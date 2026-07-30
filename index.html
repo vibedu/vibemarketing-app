@@ -206,11 +206,13 @@ const CSS = `
   border-radius:9px; background:#FAFBFC; font-size:15px; color:var(--ink);
   -webkit-appearance:none; appearance:none; }
 .vz-f textarea { height:auto; padding:11px 12px; line-height:1.5; resize:vertical; }
-/* selects and date fields get their own chevron so they match the plain inputs */
-.vz-f select, .vz-f input[type="date"] {
+/* selects get their own chevron so they match the plain inputs.
+   Date inputs keep the browser's native calendar button — adding a chevron
+   there too would show two arrows side by side. */
+.vz-f select {
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236B7488' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 13px center; padding-right:34px; }
-.vz-f input[type="date"]::-webkit-calendar-picker-indicator { opacity:0; }
+.vz-f input[type="date"] { -webkit-appearance:none; appearance:none; padding-right:10px; }
 .vz-f input:focus, .vz-f select:focus, .vz-f textarea:focus { outline:2px solid var(--blue); outline-offset:-1px; background-color:#fff; }
 .vz-f input:disabled, .vz-f input[readonly] { background:#F1F3F6; color:var(--muted); }
 .vz-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; }
