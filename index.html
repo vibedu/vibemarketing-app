@@ -475,8 +475,13 @@ const orderMath = (o) => {
   const extras = (+o.fabrication || 0) + (+o.flex || 0);
   const sub = base + extras;
   const gst = o.gst ? Math.round(sub * 0.18) : 0;
+  // Split the ONE rounded GST figure, so CGST + SGST always equals the tax charged.
+  // Rounding 9% twice independently disagreed with the 18% total on ~half of all subtotals.
+  const cgst = Math.floor(gst / 2);
+  const sgst = gst - cgst;
   const total = sub + gst;
-  return { base, extras, sub, gst, total, days, advance: Math.round((total * (+o.advancePct || 50)) / 100) };
+  const pct = Math.min(100, Math.max(0, +o.advancePct || 50));
+  return { base, extras, sub, gst, cgst, sgst, total, days, advance: Math.round((total * pct) / 100) };
 };
 
 /* photo capture: shrink + burn a GPS/time stamp into the image */
@@ -636,7 +641,7 @@ const docImage = async ({ title, s, v, o, m }) => {
     y += h;
   };
   totRow("", money(m.sub), true);
-  if (o.gst) { totRow("CGST 9%", money(Math.round(m.sub * 0.09)), false); totRow("SGST 9%", money(Math.round(m.sub * 0.09)), false); }
+  if (o.gst) { totRow("CGST 9%", money(m.cgst), false); totRow("SGST 9%", money(m.sgst), false); }
   totRow("GRAND TOTAL", money(m.total), true);
 
   /* ---- terms ---- */
@@ -1102,14 +1107,22 @@ function OrderForm({ init, vendors, onSave, onClose }) {
     fabrication:0, flex:0, gst:true, advancePct:50, start:today(), end:"", route:"", stage:"Proforma", vehicleIds:[], sends:[],
   });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  // Money and counts can't be negative, and an advance over 100% would ask for
+  // more than the job is worth. Clamp on entry rather than letting it reach an invoice.
+  const num = (k, { min = 0, max = Infinity } = {}) => (e) => {
+    const raw = e.target.value;
+    if (raw === "") return set({ ...f, [k]: "" });
+    const n = Math.min(max, Math.max(min, Math.floor(Number(raw) || 0)));
+    set({ ...f, [k]: n });
+  };
   const m = orderMath(f);
   return (
     <Sheet title={init ? "Edit campaign" : "New campaign"} onClose={onClose}>
       <F label="Campaign name"><input value={f.title} onChange={u("title")} placeholder="Aadi offer 25%" /></F>
       <F label="Vendor"><select value={f.vendorId} onChange={u("vendorId")}>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></F>
       <div className="vz-2">
-        <F label="Vehicles"><input type="number" value={f.vehicles} onChange={u("vehicles")} inputMode="numeric" /></F>
-        <F label="Rate / vehicle / day"><input type="number" value={f.rate} onChange={u("rate")} inputMode="numeric" /></F>
+        <F label="Vehicles"><input type="number" value={f.vehicles} onChange={num("vehicles")} inputMode="numeric" min="0" /></F>
+        <F label="Rate / vehicle / day"><input type="number" value={f.rate} onChange={num("rate")} inputMode="numeric" min="0" /></F>
       </div>
       <label className="vz-check">
         <input type="checkbox" checked={!!f.dayWise} onChange={(e) => set({ ...f, dayWise: e.target.checked })} />
@@ -1129,11 +1142,11 @@ function OrderForm({ init, vendors, onSave, onClose }) {
             : <input type="number" value={m.days || ""} readOnly placeholder="pick the dates"
                 style={{ background:"#EEF1F6", color:"#12192A", fontWeight:700 }} />}
         </F>
-        <F label="Advance %"><input type="number" value={f.advancePct} onChange={u("advancePct")} inputMode="numeric" /></F>
+        <F label="Advance %"><input type="number" value={f.advancePct} onChange={num("advancePct", { max: 100 })} inputMode="numeric" min="0" max="100" /></F>
       </div>
       <div className="vz-2">
-        <F label="Fabrication ₹"><input type="number" value={f.fabrication} onChange={u("fabrication")} inputMode="numeric" /></F>
-        <F label="Flex printing ₹"><input type="number" value={f.flex} onChange={u("flex")} inputMode="numeric" /></F>
+        <F label="Fabrication ₹"><input type="number" value={f.fabrication} onChange={num("fabrication")} inputMode="numeric" min="0" /></F>
+        <F label="Flex printing ₹"><input type="number" value={f.flex} onChange={num("flex")} inputMode="numeric" min="0" /></F>
       </div>
       <F label="Route / coverage"><input value={f.route} onChange={u("route")} placeholder="Thillai Nagar → Chatram" /></F>
       <label className="vz-check"><input type="checkbox" checked={!!f.gst} onChange={(e) => set({ ...f, gst: e.target.checked })} />Add GST @ 18%</label>
@@ -1291,9 +1304,12 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
   );
 }
 
-function PaymentForm({ orders, vendors, onSave, onClose }) {
+function PaymentForm({ orders, vendors, paidOn, onSave, onClose }) {
   const [f, set] = useState({ orderId: orders[0]?.id || "", date: today(), amount:"", mode:"UPI", kind:"Advance", ref:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  const ord = orders.find(o => o.id === f.orderId);
+  const due = ord ? Math.max(0, orderMath(ord).total - (paidOn ? paidOn(ord.id) : 0)) : 0;
+  const over = +f.amount > due && due >= 0 && ord;
   return (
     <Sheet title="Record payment" onClose={onClose}>
       <F label="Against campaign">
@@ -1313,7 +1329,12 @@ function PaymentForm({ orders, vendors, onSave, onClose }) {
         <F label="Mode"><select value={f.mode} onChange={u("mode")}>{["UPI","Cash","Bank transfer","Cheque"].map(k => <option key={k}>{k}</option>)}</select></F>
       </div>
       <F label="Reference / UTR"><input value={f.ref} onChange={u("ref")} /></F>
-      <button className="vz-btn" onClick={() => +f.amount > 0 && onSave({ ...f, id: uid(), amount: +f.amount })}>Save payment</button>
+      {ord && <div className="vz-kv" style={{ borderBottom:"none" }}><span>Outstanding on this campaign</span><b className="vz-money">{inr(due)}</b></div>}
+      {over && <div className="vz-meta" style={{ color:"#8A6100" }}>
+        This is more than the {inr(due)} outstanding — the campaign will show as overpaid.
+      </div>}
+      <button className="vz-btn" disabled={!(+f.amount > 0)}
+        onClick={() => { if (+f.amount > 0) onSave({ ...f, id: uid(), amount: +f.amount }); }}>Save payment</button>
     </Sheet>
   );
 }
@@ -2053,7 +2074,18 @@ function VibeCRM() {
     if (mode === "manager" && !perm.tabs.includes(tab)) setTab(perm.tabs[0]);
   }, [mode, db.userId, tab]);
 
-  const nextOrderNo = () => "VM/PI/" + new Date().getFullYear() + "/" + String(db.orders.length + 1).padStart(3, "0");
+  const nextOrderNo = () => {
+    const yr = new Date().getFullYear();
+    const key = "orderSeq" + yr;
+    // Never reuse: take whichever is higher — the stored counter, or the highest
+    // number already issued this year (covers data restored from a backup).
+    const used = (db.orders || []).reduce((mx, o) => {
+      const mt = String(o.no || "").match(new RegExp("^VM/PI/" + yr + "/(\d+)$"));
+      return mt ? Math.max(mx, +mt[1]) : mx;
+    }, 0);
+    const n = Math.max(+(db.settings || {})[key] || 0, used) + 1;
+    return { no: "VM/PI/" + yr + "/" + String(n).padStart(3, "0"), key, n };
+  };
 
   /* fire one phone notification a day for anything overdue or inside the final window */
   useEffect(() => {
@@ -2203,6 +2235,14 @@ function VibeCRM() {
     const openKm = (login.openKm || "").replace(/\D/g, "");
     if (!veh || !driver || openKm === "") return;
     if (!login.selfieId || !pics[login.selfieId]) { setToast(lang === "ta" ? "முதலில் உங்கள் செல்தியை எடுக்கவும்" : "Please take your punch-in selfie first"); return; }
+    // One vehicle, one driver: a van already signed out can't be taken by someone else.
+    const busy = (db.attendance || []).find(a => a.vehicleId === veh.id && !a.outAt && a.driverId !== driver.id);
+    if (busy) {
+      setToast(lang === "ta"
+        ? veh.plate + " ஏற்கனவே " + (busy.driverName || "another driver") + " பயன்படுத்துகிறார்"
+        : veh.plate + " is already signed out by " + (busy.driverName || "another driver"));
+      return;
+    }
     // Sanity-check the odometer: opening km should not be below the vehicle's last recorded reading.
     const last = (db.attendance || []).filter(a => a.vehicleId === veh.id && (a.closeKm != null || a.openKm != null))
       .sort((a, b) => (String(a.inAt) < String(b.inAt) ? 1 : -1))[0];
@@ -2230,6 +2270,13 @@ function VibeCRM() {
   const confirmEndDuty = () => {
     const km = (closeKm || "").replace(/\D/g, "");
     if (km === "") return;
+    const cur = (db.attendance || []).find(a => a.id === db.session);
+    if (cur && cur.openKm != null && +km < cur.openKm) {
+      setToast(lang === "ta"
+        ? "இறுதி KM ஆரம்ப KM (" + cur.openKm + ") ஐ விட குறைவாக இருக்க முடியாது"
+        : "Closing km can't be less than the opening reading (" + cur.openKm + ")");
+      return;
+    }
     const out = new Date().toISOString();
     const rec = (db.attendance || []).find(a => a.id === db.session);
     setDb(d => ({ ...d,
@@ -2602,7 +2649,12 @@ function VibeCRM() {
 
         <div className="vz-inline" style={{ marginTop:14 }}>
           <button className="vz-btn alt" onClick={() => { setOpenOrder(null); setSheet({ type:"order", data:o }); }}>Edit</button>
-          {perm.del && <button className="vz-btn warn" onClick={() => { drop("orders", o.id); setOpenOrder(null); }}>Delete</button>}
+          {perm.del && <button className="vz-btn warn" onClick={() => {
+            const got = db.payments.filter(p => p.orderId === o.id);
+            if (got.length) { setToast("Delete the " + got.length + " payment(s) on this campaign first"); return; }
+            if (!window.confirm("Delete campaign " + o.no + " (" + o.title + ")? This cannot be undone.")) return;
+            drop("orders", o.id); setOpenOrder(null); setToast("Campaign deleted");
+          }}>Delete</button>}
         </div>
       </Sheet>
     );
@@ -2621,14 +2673,13 @@ function VibeCRM() {
   };
 
   const invoiceText = (o, v, m, s) => {
-    const cgst = o.gst ? Math.round(m.sub * 0.09) : 0;
     return ["*" + (s.company || "Vibe Marketing") + "* — Tax Invoice",
       "Invoice No: " + (o.invNo || "-") + "  ·  " + dmy(o.invDate || today()),
       "To: " + (v ? v.name : "—"),
       "Vehicle charges: " + o.vehicles + " veh x " + inr(o.rate) + "/day x " + m.days + " day = " + inr(m.base),
       m.extras ? "Flex & fabrication: " + inr(m.extras) : "",
       "Subtotal: " + inr(m.sub),
-      o.gst ? "CGST 9%: " + inr(cgst) + "  ·  SGST 9%: " + inr(cgst) : "",
+      o.gst ? "CGST 9%: " + inr(m.cgst) + "  ·  SGST 9%: " + inr(m.sgst) : "",
       "*Grand total: " + inr(m.total) + "*",
       "Advance (" + (o.advancePct || 50) + "%): " + inr(m.advance),
       "",
@@ -2642,7 +2693,6 @@ function VibeCRM() {
     const v = vendorOf(o.vendorId);
     const m = orderMath(o);
     const s = db.settings;
-    const cgst = o.gst ? Math.round(m.sub * 0.09) : 0;
     const area = (o.route || "").split("→")[0].split("-")[0].trim() || "Coimbatore";
     return (
       <div className="vz-invoice-overlay">
@@ -2684,8 +2734,8 @@ function VibeCRM() {
           </table>
           <div className="inv-totals">
             <div className="inv-trow"><span>Subtotal</span><b>{inr(m.sub)}</b></div>
-            {o.gst && <div className="inv-trow"><span>CGST 9%</span><b>{inr(cgst)}</b></div>}
-            {o.gst && <div className="inv-trow"><span>SGST 9%</span><b>{inr(cgst)}</b></div>}
+            {o.gst && <div className="inv-trow"><span>CGST 9%</span><b>{inr(m.cgst)}</b></div>}
+            {o.gst && <div className="inv-trow"><span>SGST 9%</span><b>{inr(m.sgst)}</b></div>}
             <div className="inv-trow inv-grand"><span>Grand total</span><b>{inr(m.total)}</b></div>
             <div className="inv-trow"><span>Advance ({o.advancePct || 50}%)</span><b>{inr(m.advance)}</b></div>
           </div>
@@ -3729,13 +3779,18 @@ function VibeCRM() {
           }}
           onDelete={(id) => {
             if (db.orders.some(o => o.vendorId === id)) { setToast("This vendor has campaigns — delete those first"); return; }
+            const vn = (db.vendors.find(x => x.id === id) || {}).name || "this customer";
+            if (!window.confirm("Delete " + vn + "? This cannot be undone.")) return;
             drop("vendors", id); setSheet(null); setToast("Vendor deleted");
           }} />
       )}
       {sheet?.type === "order" && (
         <OrderForm init={sheet.data} vendors={db.vendors} onClose={() => setSheet(null)}
           onSave={(x) => {
-            const rec = { ...x, no: x.no || nextOrderNo(), created: x.created || today(), sends: x.sends || [], vehicleIds: x.vehicleIds || [] };
+            let issued = null;
+            if (!x.no) { issued = nextOrderNo(); }
+            const rec = { ...x, no: x.no || issued.no, created: x.created || today(), sends: x.sends || [], vehicleIds: x.vehicleIds || [] };
+            if (issued) setSetting(issued.key, issued.n);
             put("orders", rec);
             setSheet(null);
             if (!x.id || !(x.sends || []).length) { if (db.settings.autoSendProforma) setTimeout(() => sendProforma(rec, true), 250); }
@@ -3745,6 +3800,11 @@ function VibeCRM() {
         <VehicleForm init={sheet.data} drivers={db.drivers} plates={db.vehicles} canEdit={perm.fleetEdit} canDel={perm.del} onClose={() => setSheet(null)}
           onSave={(x) => { put("vehicles", x); setSheet(null); }}
           onDelete={(id) => {
+            const veh = (db.vehicles || []).find(x => x.id === id) || {};
+            const hist = (db.attendance || []).filter(a => a.vehicleId === id).length;
+            const warn = "Delete vehicle " + (veh.plate || "") + "? This cannot be undone."
+              + (hist ? " It has " + hist + " duty record(s), which stay but lose their vehicle." : "");
+            if (!window.confirm(warn)) return;
             drop("vehicles", id);
             setDb(d => ({ ...d, orders: d.orders.map(o => ({ ...o, vehicleIds: (o.vehicleIds || []).filter(x => x !== id) })) }));
             setSheet(null); setToast("Vehicle deleted");
@@ -3766,6 +3826,9 @@ function VibeCRM() {
           }}
           onDelete={(id) => {
             const d0 = (db.drivers || []).find(x => x.id === id);
+            const onDuty = (db.attendance || []).some(a => a.driverId === id && !a.outAt);
+            if (onDuty) { setToast("This driver is on duty — end the shift first"); return; }
+            if (!window.confirm("Remove driver " + ((d0 || {}).name || "") + "? They will no longer be able to sign in.")) return;
             drop("drivers", id);
             if (d0) apiPost("drivers.php", { id: d0.id, name: d0.name, phone: d0.phone, pin: d0.pin || "", active: 0 });
             setDb(d => ({ ...d, vehicles: d.vehicles.map(v => v.driverId === id ? { ...v, driverId: "" } : v) }));
@@ -3789,7 +3852,7 @@ function VibeCRM() {
           onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "payment" && (
-        <PaymentForm orders={db.orders} vendors={db.vendors} onClose={() => setSheet(null)}
+        <PaymentForm orders={db.orders} vendors={db.vendors} paidOn={paidOn} onClose={() => setSheet(null)}
           onSave={(x) => {
             put("payments", x); setSheet(null);
             const o = orderOf(x.orderId);
