@@ -927,7 +927,14 @@ const blankData = () => ({
   users: [], vendors: [], vehicles: [], drivers: [], managers: [], orders: [], payments: [], jobs: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", payLinks: [],
+  tombstones: [], lastSync: "", lastPush: "",
 });
+
+/* Which local collections are mirrored to the server, and the name the server
+   knows them by. Everything else (settings, occasions, proofs, attendance) is
+   either device-local by design or already synced by its own endpoint. */
+const SYNC_KEYS = { vendors:"vendor", orders:"order", payments:"payment", vehicles:"vehicle" };
+const SYNC_KEY_OF = { vendor:"vendors", order:"orders", payment:"payments", vehicle:"vehicles" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -938,6 +945,23 @@ const OCCASION_SEED = () => ([
   { id:"occ_tamilny", name:"Tamil New Year", date:"2027-04-14", offsets:[60,45,30,15], active:true },
 ]);
 const seedOccasionsIfEmpty = (d) => (d.occasions && d.occasions.length ? d : { ...d, occasions: OCCASION_SEED() });
+
+/* Records created before sync existed have no updatedAt. Stamp them once, well
+   in the past, so the first sync uploads them but any later edit — here or on
+   another device — still wins over them. */
+const stampForSync = (d) => {
+  const base = "2000-01-01T00:00:00.000Z";
+  let touched = false;
+  const out = { ...d };
+  Object.keys(SYNC_KEYS).forEach(key => {
+    const list = out[key] || [];
+    if (list.some(r => r && !r.updatedAt)) {
+      out[key] = list.map(r => (r && !r.updatedAt ? { ...r, updatedAt: base } : r));
+      touched = true;
+    }
+  });
+  return touched ? out : d;
+};
 
 /* ---- real fleet register (from the office sheet — verify against source) ---- */
 const FLEET_SEED = () => ([
@@ -1915,7 +1939,7 @@ function VibeCRM() {
 
   useEffect(() => {
     (async () => {
-      try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(seedOccasionsIfEmpty(seedInvoiceDefaults(seedFleetIfEmpty(base))));
+      try { const r = await window.storage.get(KEY_DATA); const base = (r && r.value) ? JSON.parse(r.value) : blankData(); setDb(stampForSync(seedOccasionsIfEmpty(seedInvoiceDefaults(seedFleetIfEmpty(base)))));
         setAdminToken(base && base.adminToken ? base.adminToken : "");
         // If an admin was left signed in, lock the app on open so the PIN is required again.
         if (base && base.role === "manager" && base.userId && (base.users || []).some(u => u.id === base.userId && u.pin)) setLocked(true);
@@ -1942,6 +1966,91 @@ function VibeCRM() {
     return () => { clearInterval(iv); window.removeEventListener("pointerdown", bump); window.removeEventListener("keydown", bump); document.removeEventListener("visibilitychange", onVis); };
   }, [mode, me]);
   useEffect(() => { if (loaded) (async () => { try { await window.storage.set(KEY_DATA, JSON.stringify(db)); } catch (e) {} })(); }, [db, loaded]);
+
+  /* ---- office record sync -------------------------------------------------
+     Vendors, campaigns, payments and vehicles used to live only in this
+     device's storage, so losing the phone lost the business. They are now
+     mirrored to the server: anything changed since the last sync is pushed,
+     anything newer on the server is pulled, and whichever copy was edited last
+     wins. Deletes travel as tombstones so a removed record stays removed. */
+  const [syncState, setSyncState] = useState({ at: "", busy: false, error: "" });
+  const syncingRef = useRef(false);
+
+  const runSync = async (opts) => {
+    const quiet = opts && opts.quiet;
+    if (syncingRef.current || !db.adminToken || !navigator.onLine) return;
+    syncingRef.current = true;
+    if (!quiet) setSyncState(s => ({ ...s, busy: true, error: "" }));
+    try {
+      const since = db.lastSync || "";           // server clock — drives the pull
+      // What to PUSH is measured against this device's own clock. Comparing our
+      // timestamps to the server's would silently drop changes whenever the two
+      // clocks disagree, which is exactly how a delete went missing in testing.
+      const pushedUpTo = db.lastPush || "";
+      const pushMark = new Date().toISOString();
+
+      // 1. push everything edited since our last push, plus tombstones
+      const push = [];
+      Object.keys(SYNC_KEYS).forEach(key => {
+        (db[key] || []).forEach(r => {
+          if (!r || !r.id) return;
+          if (pushedUpTo && r.updatedAt && r.updatedAt <= pushedUpTo) return;   // unchanged
+          const { fromServer, ...clean } = r;
+          push.push({ kind: SYNC_KEYS[key], id: r.id, updatedAt: r.updatedAt || pushMark, data: clean });
+        });
+      });
+      (db.tombstones || []).forEach(t => {
+        if (pushedUpTo && t.updatedAt <= pushedUpTo) return;
+        push.push({ kind: SYNC_KEYS[t.key], id: t.id, updatedAt: t.updatedAt, deleted: true, data: {} });
+      });
+      if (push.length) {
+        const pr = await apiPost("sync.php", { records: push });
+        if (!pr || !pr.ok) throw new Error((pr && pr.error) || "could not send changes");
+      }
+
+      // 2. pull anything the server has that we haven't seen
+      const res = await apiGet("sync.php" + (since ? "?since=" + encodeURIComponent(since) : ""));
+      if (!res || !res.ok) throw new Error((res && res.error) || "could not fetch changes");
+
+      setDb(d => {
+        const next = { ...d };
+        (res.records || []).forEach(r => {
+          const key = SYNC_KEY_OF[r.kind];
+          if (!key) return;
+          const list = next[key] || [];
+          const mine = list.find(x => x.id === r.id);
+          // Only let the server overwrite a record we haven't edited more recently.
+          if (mine && mine.updatedAt && r.updatedAt && mine.updatedAt > r.updatedAt) return;
+          if (r.deleted) {
+            next[key] = list.filter(x => x.id !== r.id);
+          } else {
+            const rec = { ...r.data, id: r.id, updatedAt: r.updatedAt };
+            next[key] = mine ? list.map(x => (x.id === r.id ? rec : x)) : [rec, ...list];
+          }
+        });
+        // Tombstones the server has taken no longer need repeating (measured on
+        // our own clock, for the same reason as the push filter above).
+        next.tombstones = (d.tombstones || []).filter(t => t.updatedAt > pushMark);
+        next.lastSync = res.now || d.lastSync;
+        next.lastPush = pushMark;
+        return next;
+      });
+      setSyncState({ at: new Date().toISOString(), busy: false, error: "" });
+    } catch (e) {
+      setSyncState(s => ({ ...s, busy: false, error: String(e.message || e) }));
+    }
+    syncingRef.current = false;
+  };
+
+  useEffect(() => {
+    if (!loaded || mode !== "manager" || !db.adminToken) return;
+    const t = setTimeout(() => runSync({ quiet: true }), 800);   // shortly after opening
+    const iv = setInterval(() => runSync({ quiet: true }), 60000);
+    const onBack = () => { if (document.visibilityState === "visible") runSync({ quiet: true }); };
+    window.addEventListener("online", onBack);
+    document.addEventListener("visibilitychange", onBack);
+    return () => { clearTimeout(t); clearInterval(iv); window.removeEventListener("online", onBack); document.removeEventListener("visibilitychange", onBack); };
+  }, [loaded, mode, db.adminToken]);
 
   /* Keep retrying anything the outbox is holding: on load, when the network
      comes back, and every couple of minutes while the app is open. */
@@ -2098,8 +2207,22 @@ function VibeCRM() {
     return () => clearInterval(t);
   }, [loaded, db.attendance]);
 
-  const put = (key, item) => setDb(d => { const arr = d[key] || []; return { ...d, [key]: arr.some(x => x.id === item.id) ? arr.map(x => (x.id === item.id ? item : x)) : [item, ...arr] }; });
-  const drop = (key, id) => setDb(d => ({ ...d, [key]: (d[key] || []).filter(x => x.id !== id) }));
+  /* Records carry the moment they last changed so the server can decide which
+     copy wins, and deletes leave a tombstone so they reach other devices too
+     (a removed row would otherwise be re-created by the next pull). */
+  const put = (key, item) => setDb(d => {
+    const arr = d[key] || [];
+    const rec = SYNC_KEYS[key] ? { ...item, updatedAt: new Date().toISOString() } : item;
+    return { ...d, [key]: arr.some(x => x.id === rec.id) ? arr.map(x => (x.id === rec.id ? rec : x)) : [rec, ...arr] };
+  });
+  const drop = (key, id) => setDb(d => {
+    const next = { ...d, [key]: (d[key] || []).filter(x => x.id !== id) };
+    if (SYNC_KEYS[key]) {
+      next.tombstones = [...(d.tombstones || []).filter(t => !(t.key === key && t.id === id)),
+                         { key, id, updatedAt: new Date().toISOString() }].slice(-500);
+    }
+    return next;
+  });
   const savePic = (id, dataUrl) => setPics(p => {
     const next = { ...p, [id]: dataUrl };
     const keys = Object.keys(next);
@@ -3656,6 +3779,34 @@ function VibeCRM() {
           </div>
         </>
       )}
+
+      <div className="vz-eyebrow">Backup to server</div>
+      <div className="vz-card">
+        <div className="vz-row">
+          <div style={{ minWidth:0 }}>
+            <div className="vz-title">
+              {syncState.error ? "Not backed up" : db.lastSync ? "Customers &amp; campaigns are backed up" : "Not backed up yet"}
+            </div>
+            <div className="vz-meta">
+              {syncState.busy ? "Syncing…"
+                : syncState.error ? syncState.error
+                : db.lastSync ? "Last synced " + clock(db.lastSync) + " · " + dmy(db.lastSync)
+                : "Run the first sync to copy this phone's records to the server."}
+            </div>
+          </div>
+          <Chip c={syncState.error ? "c-red" : db.lastSync ? "c-green" : "c-yellow"}>
+            {syncState.error ? "Error" : db.lastSync ? "On" : "Off"}
+          </Chip>
+        </div>
+        <div className="vz-kv" style={{ marginTop:8 }}>
+          <span>Records mirrored</span>
+          <b>{(db.vendors || []).length + (db.orders || []).length + (db.payments || []).length + (db.vehicles || []).length}</b>
+        </div>
+        <div className="vz-meta">Customers, campaigns, payments and vehicles. Photos and settings stay on this phone.</div>
+        <button className="vz-btn alt" style={{ marginTop:10 }} disabled={syncState.busy} onClick={() => runSync()}>
+          {syncState.busy ? "Syncing…" : "Sync now"}
+        </button>
+      </div>
 
       <div className="vz-eyebrow">Online payments (Razorpay)</div>
       <div className="vz-card">
