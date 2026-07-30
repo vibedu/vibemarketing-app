@@ -1999,31 +1999,38 @@ function VibeCRM() {
      wins. Deletes travel as tombstones so a removed record stays removed. */
   const [syncState, setSyncState] = useState({ at: "", busy: false, error: "" });
   const syncingRef = useRef(false);
+  const dbRef = useRef(db);
+  useEffect(() => { dbRef.current = db; });   // always the latest data, for the timer
 
   const runSync = async (opts) => {
     const quiet = opts && opts.quiet;
-    if (syncingRef.current || !db.adminToken || !navigator.onLine) return;
+    // Read through a ref, never the closed-over db: the background timer holds
+    // one runSync from when it was created, so reading db directly meant it kept
+    // uploading whatever the data looked like at login and silently ignored
+    // everything added since.
+    const cur = dbRef.current;
+    if (syncingRef.current || !cur.adminToken || !navigator.onLine) return;
     syncingRef.current = true;
     if (!quiet) setSyncState(s => ({ ...s, busy: true, error: "" }));
     try {
-      const since = db.lastSync || "";           // server clock — drives the pull
+      const since = cur.lastSync || "";           // server clock — drives the pull
       // What to PUSH is measured against this device's own clock. Comparing our
       // timestamps to the server's would silently drop changes whenever the two
       // clocks disagree, which is exactly how a delete went missing in testing.
-      const pushedUpTo = db.lastPush || "";
+      const pushedUpTo = cur.lastPush || "";
       const pushMark = new Date().toISOString();
 
       // 1. push everything edited since our last push, plus tombstones
       const push = [];
       Object.keys(SYNC_KEYS).forEach(key => {
-        (db[key] || []).forEach(r => {
+        (cur[key] || []).forEach(r => {
           if (!r || !r.id) return;
           if (pushedUpTo && r.updatedAt && r.updatedAt <= pushedUpTo) return;   // unchanged
           const { fromServer, ...clean } = r;
           push.push({ kind: SYNC_KEYS[key], id: r.id, updatedAt: r.updatedAt || pushMark, data: clean });
         });
       });
-      (db.tombstones || []).forEach(t => {
+      (cur.tombstones || []).forEach(t => {
         if (pushedUpTo && t.updatedAt <= pushedUpTo) return;
         push.push({ kind: SYNC_KEYS[t.key], id: t.id, updatedAt: t.updatedAt, deleted: true, data: {} });
       });
@@ -3908,9 +3915,24 @@ function VibeCRM() {
       <div className="vz-eyebrow">Danger zone</div>
       <button className="vz-btn alt" onClick={() => { setDb(d => ({ ...seedData(), users: d.users, userId: d.userId, role: d.role })); setPics({}); setSheet(null); setToast("Sample data loaded"); }}>Load sample data (overwrites everything)</button>
       <button className="vz-btn warn" onClick={() => {
-        if (!window.confirm("Erase every vendor, campaign, payment, driver and photo on this phone? Take a backup first.")) return;
-        setDb(d => ({ ...blankData(), users: d.users, userId: d.userId, role: d.role, settings: d.settings }));
-        setPics({}); setSheet(null); setToast("All records erased");
+        if (!window.confirm("Erase every vendor, campaign, payment, driver and photo — on this phone AND on the server? Take a backup first.")) return;
+        setDb(d => {
+          // Erasing locally is not enough now that records are backed up: without
+          // tombstones the next sync would simply pull all of it back again.
+          const now = new Date().toISOString();
+          const tomb = [...(d.tombstones || [])];
+          Object.keys(SYNC_KEYS).forEach(key => {
+            (d[key] || []).forEach(r => { if (r && r.id) tomb.push({ key, id: r.id, updatedAt: now }); });
+          });
+          return {
+            ...blankData(),
+            users: d.users, userId: d.userId, role: d.role, settings: d.settings,
+            adminToken: d.adminToken, adminName: d.adminName,   // stay signed in
+            tombstones: tomb, lastSync: d.lastSync, lastPush: d.lastPush,
+          };
+        });
+        setPics({}); setSheet(null); setToast("Erased — syncing the deletion to the server");
+        setTimeout(() => runSync(), 400);
       }}>Erase all records</button>
     </Sheet>
   );
