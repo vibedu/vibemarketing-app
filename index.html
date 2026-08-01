@@ -465,6 +465,16 @@ const digestText = (list) =>
       (a.days < 0 ? "OVERDUE by " + Math.abs(a.days) + " days" : "in " + a.days + " days") + " (" + dmy(a.due) + ")"))
     .concat(["", "Please book the workshop and RTO slot in advance.", "\u2014 Vibe Marketing"]).join("\n");
 
+/* Advance is only what was actually asked for. `+o.advancePct || 50` treated 0 as
+   missing, because zero is falsy in JS, so a customer quoted no advance was still
+   billed for half the job up front. Blank means no advance too — a new campaign
+   starts at 50%, and clearing it is a deliberate "none". */
+const advanceRate = (o) => {
+  const raw = o && o.advancePct;
+  if (raw === "" || raw === null || raw === undefined || isNaN(+raw)) return 0;
+  return Math.min(100, Math.max(0, +raw));
+};
+
 const orderMath = (o) => {
   // Day-wise campaigns are quoted for a number of days with no fixed dates,
   // so the typed day count wins over anything left in the date fields.
@@ -480,7 +490,7 @@ const orderMath = (o) => {
   const cgst = Math.floor(gst / 2);
   const sgst = gst - cgst;
   const total = sub + gst;
-  const pct = Math.min(100, Math.max(0, +o.advancePct || 50));
+  const pct = advanceRate(o);
   return { base, extras, sub, gst, cgst, sgst, total, days, advance: Math.round((total * pct) / 100) };
 };
 
@@ -643,6 +653,9 @@ const docImage = async ({ title, s, v, o, m }) => {
   totRow("", money(m.sub), true);
   if (o.gst) { totRow("CGST 9%", money(m.cgst), false); totRow("SGST 9%", money(m.sgst), false); }
   totRow("GRAND TOTAL", money(m.total), true);
+  // State this campaign's advance on the document itself — the terms carry a
+  // general figure, but what a given customer owes up front is what matters.
+  totRow("ADVANCE TO START (" + advanceRate(o) + "%)", money(m.advance), false);
 
   /* ---- terms ---- */
   y += 4;
@@ -730,7 +743,7 @@ const proformaText = (o, v, m) =>
    o.gst ? "GST 18%: " + inr(m.gst) : "",
    "TOTAL: " + inr(m.total),
    "",
-   "Advance to start work (" + (o.advancePct || 50) + "%): " + inr(m.advance),
+   "Advance to start work (" + advanceRate(o) + "%): " + inr(m.advance),
    "Balance on completion: " + inr(m.total - m.advance),
    "",
    "Reply CONFIRM and we will block the vehicles for your dates.",
@@ -1236,7 +1249,8 @@ function OrderForm({ init, vendors, onSave, onClose }) {
             : <input type="number" value={m.days || ""} readOnly placeholder="pick the dates"
                 style={{ background:"#EEF1F6", color:"#12192A", fontWeight:700 }} />}
         </F>
-        <F label="Advance %"><input type="number" value={f.advancePct} onChange={num("advancePct", { max: 100 })} inputMode="numeric" min="0" max="100" /></F>
+        <F label="Advance %"><input type="number" value={f.advancePct} onChange={num("advancePct", { max: 100 })}
+          inputMode="numeric" min="0" max="100" placeholder="0 = no advance" /></F>
       </div>
       <div className="vz-2">
         <F label="Fabrication ₹"><input type="number" value={f.fabrication} onChange={num("fabrication")} inputMode="numeric" min="0" /></F>
@@ -2817,7 +2831,7 @@ function VibeCRM() {
           <div className="vz-kv"><span>Flex printing</span><b className="vz-money">{inr(o.flex)}</b></div>
           <div className="vz-kv"><span>GST @ 18%</span><b className="vz-money">{inr(m.gst)}</b></div>
           <div className="vz-kv"><span style={{ fontWeight:700, color:"#12192A" }}>Invoice total</span><b className="vz-money" style={{ fontSize:16 }}>{inr(m.total)}</b></div>
-          <div className="vz-kv"><span>Advance ({o.advancePct || 50}%)</span><b className="vz-money">{inr(m.advance)}</b></div>
+          <div className="vz-kv"><span>Advance ({advanceRate(o)}%)</span><b className="vz-money">{inr(m.advance)}</b></div>
           <div className="vz-kv"><span>Received</span><b className="vz-money" style={{ color:"#178951" }}>{inr(paid)}</b></div>
           <div className="vz-kv"><span>Balance</span><b className="vz-money" style={{ color: m.total - paid > 0 ? "#E5484D" : "#178951" }}>{inr(m.total - paid)}</b></div>
         </div>}
@@ -2904,7 +2918,7 @@ function VibeCRM() {
       "Subtotal: " + inr(m.sub),
       o.gst ? "CGST 9%: " + inr(m.cgst) + "  ·  SGST 9%: " + inr(m.sgst) : "",
       "*Grand total: " + inr(m.total) + "*",
-      "Advance (" + (o.advancePct || 50) + "%): " + inr(m.advance),
+      "Advance (" + advanceRate(o) + "%): " + inr(m.advance),
       "",
       "Bank: " + s.bankName + " · A/c " + s.bankAcNo + " · IFSC " + s.bankIFSC + " (" + s.bankBranch + ")",
       "GSTIN: " + (s.gstin || "")].filter(Boolean).join("\n");
@@ -2960,7 +2974,7 @@ function VibeCRM() {
             {o.gst && <div className="inv-trow"><span>CGST 9%</span><b>{inr(m.cgst)}</b></div>}
             {o.gst && <div className="inv-trow"><span>SGST 9%</span><b>{inr(m.sgst)}</b></div>}
             <div className="inv-trow inv-grand"><span>Grand total</span><b>{inr(m.total)}</b></div>
-            <div className="inv-trow"><span>Advance ({o.advancePct || 50}%)</span><b>{inr(m.advance)}</b></div>
+            <div className="inv-trow"><span>Advance ({advanceRate(o)}%)</span><b>{inr(m.advance)}</b></div>
           </div>
           {s.invTerms && <div className="inv-terms">
             <div className="inv-lbl">Terms &amp; Conditions</div>
