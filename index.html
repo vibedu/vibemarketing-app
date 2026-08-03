@@ -2444,7 +2444,7 @@ function VibeCRM() {
     let lastActive = Date.now();
     const IDLE = 5 * 60 * 1000;   // 5 minutes idle
     const AWAY = 60 * 1000;       // re-lock if backgrounded for over a minute
-    const doLock = () => { setLocked(true); setSheet(null); setSend(null); setOpenOrder(null); setOpenProof(null); };
+    const doLock = () => { setLocked(true); setSheet(null); setSend(null); setInvAsk(null); setOpenOrder(null); setOpenProof(null); };
     const bump = () => { lastActive = Date.now(); };
     const check = () => { if (Date.now() - lastActive > IDLE) doLock(); };
     const onVis = () => { if (document.visibilityState === "visible" && Date.now() - lastActive > AWAY) doLock(); };
@@ -2823,6 +2823,7 @@ function VibeCRM() {
   /* Razorpay: create a payment link for a campaign, then share it with the customer.
      Once they pay, Razorpay calls our webhook and the payment appears here by itself. */
   const [payBusy, setPayBusy] = useState(false);
+  const [invAsk, setInvAsk] = useState(null); // "how far did it run?" before an invoice
   const [doc, setDoc] = useState(null);      // generated quotation / invoice image
   const [docBusy, setDocBusy] = useState(false);
 
@@ -3365,19 +3366,22 @@ function VibeCRM() {
     );
   };
 
-  /* Assign a stable tax-invoice number the first time an invoice is raised,
-     then build it as the same two-page PDF the quotation uses. It used to open
-     a separate HTML view, which meant the invoice looked nothing like the
-     quotation the customer had already seen — and, once outstation running was
-     added, left the extra kilometres off the printed bill entirely. */
-  const openInvoice = (o) => {
-    let ord = o;
-    if (!o.invNo) {
+  /* Raising an invoice asks for the extra kilometres first. They live on the
+     campaign's edit screen, and an invoice is exactly the moment they are
+     known — leaving it to memory means the running quietly goes unbilled. */
+  const openInvoice = (o) => setInvAsk({ order: o, km: o.outKm ? String(o.outKm) : "" });
+
+  /* Number the invoice only now, so backing out of the question above doesn't
+     burn an invoice number, then build the same two-page PDF as the quotation. */
+  const raiseInvoice = (o, km) => {
+    let ord = { ...o, outKm: km || 0 };
+    if (!ord.invNo) {
       const n = db.settings.nextInvNo || 1;
-      ord = { ...o, invNo: n, invDate: today() };
-      put("orders", ord);
+      ord = { ...ord, invNo: n, invDate: today() };
       setSetting("nextInvNo", n + 1);
     }
+    put("orders", ord);
+    setInvAsk(null);
     openDoc(ord, "TAX INVOICE");
   };
 
@@ -4555,6 +4559,38 @@ function VibeCRM() {
       )}
       {sheet?.type === "job" && <JobForm vehicles={db.vehicles} onClose={() => setSheet(null)} onSave={(x) => { put("jobs", x); setSheet(null); }} />}
 
+      {invAsk && (() => {
+        const o = invAsk.order;
+        const rate = quotedOutRate(o, db.settings);
+        const km = +invAsk.km || 0;
+        const extra = Math.round(rate * km);
+        return (
+          <Sheet title="Extra kilometres run" onClose={() => setInvAsk(null)}>
+            <div className="vz-meta" style={{ marginBottom:12 }}>
+              Outstation running is charged at {inr(rate)} per kilometre. Enter the total
+              extra kilometres for this campaign, or leave it blank if there were none.
+            </div>
+            <F label="Total extra kilometres">
+              <input type="number" inputMode="numeric" min="0" autoFocus placeholder="0"
+                value={invAsk.km}
+                onChange={e => setInvAsk({ ...invAsk, km: e.target.value.replace(/\D/g, "").slice(0, 6) })} />
+            </F>
+            <div className="vz-card" style={{ background:"#FAFBFC" }}>
+              <div className="vz-kv">
+                <span>{km ? km + " km × " + inr(rate) : "Extra running"}</span>
+                <b className="vz-money">{extra ? inr(extra) : "—"}</b>
+              </div>
+              <div className="vz-kv">
+                <span style={{ fontWeight:700, color:"#12192A" }}>Invoice total</span>
+                <b className="vz-money" style={{ fontSize:16 }}>{inr(orderMath({ ...o, outKm: km }).total)}</b>
+              </div>
+            </div>
+            <button className="vz-btn" onClick={() => raiseInvoice(o, km)}>
+              {km ? "Raise tax invoice with " + km + " km" : "Raise tax invoice — no extra running"}
+            </button>
+          </Sheet>
+        );
+      })()}
 
       {doc && (
         <div className="vz-invoice-overlay">
