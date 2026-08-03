@@ -582,173 +582,376 @@ const processShot = (file, lines) =>
   });
 
 /* ---------------------------- formal documents ----------------------------
-   Draws a quotation / proforma / tax invoice onto a canvas so it can be shared
-   straight into WhatsApp as an image, saved, or printed to PDF. Canvas rather
-   than HTML because a single image is what actually attaches to a chat. */
+   A quotation / tax invoice as a real two-page PDF. Page one carries the
+   commercial detail; page two the notes, terms, bank details and signature.
+   They used to share one page, and the terms ran so long they pushed the
+   figures — the part a customer actually reads — down out of sight.
+
+   Each page is drawn on a canvas and then wrapped in a PDF. Canvas because the
+   result must be one file that attaches to a WhatsApp chat; hand-written PDF
+   because the page layout is fixed, and a PDF library would be a megabyte of
+   vendor code to place two pictures. */
 const loadImg = (src) => new Promise((res, rej) => {
   const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src;
 });
 
-const docImage = async ({ title, s, v, o, m }) => {
-  const W = 1240, PAD = 34, INK = "#2E2E2E", ORANGE = "#E5601F", LINE = "#B9B9B9";
-  const big = document.createElement("canvas");
-  big.width = W; big.height = 3600;
-  const g = big.getContext("2d");
-  const F = (w, sz) => { g.font = w + " " + sz + "px -apple-system, 'Segoe UI', Roboto, sans-serif"; };
+/* The wordmark is white — it was drawn for the dark app header. On a white
+   page it would be invisible, so the lettering is repainted in ink and the
+   orange megaphone left as it is. Part-transparent edges keep their alpha, so
+   the letters stay smooth. */
+let inkLogoCache;
+const inkLogo = async () => {
+  if (inkLogoCache !== undefined) return inkLogoCache;
+  inkLogoCache = null;
+  try {
+    const img = await loadImg("logo-src.png");
+    const c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    const x = c.getContext("2d");
+    x.drawImage(img, 0, 0);
+    const d = x.getImageData(0, 0, c.width, c.height), p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      if (p[i + 3] > 0 && p[i] > 185 && p[i + 1] > 185 && p[i + 2] > 185) { p[i] = 46; p[i + 1] = 46; p[i + 2] = 46; }
+    }
+    x.putImageData(d, 0, 0);
+    inkLogoCache = c;
+  } catch (e) {}
+  return inkLogoCache;
+};
+
+/* Rupees in words, counted the Indian way — lakh and crore, not millions. */
+const W_ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+const W_TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+const w99  = (n) => (n < 20 ? W_ONES[n] : W_TENS[Math.floor(n / 10)] + (n % 10 ? " " + W_ONES[n % 10] : ""));
+const w999 = (n) => (n < 100 ? w99(n) : W_ONES[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + w99(n % 100) : ""));
+const rupeesInWords = (amount) => {
+  let n = Math.round(Math.abs(+amount || 0));
+  if (!n) return "Zero Rupees Only";
+  const out = [];
+  const cr = Math.floor(n / 10000000); n %= 10000000;
+  const la = Math.floor(n / 100000);   n %= 100000;
+  const th = Math.floor(n / 1000);     n %= 1000;
+  if (cr) out.push(w999(cr) + " Crore");
+  if (la) out.push(w999(la) + " Lakh");
+  if (th) out.push(w999(th) + " Thousand");
+  if (n)  out.push(w999(n));
+  return "Indian Rupee " + out.join(" ") + " Only";
+};
+
+const PAGE_W = 1240, PAGE_H = 1754;                 /* A4 at 150 dpi */
+const DOC_INK = "#2E2E2E", DOC_ORANGE = "#E5601F", DOC_LINE = "#D6D9DE", DOC_MUTE = "#6B7280";
+const DOC_FONT = "-apple-system, 'Segoe UI', Roboto, Arial, sans-serif";
+
+const newDocPage = () => {
+  const c = document.createElement("canvas");
+  c.width = PAGE_W; c.height = PAGE_H;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, PAGE_W, PAGE_H);
+  g.textBaseline = "alphabetic";
+  const F = (weight, size) => { g.font = weight + " " + size + "px " + DOC_FONT; };
+  /* measure with whatever font is set right now, so callers must pick the font first */
   const wrap = (text, maxW) => {
     const out = []; let line = "";
-    String(text || "").split(/\s+/).forEach(word => {
+    String(text == null ? "" : text).split(/\s+/).filter(Boolean).forEach(word => {
       const t = line ? line + " " + word : word;
       if (g.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t;
     });
     if (line) out.push(line);
-    return out;
+    return out.length ? out : [""];
   };
-  const box = (x1, y1, x2, y2) => { g.strokeStyle = LINE; g.lineWidth = 1.5; g.strokeRect(x1, y1, x2 - x1, y2 - y1); };
+  return { c, g, F, wrap };
+};
 
-  g.fillStyle = "#fff"; g.fillRect(0, 0, W, big.height);
-  g.textBaseline = "alphabetic";
+/* The stored terms carry a general "50% advance" line. A quote for a customer
+   paying nothing up front, or 30%, would then contradict its own figures — so
+   term 2 is rewritten to match this campaign before it is printed. */
+const termsForOrder = (s, o) => {
+  const pct = advanceRate(o);
+  return String(s.invTerms || "").split("\n").map(t => t.trim()).filter(Boolean).map(line => {
+    if (!/^2[.)]/.test(line)) return line;
+    if (pct <= 0) return "2. No advance is required for this campaign. The full amount is due on or before the last day of the campaign.";
+    return "2. An advance of " + pct + "% of the total is payable before the campaign begins; the balance is due on or before the last day of the campaign.";
+  });
+};
 
-  /* ---- dark header: logo centred, then contact lines and GSTIN ---- */
-  let y = 0;
-  const HDR_TOP = 26;
-  let logo = null;
-  try { logo = await loadImg("logo-dark.png"); } catch (e) {}
-  let hy = HDR_TOP;
-  if (logo) { const lw = 470, lh = Math.round(lw * logo.height / logo.width); hy += lh + 18; }
-  g.textAlign = "center";
-  F("500", 20);
-  const addr = wrap(s.address || "", W - 200);
-  const contact = "Mob: " + (s.contactPhone || s.bizPhone || "") + "   " + (s.website || "") + "   Email: " + (s.contactEmail || s.bizEmail || "");
-  const hdrH = hy + addr.length * 27 + 30 + 40 + 24;
-  g.fillStyle = "#2E2E2E"; g.fillRect(0, 0, W, hdrH);
-  if (logo) { const lw = 470, lh = Math.round(lw * logo.height / logo.width); g.drawImage(logo, (W - lw) / 2, HDR_TOP, lw, lh); }
-  let ty = (logo ? HDR_TOP + Math.round(470 * logo.height / logo.width) + 40 : HDR_TOP + 40);
-  g.fillStyle = "#E4E7EC"; F("500", 20);
-  addr.forEach(l => { g.fillText(l, W / 2, ty); ty += 27; });
-  F("600", 19); g.fillText(contact, W / 2, ty); ty += 34;
-  g.fillStyle = "#fff"; F("800", 24); g.fillText("GSTIN: " + (s.gstin || ""), W / 2, ty);
-  y = hdrH;
-
-  /* ---- orange title band ---- */
-  const bandH = 74;
-  g.fillStyle = ORANGE; g.fillRect(0, y, W, bandH);
-  g.fillStyle = "#fff"; F("800", 40);
-  g.fillText(title, W / 2, y + 52);
-  y += bandH;
-
-  /* ---- bill-to / document meta ---- */
-  g.textAlign = "left";
-  const midX = Math.round(W * 0.56), rowH = 46, metaTop = y;
-  const billLines = [
-    (v ? v.name : "—") + (v && v.person ? " (" + v.person + ")" : ""),
-    v && v.area ? v.area : "",
-    v && v.gst ? "GSTIN: " + v.gst : "",
-  ].filter(Boolean);
-  // right column holds: doc no, date, campaign, period
-  const metaRows = Math.max(billLines.length + 1, 4);
-  const metaH = metaRows * rowH;
-  g.fillStyle = ORANGE; F("800", 20); g.fillText("BILL TO", PAD + 12, y + 30);
-  g.fillStyle = INK; F("500", 22);
-  billLines.forEach((l, i) => g.fillText(l, PAD + 12, y + 30 + (i + 1) * rowH));
-  F("800", 22); g.fillStyle = INK;
-  g.fillText(title === "TAX INVOICE" ? "Tax Invoice No. :" : "Quotation No. :", midX + 14, y + 30);
-  g.fillText("Date:", midX + 14, y + 30 + rowH);
-  F("500", 22);
-  g.fillText(" " + (o.invNo || o.no || ""), midX + 250, y + 30);
-  g.fillText(" " + dmy(o.invDate || o.created || today()), midX + 250, y + 30 + rowH);
-  if (o.title) { F("500", 20); g.fillText("Campaign: " + o.title, midX + 14, y + 30 + rowH * 2); }
-  F("500", 20);
-  g.fillText("Period: " + (o.dayWise || !o.start || !o.end
-    ? "Not specified (" + m.days + " days)"
-    : dmy(o.start) + " to " + dmy(o.end)), midX + 14, y + 30 + rowH * 3);
-  box(PAD, metaTop, midX, metaTop + metaH);
-  box(midX, metaTop, W - PAD, metaTop + metaH);
-  y = metaTop + metaH + 18;
-
-  /* ---- line-item table ---- */
-  const cols = [PAD, Math.round(W * 0.55), Math.round(W * 0.655), Math.round(W * 0.79), Math.round(W * 0.885), W - PAD];
-  const head = ["DESCRIPTION", "DAYS", "No. Vehicle", "Rate", "TOTAL"];
-  const thH = 50;
-  g.fillStyle = ORANGE; g.fillRect(PAD, y, W - PAD * 2, thH);
-  g.fillStyle = "#fff"; F("800", 20);
-  g.textAlign = "left";  g.fillText(head[0], cols[0] + 12, y + 33);
-  g.textAlign = "right";
-  for (let i = 1; i < 5; i++) g.fillText(head[i], cols[i + 1] - 12, y + 33);
-  y += thH;
-
+const docPages = async ({ title, s, v, o, m }) => {
+  const M = 64, RIGHT = PAGE_W - M;
+  const isInvoice = title === "TAX INVOICE";
   const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const row = (desc, days, veh, rate, total) => {
-    const h = 48;
-    g.fillStyle = INK; F("500", 22);
-    g.textAlign = "left";  g.fillText(desc, cols[0] + 12, y + 32);
-    g.textAlign = "right";
-    [days, veh, rate, total].forEach((val, i) => g.fillText(val, cols[i + 2] - 12, y + 32));
-    box(PAD, y, W - PAD, y + h);
-    [cols[1], cols[2], cols[3], cols[4]].forEach(cx => { g.beginPath(); g.moveTo(cx, y); g.lineTo(cx, y + h); g.stroke(); });
-    y += h;
+  const logo = await inkLogo();
+  const docNo = o.invNo || o.no || "";
+  const docNoLabel = (isInvoice ? "Invoice# " : "Quotation# ") + docNo;
+
+  const footer = (g, n) => {
+    g.fillStyle = DOC_ORANGE; g.fillRect(0, PAGE_H - 9, PAGE_W, 9);
+    g.textAlign = "center"; g.fillStyle = DOC_MUTE;
+    g.font = "500 17px " + DOC_FONT;
+    g.fillText((s.company || "Vibe Marketing") + "   ·   " + CONTACT.phone + "   ·   Page " + n + " of 2", PAGE_W / 2, PAGE_H - 32);
   };
+
+  /* ============================ page 1 — the quote ============================ */
+  const P1 = newDocPage(), g = P1.g, F = P1.F, wrap = P1.wrap;
+  let y = 64;
+
+  if (logo) {
+    const lw = 340, lh = Math.round(lw * logo.height / logo.width);
+    g.drawImage(logo, M, y, lw, lh);
+    y += lh + 20;
+  } else {
+    g.textAlign = "left"; g.fillStyle = DOC_INK; F("800", 36);
+    g.fillText((s.company || "Vibe Marketing").toUpperCase(), M, y + 32); y += 62;
+  }
+
+  g.textAlign = "left"; g.fillStyle = DOC_MUTE; F("500", 19);
+  [].concat(
+    wrap(s.address || "", 500),
+    s.gstin ? ["GSTIN " + s.gstin] : [],
+    ["Mob: " + CONTACT.phone],
+    [CONTACT.email || ""],
+    [s.website || ""]
+  ).filter(Boolean).forEach(l => { g.fillText(l, M, y); y += 25; });
+  const leftEnd = y;
+
+  g.textAlign = "right";
+  g.fillStyle = DOC_ORANGE; F("800", 54);
+  g.fillText(isInvoice ? "TAX INVOICE" : "QUOTATION", RIGHT, 132);
+  g.fillStyle = DOC_INK; F("600", 23);
+  g.fillText(docNoLabel, RIGHT, 176);
+
+  y = Math.max(leftEnd + 14, 216);
+  g.strokeStyle = DOC_LINE; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(M, y); g.lineTo(RIGHT, y); g.stroke();
+  y += 42;
+
+  /* ---- who it is for ---- */
+  g.textAlign = "left";
+  g.fillStyle = DOC_ORANGE; F("800", 19); g.fillText("BILL TO", M, y); y += 33;
+  g.fillStyle = DOC_INK; F("800", 27); g.fillText(v ? v.name : "—", M, y); y += 31;
+  F("500", 20); g.fillStyle = DOC_MUTE;
+  [v && v.person ? "Attn: " + v.person : "",
+   v && v.area ? v.area : "",
+   v && v.phone ? "Mob: " + v.phone : "",
+   v && v.gst ? "GSTIN " + v.gst : ""].filter(Boolean).forEach(l => { g.fillText(l, M, y); y += 25; });
+  y += 20;
+
+  g.fillStyle = DOC_INK; F("600", 20);
+  g.fillText("Place of supply: Tamil Nadu (33)", M, y); y += 36;
+  g.fillStyle = DOC_MUTE; F("700", 18); g.fillText("SUBJECT", M, y); y += 28;
+  g.fillStyle = DOC_INK; F("500", 21);
+  wrap(o.title || "Mobile hoarding advertising campaign", RIGHT - M).forEach(l => { g.fillText(l, M, y); y += 27; });
+  y += 24;
+
+  /* ---- the four facts a customer checks first ---- */
+  const validTill = (() => {
+    const d = new Date(o.invDate || o.created || today());
+    if (isNaN(d.getTime())) return "—";
+    d.setDate(d.getDate() + 15);
+    return dmy(localDay(d));
+  })();
+  const meta = [
+    [isInvoice ? "Invoice Date" : "Quotation Date", dmy(o.invDate || o.created || today())],
+    [isInvoice ? "Payment" : "Valid Till", isInvoice ? "Due on receipt" : validTill],
+    ["Campaign Days", m.days + " day(s)"],
+    ["Period", (o.dayWise || !o.start || !o.end) ? "Not specified" : dmy(o.start) + " to " + dmy(o.end)],
+  ];
+  const cw = (RIGHT - M) / 4;
+  g.fillStyle = "#F2F3F5"; g.fillRect(M, y, RIGHT - M, 44);
+  g.strokeStyle = DOC_LINE; g.lineWidth = 1;
+  g.strokeRect(M, y, RIGHT - M, 92);
+  g.beginPath(); g.moveTo(M, y + 44); g.lineTo(RIGHT, y + 44); g.stroke();
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(M + i * cw, y); g.lineTo(M + i * cw, y + 92); g.stroke(); }
+  g.textAlign = "left";
+  meta.forEach((r, i) => {
+    g.fillStyle = DOC_MUTE; F("700", 17); g.fillText(r[0].toUpperCase(), M + i * cw + 14, y + 28);
+    g.fillStyle = DOC_INK;  F("600", 20); g.fillText(r[1], M + i * cw + 14, y + 75);
+  });
+  y += 92 + 36;
+
+  /* ---- what is being charged ---- */
+  const cx = [M, M + 52, 640, 782, 884, 1014, RIGHT];
+  const TH = 50;
+  g.fillStyle = "#3A3A3A"; g.fillRect(M, y, RIGHT - M, TH);
+  g.fillStyle = "#fff"; F("700", 19);
+  g.textAlign = "left";   g.fillText("#", cx[0] + 18, y + 32); g.fillText("Item & Description", cx[1] + 14, y + 32);
+  g.textAlign = "center"; g.fillText("HSN/SAC", (cx[2] + cx[3]) / 2, y + 32);
+  g.textAlign = "right";  g.fillText("Qty", cx[4] - 14, y + 32);
+                          g.fillText("Rate", cx[5] - 14, y + 32);
+                          g.fillText("Amount", cx[6] - 14, y + 32);
+  y += TH;
+
   const area = (o.route || "").split("→")[0].split("-")[0].trim() || "Coimbatore";
-  row("Vehicle Charges " + area, String(m.days), String(o.vehicles || 0), money(o.rate), money(m.base));
-  if (m.extras > 0) row("Regular Flex & Fabrication Work", "0", String(o.vehicles || 1), money(m.extras), money(m.extras));
+  const items = [{
+    name: "Mobile hoarding advertising",
+    sub: [(o.vehicles || 0) + " vehicle(s) × " + m.days + " day(s)",
+          o.route ? "Route: " + o.route : "Area: " + area].filter(Boolean),
+    sac: s.sac || "998365",
+    qty: (o.vehicles || 0) + " × " + m.days,
+    rate: money(o.rate), amt: money(m.base),
+  }];
+  if (m.extras > 0) items.push({
+    name: "Flex printing & fabrication", sub: [], sac: s.sacFlex || "998912",
+    qty: "1", rate: money(m.extras), amt: money(m.extras),
+  });
 
-  /* ---- totals ---- */
-  const totRow = (label, value, bold) => {
-    const h = 48;
-    box(PAD, y, W - PAD, y + h);
-    g.beginPath(); g.moveTo(cols[4], y); g.lineTo(cols[4], y + h); g.stroke();
-    g.beginPath(); g.moveTo(midX, y); g.lineTo(midX, y + h); g.stroke();
-    g.fillStyle = INK; F(bold ? "800" : "600", 22); g.textAlign = "right";
-    if (label) g.fillText(label, cols[4] - 12, y + 32);
-    F("800", 22); g.fillText(value, W - PAD - 12, y + 32);
+  items.forEach((it, idx) => {
+    F("500", 18);
+    const subLines = it.sub.reduce((a, t) => a.concat(wrap(t, cx[2] - cx[1] - 28)), []);
+    const h = Math.max(60, 44 + subLines.length * 24 + 10);
+    g.strokeStyle = DOC_LINE; g.lineWidth = 1;
+    g.strokeRect(M, y, RIGHT - M, h);
+    for (let i = 1; i < 6; i++) { g.beginPath(); g.moveTo(cx[i], y); g.lineTo(cx[i], y + h); g.stroke(); }
+    g.fillStyle = DOC_INK; F("600", 21); g.textAlign = "left";
+    g.fillText(String(idx + 1), cx[0] + 18, y + 36);
+    g.fillText(it.name, cx[1] + 14, y + 36);
+    g.fillStyle = DOC_MUTE; F("500", 18);
+    subLines.forEach((l, i) => g.fillText(l, cx[1] + 14, y + 36 + 26 + i * 24));
+    g.fillStyle = DOC_INK; F("500", 20);
+    g.textAlign = "center"; g.fillText(it.sac, (cx[2] + cx[3]) / 2, y + 36);
+    g.textAlign = "right";
+    g.fillText(it.qty, cx[4] - 14, y + 36);
+    g.fillText(it.rate, cx[5] - 14, y + 36);
+    F("600", 20); g.fillText(it.amt, cx[6] - 14, y + 36);
+    y += h;
+  });
+  y += 30;
+
+  /* ---- totals, stacked on the right where the eye goes ---- */
+  const tl = 700;
+  const totRow = (label, val, opt) => {
+    const o2 = opt || {}, h = o2.h || 46;
+    if (o2.fill) { g.fillStyle = o2.fill; g.fillRect(tl, y, RIGHT - tl, h); }
+    g.strokeStyle = DOC_LINE; g.lineWidth = 1; g.strokeRect(tl, y, RIGHT - tl, h);
+    g.fillStyle = o2.fg || DOC_INK; F(o2.bold ? "800" : "500", o2.size || 21);
+    g.textAlign = "left";  g.fillText(label, tl + 16, y + h / 2 + 8);
+    g.textAlign = "right"; g.fillText(val, RIGHT - 16, y + h / 2 + 8);
     y += h;
   };
-  totRow("", money(m.sub), true);
-  if (o.gst) { totRow("CGST 9%", money(m.cgst), false); totRow("SGST 9%", money(m.sgst), false); }
-  totRow("GRAND TOTAL", money(m.total), true);
-  // State this campaign's advance on the document itself — the terms carry a
-  // general figure, but what a given customer owes up front is what matters.
-  totRow("ADVANCE TO START (" + advanceRate(o) + "%)", money(m.advance), false);
+  totRow("Sub Total", money(m.sub));
+  if (o.gst) { totRow("CGST 9%", money(m.cgst)); totRow("SGST 9%", money(m.sgst)); }
+  totRow(isInvoice ? "Total" : "Grand Total", money(m.total),
+    { fill: "#3A3A3A", fg: "#fff", bold: true, h: 54, size: 23 });
+  if (m.advance > 0) {
+    totRow("Advance to start (" + advanceRate(o) + "%)", money(m.advance), { fill: "#FFF6EC" });
+    totRow("Balance on completion", money(m.total - m.advance), { fill: "#FFF6EC" });
+  }
+  y += 32;
 
-  /* ---- terms ---- */
-  y += 4;
-  const secTitle = (t) => { const h = 48; box(PAD, y, W - PAD, y + h); g.fillStyle = INK; F("800", 24); g.textAlign = "left"; g.fillText(t, PAD + 12, y + 32); y += h; };
-  secTitle("Terms & Conditions");
-  F("500", 21);
-  String(s.invTerms || "").split("\n").filter(Boolean).forEach(line => {
-    const body = line.replace(/^\s*\d+\.\s*/, "");
-    const ls = wrap(body, W - PAD * 2 - 30);
-    const h = Math.max(48, ls.length * 30 + 18);
-    box(PAD, y, W - PAD, y + h);
-    g.fillStyle = INK; F("500", 21); g.textAlign = "left";
-    ls.forEach((l, i) => g.fillText(l, PAD + 12, y + 30 + i * 30));
-    y += h;
+  g.textAlign = "left"; g.fillStyle = DOC_MUTE; F("700", 17);
+  g.fillText("TOTAL IN WORDS", M, y); y += 28;
+  g.fillStyle = DOC_INK; F("600", 20);
+  wrap(rupeesInWords(m.total), RIGHT - M).forEach(l => { g.fillText(l, M, y); y += 26; });
+
+  g.textAlign = "left"; g.fillStyle = DOC_MUTE; F("500", 19);
+  g.fillText("Notes, terms & conditions, bank details and signature are on page 2.", M, PAGE_H - 74);
+  footer(g, 1);
+
+  /* ==================== page 2 — terms, bank, signature ==================== */
+  const P2 = newDocPage(), h2 = P2.g, F2 = P2.F, wrap2 = P2.wrap;
+  h2.fillStyle = DOC_ORANGE; h2.fillRect(0, 0, PAGE_W, 92);
+  h2.fillStyle = "#fff"; F2("800", 32); h2.textAlign = "left";
+  h2.fillText("Terms & Conditions", M, 58);
+  F2("600", 20); h2.textAlign = "right"; h2.fillText(docNoLabel, RIGHT, 56);
+  let y2 = 92 + 52;
+
+  h2.textAlign = "left";
+  h2.fillStyle = DOC_ORANGE; F2("800", 19); h2.fillText("NOTES", M, y2); y2 += 30;
+  h2.fillStyle = DOC_INK; F2("500", 20);
+  wrap2(s.invNotes || ("Thank you for the opportunity. We are committed to giving your brand the best "
+    + "visibility on the road, every single day of the campaign. If you have any question about this "
+    + (isInvoice ? "invoice" : "quotation") + ", please call " + CONTACT.name + " on " + CONTACT.phone + "."),
+    RIGHT - M).forEach(l => { h2.fillText(l, M, y2); y2 += 27; });
+  y2 += 34;
+
+  h2.fillStyle = DOC_ORANGE; F2("800", 19); h2.fillText("TERMS & CONDITIONS", M, y2); y2 += 32;
+  termsForOrder(s, o).forEach((line, i) => {
+    const body = line.replace(/^\s*\d+[.)]\s*/, "");
+    F2("500", 19);
+    const ls = wrap2(body, RIGHT - M - 40);
+    h2.fillStyle = DOC_MUTE; F2("700", 19); h2.fillText(String(i + 1) + ".", M, y2);
+    h2.fillStyle = DOC_INK;  F2("500", 19);
+    ls.forEach((l, k) => h2.fillText(l, M + 36, y2 + k * 26));
+    y2 += ls.length * 26 + 12;
+  });
+  y2 += 26;
+
+  h2.fillStyle = DOC_ORANGE; F2("800", 19); h2.fillText("BANK DETAILS", M, y2); y2 += 16;
+  [["Bank name", s.bankName], ["Account holder", s.bankHolder], ["Account number", s.bankAcNo],
+   ["IFSC", s.bankIFSC], ["Branch", s.bankBranch], ["Account type", s.bankAcType]]
+    .filter(r => r[1]).forEach((r, i) => {
+      const hh = 42;
+      h2.fillStyle = i % 2 ? "#FAFBFC" : "#F2F3F5"; h2.fillRect(M, y2, RIGHT - M, hh);
+      h2.textAlign = "left";
+      h2.fillStyle = DOC_MUTE; F2("700", 18); h2.fillText(r[0], M + 16, y2 + 27);
+      h2.fillStyle = DOC_INK;  F2("600", 20); h2.fillText(String(r[1]), M + 300, y2 + 27);
+      y2 += hh;
+    });
+
+  /* signature block, pinned near the foot so it doesn't float mid-page */
+  let sy = Math.max(y2 + 70, PAGE_H - 300);
+  h2.textAlign = "right"; h2.fillStyle = DOC_INK; F2("700", 21);
+  h2.fillText("For " + (s.company || "Vibe Marketing"), RIGHT, sy); sy += 96;
+  h2.strokeStyle = DOC_LINE; h2.lineWidth = 1.5;
+  h2.beginPath(); h2.moveTo(RIGHT - 300, sy); h2.lineTo(RIGHT, sy); h2.stroke(); sy += 28;
+  h2.fillStyle = DOC_MUTE; F2("600", 19); h2.fillText("Authorised signatory", RIGHT, sy);
+
+  h2.textAlign = "center"; h2.fillStyle = DOC_INK; F2("600", 21);
+  h2.fillText("Thank you for your business!", PAGE_W / 2, PAGE_H - 78);
+  footer(h2, 2);
+
+  return [
+    { url: P1.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H },
+    { url: P2.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H },
+  ];
+};
+
+/* Wrap the drawn pages in a PDF: one full-page JPEG per page. Offsets are
+   counted in bytes as the file is built, because the cross-reference table at
+   the end has to point at each object exactly. */
+const jpegBytes = (dataUrl) => {
+  const bin = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+  const a = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return a;
+};
+
+const pdfFromPages = (pages) => {
+  const PT_W = 595.28, PT_H = 841.89;              /* A4 in points */
+  const enc = new TextEncoder();
+  const parts = []; let len = 0;
+  const put = (d) => { const b = typeof d === "string" ? enc.encode(d) : d; parts.push(b); len += b.length; };
+  const off = {};
+  const obj = (n, dict, stream) => {
+    off[n] = len;
+    put(n + " 0 obj\n" + dict + "\n");
+    if (stream) { put("stream\n"); put(stream); put("\nendstream\n"); }
+    put("endobj\n");
+  };
+
+  put("%PDF-1.4\n");
+  put(new Uint8Array([37, 226, 227, 207, 211, 10]));   /* marks the file as binary */
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, "<< /Type /Pages /Count " + pages.length + " /Kids ["
+        + pages.map((_, i) => (3 + i * 3) + " 0 R").join(" ") + "] >>");
+  pages.forEach((p, i) => {
+    const pg = 3 + i * 3, ct = pg + 1, im = pg + 2;
+    const content = "q " + PT_W.toFixed(2) + " 0 0 " + PT_H.toFixed(2) + " 0 0 cm /Im0 Do Q";
+    const bytes = jpegBytes(p.url);
+    obj(pg, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + PT_W.toFixed(2) + " " + PT_H.toFixed(2) + "]"
+          + " /Resources << /XObject << /Im0 " + im + " 0 R >> >> /Contents " + ct + " 0 R >>");
+    obj(ct, "<< /Length " + content.length + " >>", content);
+    obj(im, "<< /Type /XObject /Subtype /Image /Width " + p.w + " /Height " + p.h
+          + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + bytes.length + " >>", bytes);
   });
 
-  /* ---- bank details ---- */
-  secTitle("Bank details:");
-  const bank = [["Bank Name", s.bankName], ["Account Holder Name", s.bankHolder],
-                ["Account Number", s.bankAcNo], ["IFSC", s.bankIFSC],
-                ["Branch", s.bankBranch], ["Account Type", s.bankAcType]];
-  bank.forEach(([k, val]) => {
-    const h = 46; box(PAD, y, W - PAD, y + h);
-    g.fillStyle = INK; F("800", 21); g.textAlign = "left"; g.fillText(k, PAD + 12, y + 30);
-    F("500", 21); g.fillText(": " + (val || ""), PAD + 330, y + 30);
-    y += h;
-  });
+  const startxref = len;
+  const total = 3 + pages.length * 3;                 /* objects 1..n, plus the free entry 0 */
+  let x = "xref\n0 " + total + "\n0000000000 65535 f \n";
+  for (let n = 1; n < total; n++) x += String(off[n] || 0).padStart(10, "0") + " 00000 n \n";
+  x += "trailer\n<< /Size " + total + " /Root 1 0 R >>\nstartxref\n" + startxref + "\n%%EOF\n";
+  put(x);
 
-  const h = 52; box(PAD, y, W - PAD, y + h);
-  g.fillStyle = INK; F("500", 22); g.textAlign = "center";
-  g.fillText("Thank you for your business!", W / 2, y + 34);
-  y += h + PAD;
-
-  /* crop to the content we actually drew */
-  const out = document.createElement("canvas");
-  out.width = W; out.height = y;
-  const og = out.getContext("2d");
-  og.fillStyle = "#fff"; og.fillRect(0, 0, W, y);
-  og.drawImage(big, 0, 0);
-  return out.toDataURL("image/jpeg", 0.92);
+  return new Blob(parts, { type: "application/pdf" });
 };
 
 const getFix = () =>
@@ -763,6 +966,29 @@ const getFix = () =>
   });
 
 const mapLink = (lat, lng) => "https://maps.google.com/?q=" + lat + "," + lng;
+
+/* Hand the PDF to the phone's share sheet — WhatsApp, mail, anything. No text
+   goes with it: the document says everything, and a message repeating it under
+   the attachment just made the chat noisy. */
+const sharePdf = async (blob, filename) => {
+  try {
+    const file = new File([blob], filename || "document.pdf", { type: "application/pdf" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return true;
+    }
+  } catch (e) {}
+  return false;
+};
+
+const savePdf = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename || "document.pdf";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  // Let the download start before the URL is thrown away.
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
+};
 
 /* share the stamped photo itself through the phone's share sheet (WhatsApp, etc.) */
 const sharePhoto = async (dataUrl, text) => {
@@ -2505,15 +2731,19 @@ function VibeCRM() {
   const [doc, setDoc] = useState(null);      // generated quotation / invoice image
   const [docBusy, setDocBusy] = useState(false);
 
-  /* Build the formal document image for a campaign and open the viewer. */
+  /* Build the two-page document for a campaign and open the viewer. */
   const openDoc = async (o, title) => {
     const v = vendorOf(o.vendorId), m = orderMath(o), s = db.settings;
     setDocBusy(true);
     try {
-      const url = await docImage({ title, s, v, o, m });
+      const pages = await docPages({ title, s, v, o, m });
+      const blob = pdfFromPages(pages);
       setOpenOrder(null); setSheet(null);
       setDoc({
-        url, title, order: o, vendor: v,
+        pages, blob, title, order: o, vendor: v,
+        file: (title === "TAX INVOICE" ? "Invoice-" : "Quotation-")
+              + String(o.invNo || o.no || "").replace(/\W+/g, "-")
+              + (v && v.name ? "-" + v.name.replace(/\W+/g, "-") : "") + ".pdf",
         text: proformaText(o, v, m),
         subject: (title === "TAX INVOICE" ? "Tax invoice " : "Quotation ") + (o.invNo || o.no) + " — Vibe Marketing",
       });
@@ -4311,22 +4541,21 @@ function VibeCRM() {
         <div className="vz-invoice-overlay">
           <div className="vz-invoice-actions vz-noprint" style={{ flexWrap:"wrap" }}>
             <button className="vz-btn alt" style={{ margin:0 }} onClick={() => setDoc(null)}>← Close</button>
+            {/* The PDF goes on its own — no message alongside it. A quotation
+                repeated as text under the attachment read as clutter. */}
             <button className="vz-btn go" style={{ margin:0 }} onClick={async () => {
-              const ok = await sharePhoto(doc.url, doc.text);
-              if (ok) { logSend(doc.order, doc.title === "TAX INVOICE" ? "Invoice" : "Quotation", "WhatsApp"); setToast("Shared"); }
-              else { openWA(doc.vendor?.phone, doc.text); setToast("Image sharing not supported here — text opened instead"); }
-            }}>Send on WhatsApp</button>
-            <button className="vz-btn" style={{ margin:0 }} onClick={() => window.print()}>Print / Save PDF</button>
+              const ok = await sharePdf(doc.blob, doc.file);
+              if (ok) { logSend(doc.order, doc.title === "TAX INVOICE" ? "Invoice" : "Quotation", "WhatsApp"); setToast("Sent"); }
+              else { savePdf(doc.blob, doc.file); openWA(doc.vendor?.phone, ""); setToast("PDF saved — attach it in the chat"); }
+            }}>Send PDF on WhatsApp</button>
             <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
-              const a = document.createElement("a");
-              a.href = doc.url;
-              a.download = (doc.title === "TAX INVOICE" ? "invoice-" : "quotation-") + (doc.order.invNo || doc.order.no || "").replace(/\W+/g, "-") + ".jpg";
-              document.body.appendChild(a); a.click(); document.body.removeChild(a);
-              setToast("Saved to your downloads");
-            }}>Save image</button>
+              savePdf(doc.blob, doc.file);
+              setToast("PDF saved to your downloads");
+            }}>Save PDF</button>
             <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
-              openMail(doc.vendor?.email, doc.subject, doc.text);
-              setToast("Email opened — attach the saved image");
+              savePdf(doc.blob, doc.file);
+              openMail(doc.vendor?.email, doc.subject, "");
+              setToast("Email opened — attach the saved PDF");
             }}>Email</button>
             <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
               try { navigator.clipboard.writeText(doc.text); } catch (e) {}
@@ -4334,7 +4563,10 @@ function VibeCRM() {
             }}>Copy text</button>
           </div>
           <div className="vz-invoice" style={{ padding:0, background:"#fff" }}>
-            <img src={doc.url} alt={doc.title} style={{ width:"100%", display:"block" }} />
+            {doc.pages.map((p, i) => (
+              <img key={i} src={p.url} alt={doc.title + " page " + (i + 1)}
+                style={{ width:"100%", display:"block", marginBottom: i === 0 ? 14 : 0 }} />
+            ))}
           </div>
         </div>
       )}
