@@ -540,8 +540,11 @@ const orderMath = (o) => {
      time nobody knows how far the vans will actually go. The kilometres are
      filled in once the campaign has run, and only then does it join the bill —
      so the same figures serve the quotation and the final invoice. */
-  const outRate = +o.outRate || 0;
   const outKm = +o.outKm || 0;
+  // Falls back to the standing rate: typing the kilometres means the customer
+  // is being charged for them, and a campaign with no rate of its own would
+  // otherwise bill the running at zero.
+  const outRate = +o.outRate || (outKm > 0 ? OUT_RATE_DEFAULT : 0);
   const outstation = Math.round(outRate * outKm);
   const sub = base + extras + outstation;
   const gst = o.gst ? Math.round(sub * 0.18) : 0;
@@ -845,12 +848,15 @@ const docPages = async ({ title, s, v, o, m }) => {
   /* Outstation warning, boxed and in bold on page one. It belongs in the terms,
      but the terms are on page two and go unread — and a customer who first
      hears about extra running when the invoice arrives is a customer in an
-     argument. Quotation only: on the invoice the charge is a line above. */
-  if (!isInvoice && m.outRate > 0) {
+     argument. So it is part of the quotation layout: it prints on every one,
+     Coimbatore or not, at this campaign's rate or the standing rate. On the
+     invoice it gives way to the actual charge in the table above. */
+  const noteRate = quotedOutRate(o, s);
+  if (!isInvoice && noteRate > 0) {
     const inner = RIGHT - M - 28;
     F("700", 20);
     const note = "For outstation campaigns (outside Coimbatore), transport is charged extra at "
-      + inr(m.outRate) + " per kilometre. The kilometres run are measured after the campaign "
+      + inr(noteRate) + " per kilometre. The kilometres run are measured after the campaign "
       + "and billed in the final invoice.";
     const lines = wrap(note, inner);
     const bh = lines.length * 28 + 26;
@@ -1068,10 +1074,9 @@ const proformaText = (o, v, m) =>
    o.gst ? "GST 18%: " + inr(m.gst) : "",
    "TOTAL: " + inr(m.total),
    // Say it here too — the same warning that is boxed on the quotation.
-   m.outRate > 0 && !m.outstation
-     ? "\nNOTE: For outstation campaigns (outside Coimbatore), transport is charged extra at "
-       + inr(m.outRate) + " per kilometre, measured after the campaign and billed in the final invoice."
-     : "",
+   m.outstation ? "" :
+     "\nNOTE: For outstation campaigns (outside Coimbatore), transport is charged extra at "
+       + inr(quotedOutRate(o)) + " per kilometre, measured after the campaign and billed in the final invoice.",
    "",
    "Advance to start work (" + advanceRate(o) + "%): " + inr(m.advance),
    "Balance on completion: " + inr(m.total - m.advance),
@@ -1111,7 +1116,16 @@ const setContact = (s) => {
     email:   s.contactEmail || CONTACT.email,
     company: s.company      || CONTACT.company,
   };
+  OUT_RATE_DEFAULT = +s.outRateDefault || OUT_RATE_DEFAULT;
 };
+/* The standing outstation rate, printed on every quotation whether or not a
+   campaign carries one of its own. Held out here for the same reason as
+   CONTACT: the message templates cannot reach settings. */
+let OUT_RATE_DEFAULT = 15;
+/* What a quotation states per kilometre: this campaign's rate if it has one,
+   otherwise the standing rate. */
+const quotedOutRate = (o, s) =>
+  (+((o && o.outRate)) || 0) || (+((s && s.outRateDefault)) || OUT_RATE_DEFAULT) || 0;
 const signOff = () => "— " + CONTACT.name + ", " + CONTACT.company + "\n" + CONTACT.phone;
 
 /* ---- customer reminder messages (positive, motivating) ---- */
@@ -1622,9 +1636,9 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
   const [f, set] = useState(init || {
     title:"", vendorId: vendors[0]?.id || "", vehicles:1, rate:1900, months:0,
     fabrication:0, flex:0, gst:true, advancePct:50, start:today(), end:"", route:"", stage:"Proforma", vehicleIds:[], sends:[],
-    // Carried over from settings so the outstation warning isn't forgotten;
-    // clear it on this form for a campaign that stays inside Coimbatore.
-    outRate: settings.outRateDefault ?? "",
+    // Left blank on purpose: every quotation states the standing rate anyway,
+    // so this is only filled in to quote one customer something different.
+    outRate: "",
   });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   // Money and counts can't be negative, and an advance over 100% would ask for
@@ -1636,6 +1650,7 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
     set({ ...f, [k]: n });
   };
   const m = orderMath(f);
+  const stdOutRate = +settings.outRateDefault || OUT_RATE_DEFAULT;
   return (
     <Sheet title={init ? "Edit campaign" : "New campaign"} onClose={onClose}>
       <F label="Campaign name"><input value={f.title} onChange={u("title")} placeholder="Aadi offer 25%" /></F>
@@ -1677,12 +1692,16 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
       <div className="vz-2">
         <F label="Transport charge extra for outstations">
           <input type="number" value={f.outRate === 0 ? "" : (f.outRate ?? "")} onChange={num("outRate")}
-            inputMode="numeric" min="0" placeholder="₹ per km" />
+            inputMode="numeric" min="0" placeholder={"₹" + stdOutRate + " per km"} />
         </F>
         <F label="Extra km run — final invoice only">
           <input type="number" value={f.outKm === 0 ? "" : (f.outKm ?? "")} onChange={num("outKm")}
-            inputMode="numeric" min="0" placeholder="blank while quoting" disabled={!(+f.outRate > 0)} />
+            inputMode="numeric" min="0" placeholder="blank while quoting" />
         </F>
+      </div>
+      <div className="vz-meta" style={{ marginTop:-6 }}>
+        Every quotation states {inr(stdOutRate)} per km for outstation running. Fill the
+        left box only to quote this customer a different rate.
       </div>
       <label className="vz-check"><input type="checkbox" checked={!!f.gst} onChange={(e) => set({ ...f, gst: e.target.checked })} />Add GST @ 18%</label>
       <div className="vz-card" style={{ background:"#FAFBFC" }}>
