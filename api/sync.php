@@ -58,9 +58,12 @@ if ($method === 'POST') {
     'INSERT INTO records (kind, id, updated_at, deleted, data)
      VALUES (?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
-       updated_at = IF(VALUES(updated_at) > updated_at, VALUES(updated_at), updated_at),
-       deleted    = IF(VALUES(updated_at) > updated_at, VALUES(deleted),    deleted),
-       data       = IF(VALUES(updated_at) > updated_at, VALUES(data),       data)'
+       -- >= not >: updated_at is a DATETIME, so it only resolves to the second.
+       -- With a strict >, a delete arriving in the same second as the record it
+       -- removes was silently ignored, and the row came back on the next pull.
+       updated_at = IF(VALUES(updated_at) >= updated_at, VALUES(updated_at), updated_at),
+       deleted    = IF(VALUES(updated_at) >= updated_at, VALUES(deleted),    deleted),
+       data       = IF(VALUES(updated_at) >= updated_at, VALUES(data),       data)'
   );
 
   $saved = 0; $skipped = 0;

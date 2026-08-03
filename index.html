@@ -2047,8 +2047,9 @@ function VibeCRM() {
           push.push({ kind: SYNC_KEYS[key], id: r.id, updatedAt: r.updatedAt || pushMark, data: clean });
         });
       });
+      // Always re-send tombstones, not just new ones. If a delete failed to apply
+      // server-side it would otherwise never be retried. They are few and tiny.
       (cur.tombstones || []).forEach(t => {
-        if (pushedUpTo && t.updatedAt <= pushedUpTo) return;
         push.push({ kind: SYNC_KEYS[t.key], id: t.id, updatedAt: t.updatedAt, deleted: true, data: {} });
       });
       if (push.length) {
@@ -2069,6 +2070,13 @@ function VibeCRM() {
           const mine = list.find(x => x.id === r.id);
           // Only let the server overwrite a record we haven't edited more recently.
           if (mine && mine.updatedAt && r.updatedAt && mine.updatedAt > r.updatedAt) return;
+          // Never resurrect something we deleted. If the server still shows it as
+          // alive our tombstone simply hasn't landed yet, and re-adding it here is
+          // what made deleted customers and campaigns reappear on every refresh.
+          if (!r.deleted) {
+            const tomb = (d.tombstones || []).find(t => t.key === key && t.id === r.id);
+            if (tomb && (!r.updatedAt || tomb.updatedAt >= r.updatedAt)) return;
+          }
           if (r.deleted) {
             next[key] = list.filter(x => x.id !== r.id);
           } else {
@@ -2078,7 +2086,12 @@ function VibeCRM() {
         });
         // Tombstones the server has taken no longer need repeating (measured on
         // our own clock, for the same reason as the push filter above).
-        next.tombstones = (d.tombstones || []).filter(t => t.updatedAt > pushMark);
+        // Keep tombstones rather than dropping them the moment they're pushed: a
+        // push the server didn't apply used to leave nothing behind, so the record
+        // returned on the next pull and could never be deleted again. They are
+        // small, re-sent harmlessly, and expire after 30 days.
+        const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+        next.tombstones = (d.tombstones || []).filter(t => t.updatedAt > cutoff);
         next.lastSync = res.now || d.lastSync;
         next.lastPush = pushMark;
         return next;
