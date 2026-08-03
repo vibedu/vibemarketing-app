@@ -1407,6 +1407,9 @@ const INVOICE_DEFAULTS = {
   bankBranch: "R.S Puram Coimbatore",
   bankAcType: "Current",
   nextInvNo: 29,
+  // Pre-fills the per-km outstation charge on a new campaign so the warning
+  // isn't left off a quotation by accident. Changed per customer on the form.
+  outRateDefault: 15,
   invTermsVer: 3,
   invTerms:
     "1. All rates are exclusive of GST. 18% GST (9% CGST + 9% SGST) is charged extra and shown separately above.\n" +
@@ -1615,10 +1618,13 @@ function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
   );
 }
 
-function OrderForm({ init, vendors, onSave, onClose }) {
+function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
   const [f, set] = useState(init || {
     title:"", vendorId: vendors[0]?.id || "", vehicles:1, rate:1900, months:0,
     fabrication:0, flex:0, gst:true, advancePct:50, start:today(), end:"", route:"", stage:"Proforma", vehicleIds:[], sends:[],
+    // Carried over from settings so the outstation warning isn't forgotten;
+    // clear it on this form for a campaign that stays inside Coimbatore.
+    outRate: settings.outRateDefault ?? "",
   });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   // Money and counts can't be negative, and an advance over 100% would ask for
@@ -4206,6 +4212,10 @@ function VibeCRM() {
 
       <div className="vz-eyebrow">Invoice</div>
       <F label="Next tax invoice number"><input type="number" value={db.settings.nextInvNo || 1} onChange={e => setSetting("nextInvNo", +e.target.value)} inputMode="numeric" /></F>
+      <F label="Outstation charge ₹ per km — fills in new campaigns, change it per customer">
+        <input type="number" value={db.settings.outRateDefault ?? ""} inputMode="numeric" min="0" placeholder="15"
+          onChange={e => setSetting("outRateDefault", e.target.value === "" ? "" : Math.max(0, +e.target.value))} />
+      </F>
       <F label="Terms &amp; conditions (printed on invoices)"><textarea rows={7} value={db.settings.invTerms || ""} onChange={e => setSetting("invTerms", e.target.value)} /></F>
 
       <div className="vz-eyebrow">Invoices</div>
@@ -4530,7 +4540,7 @@ function VibeCRM() {
           }} />
       )}
       {sheet?.type === "order" && (
-        <OrderForm init={sheet.data} vendors={db.vendors} onClose={() => setSheet(null)}
+        <OrderForm init={sheet.data} vendors={db.vendors} settings={db.settings} onClose={() => setSheet(null)}
           onSave={(x) => {
             let issued = null;
             if (!x.no) { issued = nextOrderNo(); }
