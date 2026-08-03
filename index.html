@@ -598,13 +598,17 @@ const loadImg = (src) => new Promise((res, rej) => {
 /* The wordmark is white — it was drawn for the dark app header. On a white
    page it would be invisible, so the lettering is repainted in ink and the
    orange megaphone left as it is. Part-transparent edges keep their alpha, so
-   the letters stay smooth. */
+   the letters stay smooth.
+
+   logo-dark.png, not logo-src.png: only the first is deployed — the second is
+   a local working copy and is deliberately kept out of the repo, so on the
+   live site it 404'd and the document fell back to plain text. */
 let inkLogoCache;
 const inkLogo = async () => {
   if (inkLogoCache !== undefined) return inkLogoCache;
   inkLogoCache = null;
   try {
-    const img = await loadImg("logo-src.png");
+    const img = await loadImg("logo-dark.png");
     const c = document.createElement("canvas");
     c.width = img.width; c.height = img.height;
     const x = c.getContext("2d");
