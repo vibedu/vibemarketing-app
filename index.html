@@ -342,6 +342,31 @@ const CSS = `
   .vz { zoom:1.7; --z:1.7; --col:560px; }
 }
 
+/* Vehicle chooser: the closed field is shaped exactly like the other inputs so
+   the form still reads as one column of boxes. */
+.vz-pick{
+  display:flex; align-items:center; width:100%; box-sizing:border-box;
+  padding:0 34px 0 12px; height:44px; text-align:left;
+  border:1px solid var(--line); border-radius:9px; background:#FAFBFC;
+  font:inherit; font-size:15px; color:var(--ink); cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236B7488' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 13px center;
+}
+.vz-pick:focus{ outline:2px solid var(--blue); outline-offset:-1px; background-color:#fff; }
+.vz-pickph{ color:var(--muted); }
+.vz-picklist{ display:flex; flex-direction:column; }
+.vz-pickopt{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  width:100%; padding:14px 12px; text-align:left; background:none; border:0;
+  border-bottom:1px solid #EEF1F6; font:inherit; color:var(--ink); cursor:pointer;
+}
+.vz-pickopt:last-child{ border-bottom:0; }
+.vz-pickopt.on{ background:#F3F7FF; }
+.vz-picktick{ color:var(--blue); font-weight:700; }
+/* Monospace and pre: every character takes the same width and the padding put
+   in by platePad survives, so the plates line up as columns down the list. */
+.vz-plateln{ font-family:var(--mono); font-size:16px; letter-spacing:.5px; white-space:pre; }
+
 /* Full-screen photo viewer. Lives outside .vz so the tablet zoom doesn't apply
    and a licence scan really does fill the screen. */
 .vz-viewer{
@@ -1227,6 +1252,46 @@ const Sheet = ({ title, onClose, children }) => (
   </div>
 );
 const F = ({ label, children }) => (<div className="vz-f"><label>{label}</label>{children}</div>);
+
+/* Number plates padded to one shape: state, district, series, number each in a
+   fixed-width column. Registrations vary — "TN 66 E 7101" has a one-letter
+   series where "TN 38 AM 4378" has two — so without this the groups sit at
+   different places on every line and the list reads as ragged.
+   Display only; the plate itself is never changed. */
+const platePad = (plate) => {
+  const p = String(plate || "").trim().toUpperCase().split(/\s+/);
+  if (p.length !== 4) return String(plate || "");   // unusual format — leave it be
+  return p[0] + " " + p[1].padStart(2) + " " + p[2].padEnd(2) + " " + p[3].padStart(4);
+};
+
+/* Vehicle chooser. A native <select> would be less code, but on a phone the
+   options are drawn by the operating system in its own proportional font, so
+   the plates can't be lined up. This draws its own list. */
+const PlatePicker = ({ value, vehicles, placeholder, title, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const cur = vehicles.find(v => v.id === value);
+  return (
+    <>
+      <button type="button" className="vz-pick" onClick={() => setOpen(true)}>
+        <span className={cur ? "vz-plateln" : "vz-pickph"}>{cur ? cur.plate : (placeholder || "—")}</span>
+      </button>
+      {open && (
+        <Sheet title={title || "Vehicle number"} onClose={() => setOpen(false)}>
+          <div className="vz-picklist">
+            {vehicles.length === 0 && <Empty head="No vehicles yet" sub="They appear once the office adds them." />}
+            {vehicles.map(v => (
+              <button key={v.id} type="button" className={"vz-pickopt" + (v.id === value ? " on" : "")}
+                onClick={() => { onChange(v.id); setOpen(false); }}>
+                <span className="vz-plateln">{platePad(v.plate)}</span>
+                {v.id === value && <span className="vz-picktick" aria-hidden="true">✓</span>}
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
+    </>
+  );
+};
 const Chip = ({ c, children }) => <span className={"vz-chip " + c}>{children}</span>;
 const Empty = ({ head, sub }) => (<div className="vz-empty"><b>{head}</b>{sub}</div>);
 const Toggle = ({ on, onChange }) => (
@@ -3202,10 +3267,8 @@ function VibeCRM() {
       {fleetView === "vehicles" && db.vehicles.length > 0 && (
         <div className="vz-card">
           <F label="Select a vehicle to see full details">
-            <select value={pickVeh} onChange={e => setPickVeh(e.target.value)}>
-              <option value="">— choose a vehicle —</option>
-              {db.vehicles.map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}
-            </select>
+            <PlatePicker value={pickVeh} vehicles={db.vehicles} title="Select a vehicle"
+              placeholder="— choose a vehicle —" onChange={setPickVeh} />
           </F>
           {(() => {
             const v = db.vehicles.find(x => x.id === pickVeh);
@@ -3653,10 +3716,9 @@ function VibeCRM() {
         </div>
 
         <F label={t("vehicleNo")}>
-          <select value={login.vehicleId} onChange={e => { setVerified(null); setLogin({ vehicleId: e.target.value, driverId:"", driverName: login.driverName, pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null }); }}>
-            <option value="">—</option>
-            {db.vehicles.map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}
-          </select>
+          <PlatePicker value={login.vehicleId} vehicles={db.vehicles} title={t("vehicleNo")}
+            placeholder={lang === "ta" ? "வாகனத்தைத் தேர்ந்தெடுக்கவும்" : "Choose your vehicle"}
+            onChange={id => { setVerified(null); setLogin({ vehicleId: id, driverId:"", driverName: login.driverName, pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null }); }} />
         </F>
 
         {login.vehicleId && !verified && (
