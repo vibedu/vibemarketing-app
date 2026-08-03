@@ -536,7 +536,14 @@ const orderMath = (o) => {
     : (spanDays(o.start, o.end) || (+o.days || 0) || ((+o.months || 0) * 30));
   const base = Math.round((+o.vehicles || 0) * (+o.rate || 0) * days);
   const extras = (+o.fabrication || 0) + (+o.flex || 0);
-  const sub = base + extras;
+  /* Outstation running is quoted as a rate but not charged up front: at quoting
+     time nobody knows how far the vans will actually go. The kilometres are
+     filled in once the campaign has run, and only then does it join the bill —
+     so the same figures serve the quotation and the final invoice. */
+  const outRate = +o.outRate || 0;
+  const outKm = +o.outKm || 0;
+  const outstation = Math.round(outRate * outKm);
+  const sub = base + extras + outstation;
   const gst = o.gst ? Math.round(sub * 0.18) : 0;
   // Split the ONE rounded GST figure, so CGST + SGST always equals the tax charged.
   // Rounding 9% twice independently disagreed with the 18% total on ~half of all subtotals.
@@ -544,7 +551,8 @@ const orderMath = (o) => {
   const sgst = gst - cgst;
   const total = sub + gst;
   const pct = advanceRate(o);
-  return { base, extras, sub, gst, cgst, sgst, total, days, advance: Math.round((total * pct) / 100) };
+  return { base, extras, sub, gst, cgst, sgst, total, days, outRate, outKm, outstation,
+           advance: Math.round((total * pct) / 100) };
 };
 
 /* photo capture: shrink + burn a GPS/time stamp into the image */
@@ -802,6 +810,15 @@ const docPages = async ({ title, s, v, o, m }) => {
     name: "Flex printing & fabrication", sub: [], sac: s.sacFlex || "998912",
     veh: String(o.vehicles || 1), days: "—", rate: money(m.extras), amt: money(m.extras),
   });
+  /* The kilometres are only known after the campaign, so this line appears on
+     the final invoice and never on the quotation. */
+  if (m.outstation > 0) items.push({
+    name: "Extra kilometres run — outstation",
+    sub: [m.outKm + " km × " + inr(m.outRate) + " per km",
+          o.outPlaces ? "Coimbatore to " + o.outPlaces : ""].filter(Boolean),
+    sac: s.sac || "998365", veh: "—", days: "—",
+    rate: money(m.outRate), amt: money(m.outstation),
+  });
 
   items.forEach((it, idx) => {
     F("500", 18);
@@ -825,6 +842,26 @@ const docPages = async ({ title, s, v, o, m }) => {
     y += h;
   });
   y += 30;
+
+  /* Outstation warning, boxed and in bold on page one. It belongs in the terms,
+     but the terms are on page two and go unread — and a customer who first
+     hears about extra running when the invoice arrives is a customer in an
+     argument. Quotation only: on the invoice the charge is a line above. */
+  if (!isInvoice && m.outRate > 0) {
+    const inner = RIGHT - M - 28;
+    F("700", 20);
+    const note = "Transport charges are extra for outstation campaigns"
+      + (o.outPlaces ? " — Coimbatore to " + o.outPlaces : "")
+      + ". Up and down charges are " + inr(m.outRate) + " per km. Extra kilometres are "
+      + "measured after the campaign and billed separately in the final invoice.";
+    const lines = wrap(note, inner);
+    const bh = lines.length * 28 + 26;
+    g.fillStyle = "#FFF6EC"; g.fillRect(M, y, RIGHT - M, bh);
+    g.strokeStyle = DOC_INK; g.lineWidth = 2; g.strokeRect(M, y, RIGHT - M, bh);
+    g.fillStyle = DOC_INK; F("700", 20); g.textAlign = "left";
+    lines.forEach((l, i) => g.fillText(l, M + 14, y + 32 + i * 28));
+    y += bh + 26;
+  }
 
   /* ---- totals, stacked on the right where the eye goes ---- */
   const tl = 700;
@@ -1029,8 +1066,15 @@ const proformaText = (o, v, m) =>
    "Display charges: " + o.vehicles + " vehicles x " + inr(o.rate) + "/day x " + m.days + " day(s) = " + inr(m.base),
    o.fabrication ? "Fabrication work: " + inr(o.fabrication) : "",
    o.flex ? "Flex printing: " + inr(o.flex) : "",
+   m.outstation ? "Extra kilometres (outstation): " + m.outKm + " km x " + inr(m.outRate) + " = " + inr(m.outstation) : "",
    o.gst ? "GST 18%: " + inr(m.gst) : "",
    "TOTAL: " + inr(m.total),
+   // Say it here too — the same warning that is boxed on the quotation.
+   m.outRate > 0 && !m.outstation
+     ? "\nNOTE: Transport charges are extra for outstation campaigns"
+       + (o.outPlaces ? " (Coimbatore to " + o.outPlaces + ")" : "")
+       + ". Up and down charges are " + inr(m.outRate) + " per km, measured after the campaign and billed in the final invoice."
+     : "",
    "",
    "Advance to start work (" + advanceRate(o) + "%): " + inr(m.advance),
    "Balance on completion: " + inr(m.total - m.advance),
@@ -1623,11 +1667,36 @@ function OrderForm({ init, vendors, onSave, onClose }) {
         <F label="Flex printing ₹"><input type="number" value={f.flex} onChange={num("flex")} inputMode="numeric" min="0" /></F>
       </div>
       <F label="Route / coverage"><input value={f.route} onChange={u("route")} placeholder="Thillai Nagar → Chatram" /></F>
+
+      {/* Outstation running. The rate is only a warning on the quotation; it
+          reaches the bill when the kilometres below are filled in. Leave both
+          blank for a campaign inside Coimbatore and nothing is shown at all. */}
+      <div className="vz-2">
+        <F label="Transport charge extra for outstations">
+          <input type="number" value={f.outRate === 0 ? "" : (f.outRate ?? "")} onChange={num("outRate")}
+            inputMode="numeric" min="0" placeholder="₹ per km" />
+        </F>
+        <F label="Outstation places (optional)">
+          <input value={f.outPlaces || ""} onChange={u("outPlaces")} placeholder="Erode, Salem, Vellore" />
+        </F>
+      </div>
+      {+f.outRate > 0 && (
+        <F label="Extra kilometres actually run — fill in only for the final invoice">
+          <input type="number" value={f.outKm === 0 ? "" : (f.outKm ?? "")} onChange={num("outKm")}
+            inputMode="numeric" min="0" placeholder="leave blank while quoting" />
+        </F>
+      )}
       <label className="vz-check"><input type="checkbox" checked={!!f.gst} onChange={(e) => set({ ...f, gst: e.target.checked })} />Add GST @ 18%</label>
       <div className="vz-card" style={{ background:"#FAFBFC" }}>
         <div className="vz-kv"><span>Duration</span><b>{m.days ? m.days + " days" : "—"}</b></div>
         <div className="vz-kv"><span>Display charges</span><b className="vz-money">{inr(m.base)}</b></div>
         <div className="vz-kv"><span>Fabrication + flex</span><b className="vz-money">{inr(m.extras)}</b></div>
+        {m.outRate > 0 && (
+          <div className="vz-kv">
+            <span>Outstation {m.outKm ? m.outKm + " km × " + inr(m.outRate) : "(₹" + m.outRate + "/km — not billed yet)"}</span>
+            <b className="vz-money">{m.outstation ? inr(m.outstation) : "—"}</b>
+          </div>
+        )}
         <div className="vz-kv"><span>GST</span><b className="vz-money">{inr(m.gst)}</b></div>
         <div className="vz-kv"><span style={{ fontWeight:700, color:"#12192A" }}>Proforma total</span><b className="vz-money" style={{ fontSize:16 }}>{inr(m.total)}</b></div>
         <div className="vz-kv"><span>Advance to start</span><b className="vz-money">{inr(m.advance)}</b></div>
