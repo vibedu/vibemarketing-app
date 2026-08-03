@@ -2413,7 +2413,6 @@ function VibeCRM() {
   const [q, setQ] = useState("");
   const [openOrder, setOpenOrder] = useState(null);
   const [openProof, setOpenProof] = useState(null);
-  const [invoice, setInvoice] = useState(null);
   const [login, setLogin] = useState({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null });
   const [verified, setVerified] = useState(null);
   const [closing, setClosing] = useState(false);
@@ -2445,7 +2444,7 @@ function VibeCRM() {
     let lastActive = Date.now();
     const IDLE = 5 * 60 * 1000;   // 5 minutes idle
     const AWAY = 60 * 1000;       // re-lock if backgrounded for over a minute
-    const doLock = () => { setLocked(true); setSheet(null); setSend(null); setInvoice(null); setOpenOrder(null); setOpenProof(null); };
+    const doLock = () => { setLocked(true); setSheet(null); setSend(null); setOpenOrder(null); setOpenProof(null); };
     const bump = () => { lastActive = Date.now(); };
     const check = () => { if (Date.now() - lastActive > IDLE) doLock(); };
     const onVis = () => { if (document.visibilityState === "visible" && Date.now() - lastActive > AWAY) doLock(); };
@@ -3366,7 +3365,11 @@ function VibeCRM() {
     );
   };
 
-  /* assign a stable tax-invoice number the first time an invoice is opened, then show it */
+  /* Assign a stable tax-invoice number the first time an invoice is raised,
+     then build it as the same two-page PDF the quotation uses. It used to open
+     a separate HTML view, which meant the invoice looked nothing like the
+     quotation the customer had already seen — and, once outstation running was
+     added, left the extra kilometres off the printed bill entirely. */
   const openInvoice = (o) => {
     let ord = o;
     if (!o.invNo) {
@@ -3375,90 +3378,7 @@ function VibeCRM() {
       put("orders", ord);
       setSetting("nextInvNo", n + 1);
     }
-    setInvoice(ord.id);
-  };
-
-  const invoiceText = (o, v, m, s) => {
-    return ["*" + (s.company || "Vibe Marketing") + "* — Tax Invoice",
-      "Invoice No: " + (o.invNo || "-") + "  ·  " + dmy(o.invDate || today()),
-      "To: " + (v ? v.name : "—"),
-      "Vehicle charges: " + o.vehicles + " veh x " + inr(o.rate) + "/day x " + m.days + " day = " + inr(m.base),
-      m.extras ? "Flex & fabrication: " + inr(m.extras) : "",
-      "Subtotal: " + inr(m.sub),
-      o.gst ? "CGST 9%: " + inr(m.cgst) + "  ·  SGST 9%: " + inr(m.sgst) : "",
-      "*Grand total: " + inr(m.total) + "*",
-      "Advance (" + advanceRate(o) + "%): " + inr(m.advance),
-      "",
-      "Bank: " + s.bankName + " · A/c " + s.bankAcNo + " · IFSC " + s.bankIFSC + " (" + s.bankBranch + ")",
-      "GSTIN: " + (s.gstin || "")].filter(Boolean).join("\n");
-  };
-
-  const InvoiceView = () => {
-    const o = db.orders.find(x => x.id === invoice);
-    if (!o) return null;
-    const v = vendorOf(o.vendorId);
-    const m = orderMath(o);
-    const s = db.settings;
-    const area = (o.route || "").split("→")[0].split("-")[0].trim() || "Coimbatore";
-    return (
-      <div className="vz-invoice-overlay">
-        <div className="vz-invoice-actions vz-noprint">
-          <button className="vz-btn alt" style={{ margin:0 }} onClick={() => setInvoice(null)}>← Close</button>
-          <button className="vz-btn" style={{ margin:0 }} onClick={() => window.print()}>Print / Save PDF</button>
-          {v && <button className="vz-btn alt" style={{ margin:0 }} onClick={() => openWA(v.phone, invoiceText(o, v, m, s))}>Share</button>}
-        </div>
-        <div className="vz-invoice">
-          <div className="inv-head">
-            <div style={{ minWidth:0 }}>
-              <img src="logo-dark.png" alt={s.company} className="inv-logo" />
-              <div className="inv-sm">{s.address}</div>
-              <div className="inv-sm">Mob: {s.contactPhone || s.bizPhone}  ·  {s.website}  ·  {s.contactEmail || s.bizEmail}</div>
-              <div className="inv-gstin">GSTIN: {s.gstin}</div>
-            </div>
-            <div className="inv-title">TAX INVOICE</div>
-          </div>
-          <div className="inv-meta">
-            <div>
-              <div className="inv-lbl">Bill to</div>
-              <div><b>{v ? v.name : "—"}</b></div>
-              {v && v.person && <div className="inv-sm">{v.person}</div>}
-              {v && v.area && <div className="inv-sm">{v.area}</div>}
-              {v && v.gst && <div className="inv-sm">GSTIN: {v.gst}</div>}
-            </div>
-            <div style={{ textAlign:"right" }}>
-              <div className="inv-sm">Invoice No: <b>{o.invNo}</b></div>
-              <div className="inv-sm">Date: <b>{dmy(o.invDate || today())}</b></div>
-              <div className="inv-sm">Campaign: {o.title}</div>
-            </div>
-          </div>
-          <table className="inv-table">
-            <thead><tr><th>Description</th><th>Days</th><th>Vehicles</th><th>Rate</th><th>Total</th></tr></thead>
-            <tbody>
-              <tr><td>Vehicle Charges — {area}</td><td>{m.days}</td><td>{o.vehicles}</td><td>{inr(o.rate)}</td><td>{inr(m.base)}</td></tr>
-              {m.extras > 0 && <tr><td>Flex &amp; Fabrication charges</td><td>-</td><td>-</td><td>-</td><td>{inr(m.extras)}</td></tr>}
-            </tbody>
-          </table>
-          <div className="inv-totals">
-            <div className="inv-trow"><span>Subtotal</span><b>{inr(m.sub)}</b></div>
-            {o.gst && <div className="inv-trow"><span>CGST 9%</span><b>{inr(m.cgst)}</b></div>}
-            {o.gst && <div className="inv-trow"><span>SGST 9%</span><b>{inr(m.sgst)}</b></div>}
-            <div className="inv-trow inv-grand"><span>Grand total</span><b>{inr(m.total)}</b></div>
-            <div className="inv-trow"><span>Advance ({advanceRate(o)}%)</span><b>{inr(m.advance)}</b></div>
-          </div>
-          {s.invTerms && <div className="inv-terms">
-            <div className="inv-lbl">Terms &amp; Conditions</div>
-            <div className="inv-sm" style={{ whiteSpace:"pre-line" }}>{s.invTerms}</div>
-          </div>}
-          <div className="inv-bank">
-            <div className="inv-lbl">Bank details</div>
-            <div className="inv-sm">Bank: {s.bankName}  ·  A/c holder: {s.bankHolder}</div>
-            <div className="inv-sm">A/c No: {s.bankAcNo}  ·  IFSC: {s.bankIFSC}</div>
-            <div className="inv-sm">Branch: {s.bankBranch}  ·  Type: {s.bankAcType}</div>
-          </div>
-          <div className="inv-thanks">Thank you for your business!</div>
-        </div>
-      </div>
-    );
+    openDoc(ord, "TAX INVOICE");
   };
 
   const Field = () => {
@@ -4635,7 +4555,6 @@ function VibeCRM() {
       )}
       {sheet?.type === "job" && <JobForm vehicles={db.vehicles} onClose={() => setSheet(null)} onSave={(x) => { put("jobs", x); setSheet(null); }} />}
 
-      {invoice && InvoiceView()}
 
       {doc && (
         <div className="vz-invoice-overlay">
