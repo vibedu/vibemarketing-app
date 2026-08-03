@@ -814,8 +814,7 @@ const docPages = async ({ title, s, v, o, m }) => {
      the final invoice and never on the quotation. */
   if (m.outstation > 0) items.push({
     name: "Extra kilometres run — outstation",
-    sub: [m.outKm + " km × " + inr(m.outRate) + " per km",
-          o.outPlaces ? "Coimbatore to " + o.outPlaces : ""].filter(Boolean),
+    sub: ["Total " + m.outKm + " km × " + inr(m.outRate) + " per kilometre"],
     sac: s.sac || "998365", veh: "—", days: "—",
     rate: money(m.outRate), amt: money(m.outstation),
   });
@@ -850,10 +849,9 @@ const docPages = async ({ title, s, v, o, m }) => {
   if (!isInvoice && m.outRate > 0) {
     const inner = RIGHT - M - 28;
     F("700", 20);
-    const note = "Transport charges are extra for outstation campaigns"
-      + (o.outPlaces ? " — Coimbatore to " + o.outPlaces : "")
-      + ". Up and down charges are " + inr(m.outRate) + " per km. Extra kilometres are "
-      + "measured after the campaign and billed separately in the final invoice.";
+    const note = "For outstation campaigns (outside Coimbatore), transport is charged extra at "
+      + inr(m.outRate) + " per kilometre. The kilometres run are measured after the campaign "
+      + "and billed in the final invoice.";
     const lines = wrap(note, inner);
     const bh = lines.length * 28 + 26;
     g.fillStyle = "#FFF6EC"; g.fillRect(M, y, RIGHT - M, bh);
@@ -1066,14 +1064,13 @@ const proformaText = (o, v, m) =>
    "Display charges: " + o.vehicles + " vehicles x " + inr(o.rate) + "/day x " + m.days + " day(s) = " + inr(m.base),
    o.fabrication ? "Fabrication work: " + inr(o.fabrication) : "",
    o.flex ? "Flex printing: " + inr(o.flex) : "",
-   m.outstation ? "Extra kilometres (outstation): " + m.outKm + " km x " + inr(m.outRate) + " = " + inr(m.outstation) : "",
+   m.outstation ? "Extra kilometres run (outstation): " + m.outKm + " km x " + inr(m.outRate) + " = " + inr(m.outstation) : "",
    o.gst ? "GST 18%: " + inr(m.gst) : "",
    "TOTAL: " + inr(m.total),
    // Say it here too — the same warning that is boxed on the quotation.
    m.outRate > 0 && !m.outstation
-     ? "\nNOTE: Transport charges are extra for outstation campaigns"
-       + (o.outPlaces ? " (Coimbatore to " + o.outPlaces + ")" : "")
-       + ". Up and down charges are " + inr(m.outRate) + " per km, measured after the campaign and billed in the final invoice."
+     ? "\nNOTE: For outstation campaigns (outside Coimbatore), transport is charged extra at "
+       + inr(m.outRate) + " per kilometre, measured after the campaign and billed in the final invoice."
      : "",
    "",
    "Advance to start work (" + advanceRate(o) + "%): " + inr(m.advance),
@@ -1669,23 +1666,18 @@ function OrderForm({ init, vendors, onSave, onClose }) {
       <F label="Route / coverage"><input value={f.route} onChange={u("route")} placeholder="Thillai Nagar → Chatram" /></F>
 
       {/* Outstation running. The rate is only a warning on the quotation; it
-          reaches the bill when the kilometres below are filled in. Leave both
-          blank for a campaign inside Coimbatore and nothing is shown at all. */}
+          reaches the bill when the kilometres are filled in after the campaign.
+          Leave both blank for a Coimbatore campaign and nothing is shown. */}
       <div className="vz-2">
         <F label="Transport charge extra for outstations">
           <input type="number" value={f.outRate === 0 ? "" : (f.outRate ?? "")} onChange={num("outRate")}
             inputMode="numeric" min="0" placeholder="₹ per km" />
         </F>
-        <F label="Outstation places (optional)">
-          <input value={f.outPlaces || ""} onChange={u("outPlaces")} placeholder="Erode, Salem, Vellore" />
+        <F label="Extra km run — final invoice only">
+          <input type="number" value={f.outKm === 0 ? "" : (f.outKm ?? "")} onChange={num("outKm")}
+            inputMode="numeric" min="0" placeholder="blank while quoting" disabled={!(+f.outRate > 0)} />
         </F>
       </div>
-      {+f.outRate > 0 && (
-        <F label="Extra kilometres actually run — fill in only for the final invoice">
-          <input type="number" value={f.outKm === 0 ? "" : (f.outKm ?? "")} onChange={num("outKm")}
-            inputMode="numeric" min="0" placeholder="leave blank while quoting" />
-        </F>
-      )}
       <label className="vz-check"><input type="checkbox" checked={!!f.gst} onChange={(e) => set({ ...f, gst: e.target.checked })} />Add GST @ 18%</label>
       <div className="vz-card" style={{ background:"#FAFBFC" }}>
         <div className="vz-kv"><span>Duration</span><b>{m.days ? m.days + " days" : "—"}</b></div>
