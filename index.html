@@ -2077,10 +2077,12 @@ function AttendanceSheet({ db, vehOf, drvOf, onClose }) {
                 <div className="vz-meta" style={{ fontFamily:"var(--mono)" }}>{a.vehiclePlate || (v ? v.plate : "—")}</div>
                 <div className="vz-meta">In {clock(a.inAt)}{a.outAt ? " · Out " + clock(a.outAt) : ""}{a.autoClosed ? " · auto" : ""}</div>
                 <div className="vz-meta">KM {a.openKm != null ? a.openKm : "—"} → {a.closeKm != null ? a.closeKm : "—"}{(a.openKm != null && a.closeKm != null) ? "  (" + (a.closeKm - a.openKm) + " km)" : ""}</div>
+                {/* selfieUrl is the server's column name; it now holds the
+                    odometer photo taken at punch-in. */}
                 {a.selfieUrl && (
-                  <a href={a.selfieUrl} target="_blank" rel="noreferrer" style={{ display:"inline-block", marginTop:6 }}>
-                    <img src={a.selfieUrl} alt="punch-in selfie" style={{ width:64, height:84, objectFit:"cover", borderRadius:8, border:"1px solid var(--line)" }} />
-                  </a>
+                  <img className="vz-thumb sm" src={a.selfieUrl} alt="odometer at punch-in"
+                    style={{ width:96, height:72, objectFit:"cover", borderRadius:8, marginTop:6, cursor:"zoom-in" }}
+                    onClick={() => viewImage(a.selfieUrl, "Odometer · " + (a.driverName || "") + " · " + clock(a.inAt))} />
                 )}
                 {(a.lat != null && a.lng != null) && (
                   <a className="vz-meta" style={{ color:"#2C6FD1", display:"block" }} href={mapLink(a.lat, a.lng)} target="_blank" rel="noreferrer">Open punch-in location</a>
@@ -2413,7 +2415,7 @@ function VibeCRM() {
   const [q, setQ] = useState("");
   const [openOrder, setOpenOrder] = useState(null);
   const [openProof, setOpenProof] = useState(null);
-  const [login, setLogin] = useState({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null });
+  const [login, setLogin] = useState({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", shotId:"", shotLat:null, shotLng:null, shotAcc:null });
   const [verified, setVerified] = useState(null);
   const [closing, setClosing] = useState(false);
   const [closeKm, setCloseKm] = useState("");
@@ -2902,9 +2904,12 @@ function VibeCRM() {
     setVerified(driver);
   };
 
-  // Step 2a: capture a punch-in selfie with a GPS + time stamp burned into it.
-  const selfieRef = useRef(null);
-  const grabSelfie = async (e) => {
+  /* Step 2a: photograph the odometer, with a GPS + time stamp burned in.
+     This was a punch-in selfie. Identifying a driver by his face proved
+     unreliable in the field, and the name and PIN already say who he is —
+     what nobody can otherwise check is the reading he typed. */
+  const shotRef = useRef(null);
+  const grabOdometer = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (e.target) e.target.value = "";
     if (!file) return;
@@ -2920,7 +2925,7 @@ function VibeCRM() {
       const dataUrl = await processShot(file, stamp);
       const id = "self_" + uid();
       savePic(id, dataUrl);
-      setLogin(l => ({ ...l, selfieId: id, selfieLat: fix.ok ? fix.lat : null, selfieLng: fix.ok ? fix.lng : null, selfieAcc: fix.ok ? fix.acc : null }));
+      setLogin(l => ({ ...l, shotId: id, shotLat: fix.ok ? fix.lat : null, shotLng: fix.ok ? fix.lng : null, shotAcc: fix.ok ? fix.acc : null }));
     } catch (err) {
       setToast(lang === "ta" ? "படத்தை படிக்க முடியவில்லை, மீண்டும் முயற்சிக்கவும்" : "Couldn't read that photo — try again");
     }
@@ -2933,7 +2938,7 @@ function VibeCRM() {
     const driver = verified;
     const openKm = (login.openKm || "").replace(/\D/g, "");
     if (!veh || !driver || openKm === "") return;
-    if (!login.selfieId || !pics[login.selfieId]) { setToast(lang === "ta" ? "முதலில் உங்கள் செல்தியை எடுக்கவும்" : "Please take your punch-in selfie first"); return; }
+    if (!login.shotId || !pics[login.shotId]) { setToast(lang === "ta" ? "முதலில் மீட்டர் புகைப்படம் எடுக்கவும்" : "Please photograph the odometer first"); return; }
     // One vehicle, one driver: a van already signed out can't be taken by someone else.
     const busy = (db.attendance || []).find(a => a.vehicleId === veh.id && !a.outAt && a.driverId !== driver.id);
     if (busy) {
@@ -2950,16 +2955,18 @@ function VibeCRM() {
       setToast((lang === "ta" ? "ஆரம்ப KM " : "Opening km ") + openKm + (lang === "ta" ? " கடந்த பதிவு " : " is below the last reading ") + lastKm + " — " + (lang === "ta" ? "மீட்டரை சரிபார்க்கவும்" : "check the odometer"));
       return;
     }
-    const selfie = pics[login.selfieId] || "";
+    // selfie_data / selfie_url are the attendance table's column names — they
+    // carry the odometer photo now, and renaming them would need a migration.
+    const odometer = pics[login.shotId] || "";
     const rec = { id: uid(), driverId: driver.id || "", driverName: driver.name, driverPhoto: driver.photoUrl || "", vehicleId: veh.id, date: today(),
       inAt: new Date().toISOString(), outAt: "", substitute: false, openKm: +openKm, closeKm: null,
-      lat: login.selfieLat != null ? login.selfieLat : null, lng: login.selfieLng != null ? login.selfieLng : null,
-      selfieId: login.selfieId, selfieUrl: "" };
+      lat: login.shotLat != null ? login.shotLat : null, lng: login.shotLng != null ? login.shotLng : null,
+      shotId: login.shotId, selfieUrl: "" };
     setDb(d => ({ ...d, attendance: [rec, ...(d.attendance || [])], session: rec.id }));
     queuePost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: veh.id, vehicle_plate: veh.plate,
-      driver_name: driver.name, in_at: rec.inAt, out_at: "", lat: rec.lat, lng: rec.lng, open_km: +openKm, selfie_data: selfie })
+      driver_name: driver.name, in_at: rec.inAt, out_at: "", lat: rec.lat, lng: rec.lng, open_km: +openKm, selfie_data: odometer })
       .then(res => { if (res && res.selfie_url) setDb(d => ({ ...d, attendance: (d.attendance || []).map(a => a.id === rec.id ? { ...a, selfieUrl: res.selfie_url } : a) })); });
-    setLogin({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null });
+    setLogin({ vehicleId:"", driverId:"", driverName:"", pin:"", openKm:"", shotId:"", shotLat:null, shotLng:null, shotAcc:null });
     setVerified(null);
     setToast(tr(lang, "dutyStarted") + " · " + veh.plate);
   };
@@ -3968,7 +3975,7 @@ function VibeCRM() {
         <F label={t("vehicleNo")}>
           <PlatePicker value={login.vehicleId} vehicles={db.vehicles} title={t("vehicleNo")}
             placeholder={lang === "ta" ? "வாகனத்தைத் தேர்ந்தெடுக்கவும்" : "Choose your vehicle"}
-            onChange={id => { setVerified(null); setLogin({ vehicleId: id, driverId:"", driverName: login.driverName, pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null }); }} />
+            onChange={id => { setVerified(null); setLogin({ vehicleId: id, driverId:"", driverName: login.driverName, pin:"", openKm:"", shotId:"", shotLat:null, shotLng:null, shotAcc:null }); }} />
         </F>
 
         {login.vehicleId && !verified && (
@@ -3996,19 +4003,19 @@ function VibeCRM() {
               <div className="vz-meta" style={{ marginTop:0, color:"#12703A" }}>{lang === "ta" ? "வரவேற்பு" : "Welcome"}, <b>{verified.name}</b>{veh ? " · " + veh.plate : ""}</div>
             </div>
 
-            <F label={lang === "ta" ? "பஞ்ச்-இன் செல்தி (Punch-in selfie)" : "Punch-in selfie"}>
-              {login.selfieId && pics[login.selfieId] && (
-                <img src={pics[login.selfieId]} alt="punch-in selfie" style={{ width:"100%", borderRadius:12, marginBottom:8, border:"1px solid var(--line)" }} />
+            <F label={lang === "ta" ? "மீட்டர் புகைப்படம் (Odometer photo)" : "Odometer photo"}>
+              {login.shotId && pics[login.shotId] && (
+                <img src={pics[login.shotId]} alt="odometer at punch-in" style={{ width:"100%", borderRadius:12, marginBottom:8, border:"1px solid var(--line)" }} />
               )}
-              <button type="button" className="vz-big" disabled={snapping} onClick={() => selfieRef.current && selfieRef.current.click()}>
+              <button type="button" className="vz-big" disabled={snapping} onClick={() => shotRef.current && shotRef.current.click()}>
                 <Icon d={ICONS.field} />
                 {snapping
                   ? (lang === "ta" ? "படம் சேமிக்கிறது…" : "Saving…")
-                  : (login.selfieId ? (lang === "ta" ? "மீண்டும் எடு" : "Retake selfie") : (lang === "ta" ? "செல்தி எடு" : "Take selfie"))}
+                  : (login.shotId ? (lang === "ta" ? "மீண்டும் எடு" : "Retake photo") : (lang === "ta" ? "மீட்டர் படம் எடு" : "Take odometer photo"))}
               </button>
-              <input ref={selfieRef} className="vz-hidden" type="file" accept="image/*" capture="user" onChange={grabSelfie} />
+              <input ref={shotRef} className="vz-hidden" type="file" accept="image/*" capture="environment" onChange={grabOdometer} />
               <div className="vz-meta" style={{ marginTop:6 }}>
-                {lang === "ta" ? "உங்கள் முகம் தெரியும்படி புகைப்படம் எடுக்கவும் — நேரம் & இடம் பதிவாகும்." : "Take a clear photo of your face — time & location are stamped on it."}
+                {lang === "ta" ? "மீட்டர் அளவு தெளிவாக தெரியும்படி எடுக்கவும் — நேரம் & இடம் பதிவாகும்." : "Photograph the meter so the reading is clear — time & location are stamped on it."}
               </div>
             </F>
 
@@ -4016,11 +4023,11 @@ function VibeCRM() {
               <input value={login.openKm} onChange={e => setLogin({ ...login, openKm: e.target.value.replace(/\D/g, "").slice(0, 8) })}
                 inputMode="numeric" placeholder={lang === "ta" ? "மீட்டர் அளவை உள்ளிடவும்" : "Enter the odometer reading"} style={{ fontFamily:"var(--mono)", fontSize:19 }} />
             </F>
-            <button className="vz-btn go" disabled={(login.openKm || "") === "" || !login.selfieId || snapping} onClick={beginDuty}>
+            <button className="vz-btn go" disabled={(login.openKm || "") === "" || !login.shotId || snapping} onClick={beginDuty}>
               {t("startDuty")}
             </button>
-            {!login.selfieId && <div className="vz-meta" style={{ textAlign:"center", color:"#8A6100" }}>{lang === "ta" ? "தொடங்க செல்தி தேவை" : "A punch-in selfie is required to start"}</div>}
-            <button className="vz-link" onClick={() => { setVerified(null); setLogin({ ...login, pin:"", openKm:"", selfieId:"", selfieLat:null, selfieLng:null, selfieAcc:null }); }}>{lang === "ta" ? "மாற்று" : "Not you? Go back"}</button>
+            {!login.shotId && <div className="vz-meta" style={{ textAlign:"center", color:"#8A6100" }}>{lang === "ta" ? "தொடங்க மீட்டர் புகைப்படம் தேவை" : "An odometer photo is required to start"}</div>}
+            <button className="vz-link" onClick={() => { setVerified(null); setLogin({ ...login, pin:"", openKm:"", shotId:"", shotLat:null, shotLng:null, shotAcc:null }); }}>{lang === "ta" ? "மாற்று" : "Not you? Go back"}</button>
           </>
         )}
 
