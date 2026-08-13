@@ -53,7 +53,7 @@ function current_admin() {
   $t = $_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '';
   if (!is_string($t) || strlen($t) < 32) return null;
   $stmt = db()->prepare(
-    'SELECT a.id, a.email, a.name
+    'SELECT a.id, a.email, a.name, a.role
        FROM admin_sessions s JOIN admins a ON a.id = s.admin_id
       WHERE s.token = ? AND s.expires_at > UTC_TIMESTAMP() LIMIT 1'
   );
@@ -73,6 +73,20 @@ function require_admin() {
     echo json_encode(['error' => 'admin auth required']);
     exit;
   }
+}
+
+/* Only a Director may manage office logins. Accounts created before roles
+   existed have no role stored and are treated as Directors. */
+function require_director() {
+  $a = current_admin();
+  if (!$a) { http_response_code(401); echo json_encode(['error' => 'admin auth required']); exit; }
+  $role = isset($a['role']) && $a['role'] !== '' ? $a['role'] : 'Director';
+  if ($role !== 'Director') {
+    http_response_code(403);
+    echo json_encode(['error' => 'only a Director can do this']);
+    exit;
+  }
+  return $a;
 }
 
 function fail($msg, $code = 400) {

@@ -1335,7 +1335,7 @@ const blankData = () => ({
   },
   users: [], vendors: [], vehicles: [], drivers: [], managers: [], orders: [], payments: [], jobs: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
-  adminToken: "", adminName: "", payLinks: [],
+  adminToken: "", adminName: "", adminRole: "", payLinks: [],
   tombstones: [], lastSync: "", lastPush: "",
 });
 
@@ -2048,6 +2048,253 @@ function UserForm({ init, isSelf, onSave, onDelete, onClose }) {
   );
 }
 
+/* Office logins, managed by a Director. The password is set here and never
+   comes back from the server, so it has to be handed over at the time — the
+   sheet keeps it on screen until it is dismissed for exactly that reason. */
+function OfficeUsersSheet({ setToast, onClose }) {
+  const [users, setUsers] = useState(null);        // null = still loading
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [f, set] = useState({ name:"", email:"", password:"", role:"Finance" });
+  const [made, setMade] = useState(null);          // the account just created
+
+  const load = async () => {
+    const res = await apiGet("admin_users.php");
+    if (res && res.error) { setErr(res.error); setUsers([]); return; }
+    setErr(""); setUsers(Array.isArray(res) ? res : []);
+  };
+  useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    setBusy(true);
+    const res = await apiPost("admin_users.php", f);
+    setBusy(false);
+    if (!res || res.error) { setToast(res && res.error ? res.error : "Could not create that login"); return; }
+    setMade({ ...f });
+    set({ name:"", email:"", password:"", role:"Finance" });
+    load();
+  };
+
+  const remove = async (u) => {
+    if (!window.confirm("Remove the login for " + (u.name || u.email) + "? They will be signed out everywhere.")) return;
+    const res = await apiPost("admin_users.php", { delete_id: u.id });
+    if (!res || res.error) { setToast(res && res.error ? res.error : "Could not remove that login"); return; }
+    setToast("Login removed");
+    load();
+  };
+
+  const ready = f.email.trim() && f.password.length >= 8 && f.name.trim();
+
+  return (
+    <Sheet title="Office logins" onClose={onClose}>
+      {err && <div className="vz-card" style={{ background:"#FDECEC", borderColor:"#F2B8B8" }}>
+        <div className="vz-meta" style={{ marginTop:0, color:"#B4262A" }}>{err}</div>
+      </div>}
+
+      {made && (
+        <div className="vz-card" style={{ background:"#EAF6EE", borderColor:"#BFE6CC" }}>
+          <div className="vz-meta" style={{ marginTop:0, color:"#12703A" }}>
+            <b>{made.name}</b> can now sign in. Send these to her — the password cannot be shown again.
+          </div>
+          <div className="vz-kv"><span>Email</span><b style={{ fontFamily:"var(--mono)" }}>{made.email}</b></div>
+          <div className="vz-kv"><span>Password</span><b style={{ fontFamily:"var(--mono)" }}>{made.password}</b></div>
+          <button className="vz-btn alt" style={{ marginTop:8 }}
+            onClick={() => { try { navigator.clipboard.writeText("Vibe Marketing sign-in\n" + made.email + "\n" + made.password); setToast("Copied"); } catch (e) {} }}>
+            Copy sign-in details
+          </button>
+          <button className="vz-btn alt" style={{ margin:0 }} onClick={() => setMade(null)}>Done</button>
+        </div>
+      )}
+
+      <div className="vz-eyebrow" style={{ marginTop:0 }}>Who can sign in</div>
+      {users === null && <div className="vz-card"><div className="vz-meta">Loading…</div></div>}
+      {users && users.length === 0 && !err && <div className="vz-card"><div className="vz-meta">No accounts found.</div></div>}
+      {(users || []).map(u => (
+        <div className="vz-card" key={u.id}>
+          <div className="vz-row">
+            <div style={{ minWidth:0 }}>
+              <div className="vz-title">{u.name || u.email}</div>
+              <div className="vz-meta" style={{ wordBreak:"break-all" }}>{u.email}</div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <Chip c={u.role === "Director" ? "c-blue" : "c-green"}>{u.role}</Chip>
+            </div>
+          </div>
+          <button className="vz-btn warn" style={{ marginBottom:0 }} onClick={() => remove(u)}>Remove this login</button>
+        </div>
+      ))}
+
+      <div className="vz-eyebrow">Add a login</div>
+      <F label="Name"><input value={f.name} onChange={e => set({ ...f, name: e.target.value })} placeholder="Finance team" /></F>
+      <F label="Email"><input value={f.email} onChange={e => set({ ...f, email: e.target.value })}
+        type="email" inputMode="email" autoComplete="off" placeholder="accounts@example.com" /></F>
+      <F label="Password — at least 8 characters">
+        <input value={f.password} onChange={e => set({ ...f, password: e.target.value })}
+          autoComplete="new-password" placeholder="something she can remember" />
+      </F>
+      <F label="Role">
+        <select value={f.role} onChange={e => set({ ...f, role: e.target.value })}>
+          <option value="Finance">Finance — customers, campaigns, money and GST</option>
+          <option value="Director">Director — everything, including these logins</option>
+        </select>
+      </F>
+      <button className="vz-btn" disabled={!ready || busy} onClick={create}>{busy ? "Creating…" : "Create login"}</button>
+      <div className="vz-meta">
+        You are choosing the password, so pick something and hand it over — she can change it herself
+        from Settings once she is in.
+      </div>
+    </Sheet>
+  );
+}
+
+/* ---------------------------- GST register ----------------------------
+   What the finance team needs to file a return: every tax invoice raised in a
+   period, with its taxable value and tax split out, and the same figures as a
+   file their accountant can open. The app is the only place these invoices
+   exist, so this is the record — it is built from the same orderMath the
+   invoice itself was printed from, never from figures typed again. */
+const csvCell = (v) => {
+  const s = String(v == null ? "" : v);
+  // A leading =, +, - or @ is treated as a formula by Excel; quote it out.
+  const safe = /^[=+\-@]/.test(s) ? "'" + s : s;
+  return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
+};
+const downloadCsv = (name, rows) => {
+  // BOM so Excel opens the rupee sign and Tamil names correctly.
+  const body = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([body], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
+};
+
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const monthLabel = (ym) => {
+  const p = String(ym).split("-");
+  return MONTH_NAMES[(+p[1] || 1) - 1] + " " + p[0];
+};
+
+function GstSheet({ db, vendorOf, onClose }) {
+  const s = db.settings || {};
+  const [month, setMonth] = useState(today().slice(0, 7));
+
+  /* An order counts as an invoice once it has been given an invoice number.
+     Its date is the invoice date, not the day the campaign was raised. */
+  const invoices = (db.orders || [])
+    .filter(o => o.invNo)
+    .map(o => ({ o, v: vendorOf(o.vendorId), m: orderMath(o), date: String(o.invDate || o.created || "").slice(0, 10) }))
+    .filter(x => x.date.slice(0, 7) === month)
+    .sort((a, b) => (a.date === b.date ? (+a.o.invNo) - (+b.o.invNo) : (a.date < b.date ? -1 : 1)));
+
+  const sum = invoices.reduce((t, x) => ({
+    taxable: t.taxable + x.m.sub, cgst: t.cgst + x.m.cgst, sgst: t.sgst + x.m.sgst, total: t.total + x.m.total,
+  }), { taxable:0, cgst:0, sgst:0, total:0 });
+
+  // Money actually received in the month, whatever it was invoiced against.
+  const receipts = (db.payments || []).filter(p => String(p.date || "").slice(0, 7) === month);
+  const received = receipts.reduce((t, p) => t + (+p.amount || 0), 0);
+
+  // Quotations still waiting to become invoices — not taxable yet, but finance
+  // asks what is coming, and an old one usually means nobody chased it.
+  const openProformas = (db.orders || []).filter(o => !o.invNo && o.stage !== "Completed");
+
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+
+  const exportInvoices = () => {
+    const rows = [[
+      "Invoice No", "Invoice Date", "Customer", "Customer GSTIN", "Place of Supply",
+      "HSN/SAC", "Taxable Value", "CGST Rate", "CGST Amount", "SGST Rate", "SGST Amount",
+      "Invoice Total", "Campaign", "Vehicles", "Days",
+    ]];
+    invoices.forEach(({ o, v, m, date }) => rows.push([
+      o.invNo, dmy(date), v ? v.name : "", v && v.gst ? v.gst : "", s.placeOfSupply || "33-Tamil Nadu",
+      s.sac || "998365", m.sub, o.gst ? "9%" : "0%", m.cgst, o.gst ? "9%" : "0%", m.sgst,
+      m.total, o.title || "", o.vehicles || 0, m.days,
+    ]));
+    rows.push([]);
+    rows.push(["", "", "", "", "", "TOTAL", sum.taxable, "", sum.cgst, "", sum.sgst, sum.total]);
+    downloadCsv("gst-invoices-" + month + ".csv", rows);
+  };
+
+  const exportReceipts = () => {
+    const rows = [["Date", "Customer", "Campaign", "Invoice No", "Method", "Reference", "Amount"]];
+    receipts.forEach(p => {
+      const o = (db.orders || []).find(x => x.id === p.orderId);
+      const v = o ? vendorOf(o.vendorId) : null;
+      rows.push([dmy(p.date), v ? v.name : "", o ? o.title : "", o && o.invNo ? o.invNo : "",
+                 p.mode || "", p.ref || "", +p.amount || 0]);
+    });
+    rows.push([]);
+    rows.push(["", "", "", "", "", "TOTAL", received]);
+    downloadCsv("receipts-" + month + ".csv", rows);
+  };
+
+  return (
+    <Sheet title="GST & filing" onClose={onClose}>
+      <F label="Month">
+        <select value={month} onChange={e => setMonth(e.target.value)}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </F>
+
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Taxable value</i><b style={{ fontSize:17 }}>{inr(sum.taxable)}</b><small>{invoices.length} invoice{invoices.length === 1 ? "" : "s"}</small></div>
+        <div className="vz-stat"><i>GST payable</i><b style={{ fontSize:17 }}>{inr(sum.cgst + sum.sgst)}</b><small>CGST {inr(sum.cgst)} · SGST {inr(sum.sgst)}</small></div>
+        <div className="vz-stat"><i>Invoiced</i><b style={{ fontSize:17 }}>{inr(sum.total)}</b><small>including tax</small></div>
+        <div className="vz-stat"><i>Received</i><b style={{ fontSize:17 }}>{inr(received)}</b><small>{receipts.length} payment{receipts.length === 1 ? "" : "s"}</small></div>
+      </div>
+
+      <div className="vz-2">
+        <button className="vz-btn go" style={{ margin:0 }} disabled={!invoices.length} onClick={exportInvoices}>Export invoices</button>
+        <button className="vz-btn alt" style={{ margin:0 }} disabled={!receipts.length} onClick={exportReceipts}>Export receipts</button>
+      </div>
+      <div className="vz-meta" style={{ marginTop:6, marginBottom:10 }}>
+        Opens in Excel. GSTIN {s.gstin || "—"} · place of supply {s.placeOfSupply || "33-Tamil Nadu"}.
+      </div>
+
+      <div className="vz-eyebrow">Tax invoices · {monthLabel(month)}</div>
+      {invoices.length === 0 && <div className="vz-card"><div className="vz-meta">No tax invoice was raised in this month.</div></div>}
+      {invoices.map(({ o, v, m, date }) => (
+        <div className="vz-card" key={o.id}>
+          <div className="vz-row">
+            <div style={{ minWidth:0 }}>
+              <div className="vz-title">#{o.invNo} · {v ? v.name : "—"}</div>
+              <div className="vz-meta">{dmy(date)} · {o.title || "—"}</div>
+              <div className="vz-meta">{v && v.gst ? "GSTIN " + v.gst : "No GSTIN on file — B2C"}</div>
+            </div>
+            <b className="vz-money">{inr(m.total)}</b>
+          </div>
+          <div className="vz-kv"><span>Taxable</span><b className="vz-money">{inr(m.sub)}</b></div>
+          {o.gst
+            ? <div className="vz-kv"><span>CGST 9% + SGST 9%</span><b className="vz-money">{inr(m.cgst)} + {inr(m.sgst)}</b></div>
+            : <div className="vz-kv"><span>Tax</span><b className="vz-money" style={{ color:"#B4262A" }}>not charged</b></div>}
+        </div>
+      ))}
+
+      {openProformas.length > 0 && (
+        <>
+          <div className="vz-eyebrow">Quotations not yet invoiced</div>
+          {openProformas.map(o => {
+            const v = vendorOf(o.vendorId), m = orderMath(o), age = Math.abs(daysTo(o.created) || 0);
+            return (
+              <div className="vz-kv" key={o.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+                <span style={{ color:"var(--ink)", fontWeight:600 }}>{v ? v.name : "—"}<br />
+                  <small style={{ color:"var(--muted)", fontWeight:400 }}>{o.no} · {o.stage} · {age} days old</small></span>
+                <b className="vz-money">{inr(m.total)}</b>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </Sheet>
+  );
+}
+
 /* ---------------------------- attendance ----------------------------
    The office records duty for the drivers on basic phones: they call the
    reading in and it is entered here. Everything the driver flow enforces is
@@ -2489,9 +2736,11 @@ function CaptureSheet({ ctx, pics, lang, onPhoto, onSave, onClose }) {
 function VibeCRM() {
   const [db, setDb] = useState(blankData);
   const [pics, setPics] = useState({});
-  // The admin (office) user has complete rights over everything in the app.
+  /* The director has complete rights. The finance team, who sit elsewhere and
+     file the GST returns, see the commercial side only — no field work, no
+     fleet, and they cannot add or remove office logins. */
   const me = (db.users || []).find(u => u.id === db.userId) || null;
-  const perm = ROLES["Director"];
+  const perm = ROLES[db.adminRole] || ROLES["Director"];
   const mode = db.role || "";
   const setMode = (v) => setDb(d => ({ ...d, role: v }));
   const [gate, setGate] = useState({ step:"choose", userId:"", name:"", pin:"", pin2:"" });
@@ -3880,6 +4129,14 @@ function VibeCRM() {
           <div className="vz-stat"><i>Monthly costs</i><b style={{ fontSize:18 }}>{inr(spend + wages)}</b><small>attendance wages + workshop</small></div>
         </div>
 
+        <div className="vz-eyebrow">
+          GST
+          <button onClick={() => setSheet({ type:"gst" })}>GST &amp; filing</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          Every tax invoice raised, month by month, with the tax split out and a file for the accountant.
+        </div>
+
         <div className="vz-eyebrow">Proforma invoices</div>
         {db.orders.map(o => {
           const v = vendorOf(o.vendorId), m = orderMath(o), paid = paidOn(o.id);
@@ -3960,7 +4217,7 @@ function VibeCRM() {
   const signOut = () => {
     if (ADMIN_TOKEN) { try { apiPost("admin_logout.php", {}); } catch (e) {} }  // best-effort: kill the server session
     setAdminToken("");
-    setDb(d => ({ ...d, role: "", userId: "", adminToken: "", adminName: "" }));
+    setDb(d => ({ ...d, role: "", userId: "", adminToken: "", adminName: "", adminRole: "" }));
     setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" });
     setLocked(false); setLockPin("");
     setTab("home");
@@ -3976,8 +4233,11 @@ function VibeCRM() {
   const finishAdminLogin = (res, pin, name) => {
     setAdminToken(res.token);
     const nm = name || res.name || "Admin";
-    const u = { id: "admin", name: nm, role: "Director", pin: pin };
-    setDb(d => ({ ...d, users: [u], userId: "admin", role: "manager", adminToken: res.token, adminName: nm }));
+    // Accounts made before roles existed come back without one — they are Directors.
+    const rl = res.role || "Director";
+    const u = { id: "admin", name: nm, role: rl, pin: pin };
+    setDb(d => ({ ...d, users: [u], userId: "admin", role: "manager",
+      adminToken: res.token, adminName: nm, adminRole: rl }));
     setLocked(false); setLockPin("");
     setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" });
     setTab("home");
@@ -4451,6 +4711,20 @@ function VibeCRM() {
         <button className="vz-btn alt" style={{ marginTop:10 }} onClick={() => setSheet({ type:"chgpw" })}>Change password</button>
       </div>
 
+      {perm.users && (
+        <>
+          <div className="vz-eyebrow">Office logins</div>
+          <div className="vz-card">
+            <div className="vz-meta" style={{ marginTop:0 }}>
+              The finance team sit elsewhere and file the GST returns. Give them their own login
+              rather than sharing yours — they see customers, campaigns and money, but not the
+              field work, the fleet, or this list.
+            </div>
+            <button className="vz-btn alt" style={{ marginTop:10 }} onClick={() => setSheet({ type:"users" })}>Manage office logins</button>
+          </div>
+        </>
+      )}
+
       <div className="vz-eyebrow">Backup</div>
       <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
         <div className="vz-meta" style={{ marginTop:0, color:"#8A6100" }}>
@@ -4478,7 +4752,7 @@ function VibeCRM() {
           return {
             ...blankData(),
             users: d.users, userId: d.userId, role: d.role, settings: d.settings,
-            adminToken: d.adminToken, adminName: d.adminName,   // stay signed in
+            adminToken: d.adminToken, adminName: d.adminName, adminRole: d.adminRole,   // stay signed in
             tombstones: tomb, lastSync: d.lastSync, lastPush: d.lastPush,
           };
         });
@@ -4585,6 +4859,8 @@ function VibeCRM() {
           onSave={(x) => { put("users", x); setSheet(null); setToast("User saved"); }}
           onDelete={(id) => { drop("users", id); setSheet(null); setToast("User removed"); }} />
       )}
+      {sheet?.type === "gst" && <GstSheet db={db} vendorOf={vendorOf} onClose={() => setSheet(null)} />}
+      {sheet?.type === "users" && <OfficeUsersSheet setToast={setToast} onClose={() => setSheet(null)} />}
       {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf}
         onPunchIn={officePunchIn} onPunchOut={officePunchOut} onClose={() => setSheet(null)} />}
       {sheet?.type === "reminders" && (

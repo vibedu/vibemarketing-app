@@ -31,7 +31,7 @@ if (count($att) >= 8) {
 usleep(300000); // constant-ish delay to blunt brute force
 if ($email === '' || $pass === '') { http_response_code(401); echo json_encode(['error' => 'wrong email or password']); exit; }
 
-$stmt = db()->prepare('SELECT id, email, pass_hash, name FROM admins WHERE email = ? LIMIT 1');
+$stmt = db()->prepare('SELECT id, email, pass_hash, name, role FROM admins WHERE email = ? LIMIT 1');
 $stmt->execute([$email]);
 $row = $stmt->fetch();
 
@@ -53,4 +53,10 @@ db()->prepare('INSERT INTO admin_sessions (token, admin_id, expires_at) VALUES (
 // Opportunistic cleanup of expired sessions.
 db()->query('DELETE FROM admin_sessions WHERE expires_at < UTC_TIMESTAMP()');
 
-echo json_encode(['ok' => true, 'token' => $token, 'name' => $row['name'] !== '' ? $row['name'] : $row['email']]);
+echo json_encode([
+  'ok'    => true,
+  'token' => $token,
+  'name'  => $row['name'] !== '' ? $row['name'] : $row['email'],
+  // Accounts made before roles existed have none stored; they are Directors.
+  'role'  => (isset($row['role']) && $row['role'] !== '') ? $row['role'] : 'Director',
+]);
