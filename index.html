@@ -2048,8 +2048,75 @@ function UserForm({ init, isSelf, onSave, onDelete, onClose }) {
   );
 }
 
-/* ---------------------------- attendance ---------------------------- */
-function AttendanceSheet({ db, vehOf, drvOf, onClose }) {
+/* ---------------------------- attendance ----------------------------
+   The office records duty for the drivers on basic phones: they call the
+   reading in and it is entered here. Everything the driver flow enforces is
+   enforced here too — the checks live in officePunchIn / officePunchOut. */
+function OfficePunchIn({ db, vehOf, onPunchIn }) {
+  const [f, set] = useState({ driverId:"", vehicleId:"", openKm:"" });
+  const onDuty = (db.attendance || []).filter(a => !a.outAt);
+  const busyVeh = new Set(onDuty.map(a => a.vehicleId));
+  const busyDrv = new Set(onDuty.map(a => a.driverId));
+  const free = db.drivers.filter(d => !busyDrv.has(d.id));
+  const drv = db.drivers.find(d => d.id === f.driverId);
+  // Suggest the van this driver is assigned to, and warn if it is already out.
+  const assigned = drv ? db.vehicles.find(v => v.driverId === drv.id) : null;
+  const veh = vehOf(f.vehicleId);
+  const last = veh ? (db.attendance || []).filter(a => a.vehicleId === veh.id && (a.closeKm != null || a.openKm != null))
+    .sort((a, b) => (String(a.inAt) < String(b.inAt) ? 1 : -1))[0] : null;
+  const lastKm = last ? (last.closeKm != null ? last.closeKm : last.openKm) : null;
+  const ready = f.driverId && f.vehicleId && String(f.openKm).trim() !== "";
+  return (
+    <div className="vz-card" style={{ background:"#F7FAFF", borderColor:"#CFE0FA" }}>
+      <div className="vz-eyebrow" style={{ marginTop:0 }}>Start a driver's duty from the office</div>
+      <div className="vz-meta" style={{ marginTop:0, marginBottom:10 }}>
+        For drivers without a smartphone — take the opening reading over the phone and enter it here.
+      </div>
+      {free.length === 0 && <div className="vz-meta">Every driver is already on duty.</div>}
+      {free.length > 0 && (
+        <>
+          <F label="Driver">
+            <select value={f.driverId} onChange={e => {
+              const id = e.target.value;
+              const a = db.vehicles.find(v => v.driverId === id);
+              set({ ...f, driverId:id, vehicleId: a && !busyVeh.has(a.id) ? a.id : "" });
+            }}>
+              <option value="">— choose the driver —</option>
+              {free.map(d => <option key={d.id} value={d.id}>{d.name} · {d.phone}</option>)}
+            </select>
+          </F>
+          <F label="Vehicle">
+            <select value={f.vehicleId} onChange={e => set({ ...f, vehicleId: e.target.value })}>
+              <option value="">— choose the vehicle —</option>
+              {db.vehicles.map(v => (
+                <option key={v.id} value={v.id} disabled={busyVeh.has(v.id)}>
+                  {v.plate}{busyVeh.has(v.id) ? " — already out" : ""}
+                </option>
+              ))}
+            </select>
+          </F>
+          {assigned && f.vehicleId && assigned.id !== f.vehicleId && (
+            <div className="vz-meta" style={{ color:"#8A6100", marginTop:-4 }}>
+              {drv.name} is normally on {assigned.plate} — this will be recorded as a substitute run.
+            </div>
+          )}
+          <F label={"Opening kilometres" + (lastKm != null ? " — last recorded " + lastKm : "")}>
+            <input value={f.openKm} inputMode="numeric" placeholder={lastKm != null ? String(lastKm) : "odometer reading"}
+              onChange={e => set({ ...f, openKm: e.target.value.replace(/\D/g, "").slice(0, 8) })}
+              style={{ fontFamily:"var(--mono)", fontSize:19 }} />
+          </F>
+          <button className="vz-btn go" style={{ margin:0 }} disabled={!ready}
+            onClick={() => { if (onPunchIn(f)) set({ driverId:"", vehicleId:"", openKm:"" }); }}>
+            Start duty
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AttendanceSheet({ db, vehOf, drvOf, onPunchIn, onPunchOut, onClose }) {
+  const [closing, setClosing] = useState(null);   // {id, km} while ending a duty
   const month = today().slice(0, 7);
   const recs = (db.attendance || []).filter(a => String(a.date).slice(0, 7) === month);
   const rows = db.drivers.map(d => {
@@ -2064,6 +2131,8 @@ function AttendanceSheet({ db, vehOf, drvOf, onClose }) {
         <div className="vz-stat"><i>Present today</i><b>{log.length}<small style={{ fontSize:13 }}> / {db.drivers.length}</small></b><small>signed in with a vehicle</small></div>
         <div className="vz-stat"><i>Wage bill, this month</i><b style={{ fontSize:18 }}>{inr(bill)}</b><small>days worked × daily rate</small></div>
       </div>
+
+      <OfficePunchIn db={db} vehOf={vehOf} onPunchIn={onPunchIn} />
 
       <div className="vz-eyebrow">Today — who drove what</div>
       {log.length === 0 && <div className="vz-card"><div className="vz-meta">Nobody has signed in yet today.</div></div>}
@@ -2088,8 +2157,29 @@ function AttendanceSheet({ db, vehOf, drvOf, onClose }) {
                   <a className="vz-meta" style={{ color:"#2C6FD1", display:"block" }} href={mapLink(a.lat, a.lng)} target="_blank" rel="noreferrer">Open punch-in location</a>
                 )}
               </div>
-              <Chip c={a.outAt ? "c-grey" : "c-green"}>{a.outAt ? "Done" : "On duty"}</Chip>
+              <div style={{ textAlign:"right" }}>
+                <Chip c={a.outAt ? "c-grey" : "c-green"}>{a.outAt ? "Done" : "On duty"}</Chip>
+                {a.via === "office" && <div className="vz-meta" style={{ marginTop:4 }}>by office</div>}
+              </div>
             </div>
+            {!a.outAt && (closing && closing.id === a.id ? (
+              <div style={{ marginTop:10 }}>
+                <F label={"Closing kilometres — opened at " + (a.openKm != null ? a.openKm : "—")}>
+                  <input value={closing.km} inputMode="numeric" autoFocus placeholder="odometer reading"
+                    onChange={e => setClosing({ id:a.id, km: e.target.value.replace(/\D/g, "").slice(0, 8) })}
+                    style={{ fontFamily:"var(--mono)", fontSize:19 }} />
+                </F>
+                <div className="vz-2">
+                  <button className="vz-btn alt" style={{ margin:0 }} onClick={() => setClosing(null)}>Cancel</button>
+                  <button className="vz-btn go" style={{ margin:0 }} disabled={closing.km === ""}
+                    onClick={() => { if (onPunchOut(a, closing.km)) setClosing(null); }}>End duty</button>
+                </div>
+              </div>
+            ) : (
+              <button className="vz-btn alt" style={{ marginBottom:0 }} onClick={() => setClosing({ id:a.id, km:"" })}>
+                End duty for {a.driverName || "this driver"}
+              </button>
+            ))}
           </div>
         );
       })}
@@ -2993,6 +3083,48 @@ function VibeCRM() {
       in_at: rec.inAt, out_at: out, lat: rec.lat, lng: rec.lng, open_km: rec.openKm, close_km: +km });
     setClosing(false); setCloseKm("");
     setToast(tr(lang, "dutyEnded"));
+  };
+
+  /* Office-side attendance. Most drivers carry basic phones, so day to day
+     the office records duty over a call: no odometer photo, no GPS — the
+     record says so (via:"office") rather than pretending. The same rules as
+     the driver flow still hold: one van one driver, one driver one van, and
+     the odometer can't run backwards. */
+  const officePunchIn = ({ driverId, vehicleId, openKm }) => {
+    const veh = vehOf(vehicleId), drv = drvOf(driverId);
+    const km = String(openKm || "").replace(/\D/g, "");
+    if (!veh || !drv || km === "") { setToast("Pick the driver, the vehicle and the opening km"); return false; }
+    const busy = (db.attendance || []).find(a => a.vehicleId === veh.id && !a.outAt && a.driverId !== drv.id);
+    if (busy) { setToast(veh.plate + " is already signed out by " + (busy.driverName || "another driver")); return false; }
+    const dbl = (db.attendance || []).find(a => a.driverId === drv.id && !a.outAt);
+    if (dbl) { setToast(drv.name + " is already on duty with " + ((vehOf(dbl.vehicleId) || {}).plate || "another vehicle")); return false; }
+    const last = (db.attendance || []).filter(a => a.vehicleId === veh.id && (a.closeKm != null || a.openKm != null))
+      .sort((a, b) => (String(a.inAt) < String(b.inAt) ? 1 : -1))[0];
+    const lastKm = last ? (last.closeKm != null ? last.closeKm : last.openKm) : null;
+    if (lastKm != null && +km < lastKm) { setToast("Opening km " + km + " is below the last reading " + lastKm + " — check with the driver"); return false; }
+    const rec = { id: uid(), driverId: drv.id, driverName: drv.name, driverPhoto: drv.photoUrl || "",
+      vehicleId: veh.id, date: today(), inAt: new Date().toISOString(), outAt: "", substitute: false,
+      openKm: +km, closeKm: null, lat: null, lng: null, shotId: "", selfieUrl: "", via: "office" };
+    setDb(d => ({ ...d, attendance: [rec, ...(d.attendance || [])] }));
+    queuePost("attendance.php", { id: rec.id, date: rec.date, vehicle_id: veh.id, vehicle_plate: veh.plate,
+      driver_name: drv.name, in_at: rec.inAt, out_at: "", lat: null, lng: null, open_km: +km, selfie_data: "" });
+    setToast("Duty started · " + drv.name + " · " + veh.plate);
+    return true;
+  };
+
+  const officePunchOut = (a, closeKm) => {
+    const km = String(closeKm || "").replace(/\D/g, "");
+    if (km === "") { setToast("Enter the closing km"); return false; }
+    if (a.openKm != null && +km < a.openKm) { setToast("Closing km can't be less than the opening reading (" + a.openKm + ")"); return false; }
+    const out = new Date().toISOString();
+    setDb(d => ({ ...d,
+      attendance: (d.attendance || []).map(x => x.id === a.id ? { ...x, outAt: out, closeKm: +km } : x),
+      session: d.session === a.id ? "" : d.session }));
+    queuePost("attendance.php", { id: a.id, date: a.date, vehicle_id: a.vehicleId,
+      vehicle_plate: (vehOf(a.vehicleId) || {}).plate || "", driver_name: a.driverName || "",
+      in_at: a.inAt, out_at: out, lat: a.lat, lng: a.lng, open_km: a.openKm, close_km: +km });
+    setToast("Duty ended · " + (a.driverName || ""));
+    return true;
   };
 
   const importRef = useRef(null);
@@ -4453,7 +4585,8 @@ function VibeCRM() {
           onSave={(x) => { put("users", x); setSheet(null); setToast("User saved"); }}
           onDelete={(id) => { drop("users", id); setSheet(null); setToast("User removed"); }} />
       )}
-      {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf} onClose={() => setSheet(null)} />}
+      {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf}
+        onPunchIn={officePunchIn} onPunchOut={officePunchOut} onClose={() => setSheet(null)} />}
       {sheet?.type === "reminders" && (
         <RemindersSheet db={db} onSend={sendCustomerReminder} onManage={() => setSheet({ type:"occasions" })} onClose={() => setSheet(null)} />
       )}
