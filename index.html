@@ -326,6 +326,10 @@ const CSS = `
   .vz-topline, .vz-body { max-width:var(--col); margin-left:auto; margin-right:auto; }
   .vz-nav { max-width:none; padding-left:calc(50% - var(--col) / 2); padding-right:calc(50% - var(--col) / 2); }
   .vz-grid { grid-template-columns:repeat(4,1fr); }
+  /* ...but not inside a sheet. A sheet is narrower than the page, so forcing
+     four tiles into it pushed the panel sideways and left every reader of the
+     GST and report screens dragging a horizontal scrollbar. Let them wrap. */
+  .vz-sheet .vz-grid { grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); }
   /* Forms: keep them at a comfortable entry width and centre the sheet, so
      fields don't stretch into wide boxes with the text stranded on the left. */
   .vz-scrim { align-items:center; }
@@ -337,10 +341,87 @@ const CSS = `
 @media (min-width:840px){
   .vz { zoom:1.5; --z:1.5; }
 }
-/* Big landscape tablets. */
-@media (min-width:1100px){
-  .vz { zoom:1.7; --z:1.7; --col:560px; }
+
+/* ---------------------------- desktop ----------------------------
+   Above this width the phone app stops being a phone app. Zooming a
+   480px column up to fill a monitor is fine for a driver checking one
+   number; it is no way to spend a morning on a ledger. The markup does
+   not change — the nav becomes a rail down the side, the content gets
+   the width it needs, and sheets open as windows rather than something
+   slid up from the bottom of a thumb. */
+@media (min-width:1000px){
+  .vz {
+    zoom:1; --z:1; --col:100%;
+    max-width:none; padding-bottom:0; padding-left:236px; min-height:100vh;
+  }
+  /* The bottom bar becomes the side rail. */
+  .vz-nav {
+    top:0; bottom:0; left:0; right:auto; width:236px;
+    flex-direction:column; align-items:stretch; gap:2px;
+    max-width:none; margin:0; padding:96px 14px 20px;
+  }
+  .vz-nav button {
+    flex:none; flex-direction:row; justify-content:flex-start; align-items:center; gap:12px;
+    font-size:12.5px; letter-spacing:.6px; padding:11px 14px; border-radius:9px;
+    transition:background .12s ease, color .12s ease;
+  }
+  .vz-nav button:hover { background:rgba(255,255,255,.07); color:#DCE3F0; }
+  .vz-nav button[data-on="1"] { background:rgba(255,198,41,.14); }
+  .vz-nav svg { width:17px; height:17px; }
+
+  /* The brand sits at the top of the rail; the header keeps the page title,
+     the alerts and the account controls over the content. */
+  .vz-top { padding:18px 32px 16px; }
+  .vz-topline, .vz-body { max-width:1180px; margin-left:0; margin-right:0; }
+  .vz-body { padding:22px 32px 60px; max-width:1180px; }
+
+  /* Four stat tiles across, and cards that use the room instead of stacking
+     into a narrow ribbon down the middle of a wide screen. */
+  .vz-grid { grid-template-columns:repeat(4,1fr); gap:14px; }
+  .vz-stat b { font-size:22px; }
+  .vz-eyebrow { font-size:11px; margin:26px 0 10px; }
+  .vz-card { padding:15px 17px; margin-bottom:11px; }
+
+  /* Sheets become centred windows. Reports and ledgers need the width. */
+  .vz-scrim { align-items:center; padding:24px; }
+  .vz-sheet {
+    max-width:820px; border-radius:14px; max-height:88vh; padding:10px 26px 30px;
+    box-shadow:0 24px 60px rgba(10,14,24,.35);
+  }
+  .vz-sheethd { margin:0 -26px 16px; padding:6px 22px 12px; }
+  .vz-handle { display:none; }
+  /* Forms inside a wide sheet: two columns of fields rather than one long
+     ribbon, and never a text box stretched to 800px. */
+  .vz-sheet .vz-f { max-width:520px; }
+  .vz-sheet .vz-2 { max-width:520px; }
+  .vz-sheet .vz-2 .vz-f { max-width:none; }
+  .vz-sheet .vz-btn { max-width:340px; }
+  .vz-sheet .vz-grid { grid-template-columns:repeat(4,1fr); }
+
+  .vz-fab { bottom:32px; right:32px; }
+  .vz-logincard, .vz-authwrap { max-width:400px; width:100%; margin-left:auto; margin-right:auto; }
 }
+/* The rail needs the brand block, which lives in the header on a phone. On a
+   desktop it is drawn into the rail's top padding so the two never collide. */
+@media (min-width:1000px){
+  .vz-rail-brand {
+    position:fixed; top:0; left:0; width:236px; height:80px; z-index:41;
+    display:flex; align-items:center; padding:0 20px; background:var(--ink);
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .vz-rail-brand { gap:10px; }
+  .vz-rail-brand img { height:30px; width:30px; border-radius:7px; flex:none; }
+  .vz-rail-brand b { color:#fff; font-size:15px; font-weight:800; letter-spacing:-.3px; }
+}
+.vz-rail-brand { display:none; }
+
+/* Wide tables inside sheets scroll on their own rather than pushing the page. */
+.vz-tablewrap { overflow-x:auto; margin-bottom:10px; }
+.vz-table { border-collapse:collapse; width:100%; font-size:12.5px; }
+.vz-table th, .vz-table td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+.vz-table th { font-size:9.5px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; }
+.vz-table td.n, .vz-table th.n { text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.vz-table tr.tot td { font-weight:800; border-top:2px solid var(--ink); border-bottom:none; }
 
 /* Vehicle chooser: the closed field is shaped exactly like the other inputs so
    the form still reads as one column of boxes. */
@@ -478,12 +559,58 @@ const DOCS = [
 ];
 const LEVEL_CHIP = { overdue:"c-red", final:"c-yellow", early:"c-blue" };
 const ROLES = {
-  "Director":      { tabs:["home","vendors","orders","field","fleet","money"], money:true, settings:true, users:true,  fleetEdit:true,  del:true,  invoice:true,  campaign:true },
-  "Finance":       { tabs:["home","vendors","orders","money"],                 money:true, settings:true, users:false, fleetEdit:true,  del:true,  invoice:true,  campaign:true },
-  "Field manager": { tabs:["home","orders","field","fleet"],                   money:false, settings:false, users:false, fleetEdit:true, del:true,  invoice:false, campaign:true },
+  "Director":      { tabs:["home","vendors","orders","field","fleet","money"], money:true, settings:true, users:true,  fleetEdit:true,  del:true,  invoice:true,  campaign:true, renewals:true },
+  /* Finance is a three-screen app and opens on Money — the first tab listed is
+     where she lands. The control room, the fleet and the field proof feed were
+     all things she could look at and do nothing about; what she opens the app
+     for is invoices, collections, payroll and GST. Customers and Campaigns stay
+     because a tax invoice cannot be raised without them: the GSTIN and state
+     decide the tax, and the invoice itself is raised on the campaign.
+     fleetEdit is off and stays off. */
+  "Finance":       { tabs:["money","vendors","orders"],                        money:true, settings:true, users:false, fleetEdit:false, del:true,  invoice:true,  campaign:true, renewals:false },
+  "Field manager": { tabs:["home","orders","field","fleet"],                   money:false, settings:false, users:false, fleetEdit:true, del:true,  invoice:false, campaign:true, renewals:true },
 };
 // office roles a Director can assign to office users
 const ROLE_NAMES = ["Director", "Finance", "Field manager"];
+
+/* ---- place of supply -------------------------------------------------------
+   Tax on an invoice depends on where the customer is, not where we are: a
+   customer in Tamil Nadu is charged CGST 9% + SGST 9%, one anywhere else is
+   charged IGST 18%. Same 18% either way — but printing the wrong pair on a
+   tax invoice is the customer's input-credit problem and our notice. */
+const STATES = [
+  "33-Tamil Nadu", "32-Kerala", "29-Karnataka", "37-Andhra Pradesh", "36-Telangana",
+  "27-Maharashtra", "24-Gujarat", "07-Delhi", "29-Goa", "19-West Bengal", "09-Uttar Pradesh",
+  "08-Rajasthan", "23-Madhya Pradesh", "10-Bihar", "21-Odisha", "03-Punjab", "06-Haryana",
+  "02-Himachal Pradesh", "04-Chandigarh", "34-Puducherry", "30-Goa", "20-Jharkhand",
+  "22-Chhattisgarh", "05-Uttarakhand", "18-Assam", "11-Sikkim",
+];
+const HOME_STATE = "33-Tamil Nadu";
+const stateOf = (v) => (v && v.state) || HOME_STATE;
+/* A GSTIN's first two digits are the state code, and they are the figure that
+   actually decides the tax. When one is on file, believe it over the dropdown —
+   a customer typed in as Tamil Nadu with a 29 GSTIN is a Karnataka customer. */
+const isInterstate = (v, settings) => {
+  const home = ((settings || {}).placeOfSupply || HOME_STATE).slice(0, 2);
+  const gstin = String((v && v.gst) || "").trim();
+  const code = /^\d{2}/.test(gstin) ? gstin.slice(0, 2) : stateOf(v).slice(0, 2);
+  return code !== home;
+};
+
+/* ---- credit terms ----------------------------------------------------------
+   How long a customer gets to pay, agreed per customer. 0 means the standing
+   terms: due on or before the last day of the campaign. Everything that ages a
+   balance or forecasts a collection date reads the due date from here, so the
+   two can never drift apart. */
+const CREDIT_DAYS = [0, 7, 15, 30, 45, 60];
+const creditDaysOf = (v) => Math.max(0, +((v && v.creditDays) || 0) || 0);
+const dueDateOf = (o, v) => {
+  if (!o) return "";
+  if (o.dueDate) return o.dueDate;                       // set when the invoice was raised
+  const days = creditDaysOf(v);
+  const from = o.invDate || o.created || today();
+  return days > 0 ? addDays(from, days) : (o.end || from);
+};
 const roleOf = (u) => ROLES[u && u.role] || ROLES["Field manager"];
 const addMonths = (iso, n) => {
   const p = String(iso || today()).slice(0, 10).split("-").map(Number);
@@ -548,13 +675,19 @@ const orderMath = (o) => {
   const outstation = Math.round(outRate * outKm);
   const sub = base + extras + outstation;
   const gst = o.gst ? Math.round(sub * 0.18) : 0;
+  /* Out-of-state customers are charged the same 18%, but as one IGST line
+     instead of the CGST/SGST pair. `igst` is stamped on the campaign from the
+     customer's state when it is saved, so every screen that only has the
+     campaign in hand still prints the right tax. */
+  const inter = !!o.igst;
   // Split the ONE rounded GST figure, so CGST + SGST always equals the tax charged.
   // Rounding 9% twice independently disagreed with the 18% total on ~half of all subtotals.
-  const cgst = Math.floor(gst / 2);
-  const sgst = gst - cgst;
+  const cgst = inter ? 0 : Math.floor(gst / 2);
+  const sgst = inter ? 0 : gst - cgst;
+  const igst = inter ? gst : 0;
   const total = sub + gst;
   const pct = advanceRate(o);
-  return { base, extras, sub, gst, cgst, sgst, total, days, outRate, outKm, outstation,
+  return { base, extras, sub, gst, cgst, sgst, igst, inter, total, days, outRate, outKm, outstation,
            advance: Math.round((total * pct) / 100) };
 };
 
@@ -751,7 +884,9 @@ const docPages = async ({ title, s, v, o, m }) => {
   y += 20;
 
   g.fillStyle = DOC_INK; F("600", 20);
-  g.fillText("Place of supply: Tamil Nadu (33)", M, y); y += 36;
+  // Place of supply is the customer's state, and it is what decides IGST vs CGST+SGST.
+  const pos = stateOf(v).split("-");
+  g.fillText("Place of supply: " + (pos[1] || "Tamil Nadu") + " (" + pos[0] + ")", M, y); y += 36;
   g.fillStyle = DOC_MUTE; F("700", 18); g.fillText("SUBJECT", M, y); y += 28;
   g.fillStyle = DOC_INK; F("500", 21);
   wrap(o.title || "Mobile Van Advertising campaign", RIGHT - M).forEach(l => { g.fillText(l, M, y); y += 27; });
@@ -766,7 +901,11 @@ const docPages = async ({ title, s, v, o, m }) => {
   })();
   const meta = [
     [isInvoice ? "Invoice Date" : "Quotation Date", dmy(o.invDate || o.created || today())],
-    [isInvoice ? "Payment" : "Valid Till", isInvoice ? "Due on receipt" : validTill],
+    // An invoice with no date on it is an invoice nobody chases. Print the date
+    // the customer's own credit terms make it due.
+    [isInvoice ? "Payment Due" : "Valid Till",
+     isInvoice ? (creditDaysOf(v) > 0 ? dmy(dueDateOf(o, v)) + " (" + creditDaysOf(v) + " days)" : dmy(dueDateOf(o, v)))
+               : validTill],
     ["Campaign Days", m.days + " day(s)"],
     ["Period", (o.dayWise || !o.start || !o.end) ? "Not specified" : dmy(o.start) + " to " + dmy(o.end)],
   ];
@@ -879,7 +1018,10 @@ const docPages = async ({ title, s, v, o, m }) => {
     y += h;
   };
   totRow("Sub Total", money(m.sub));
-  if (o.gst) { totRow("CGST 9%", money(m.cgst)); totRow("SGST 9%", money(m.sgst)); }
+  if (o.gst) {
+    if (m.inter) totRow("IGST 18%", money(m.igst));
+    else { totRow("CGST 9%", money(m.cgst)); totRow("SGST 9%", money(m.sgst)); }
+  }
   totRow(isInvoice ? "Total" : "Grand Total", money(m.total),
     { fill: "#3A3A3A", fg: "#fff", bold: true, h: 54, size: 23 });
   if (m.advance > 0) {
@@ -1053,6 +1195,102 @@ const sharePhoto = async (dataUrl, text) => {
     }
   } catch (e) {}
   return false;
+};
+
+/* A credit note is a document the customer files against our invoice, so it
+   prints on the same letterhead as everything else — one page, because there
+   is only ever one thing to say on it. */
+const creditNotePage = async ({ s, v, o, cn }) => {
+  const M = 64, RIGHT = PAGE_W - M;
+  const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const logo = await inkLogo();
+  const P = newDocPage(), g = P.g, F = P.F, wrap = P.wrap;
+  let y = 64;
+
+  if (logo) {
+    const lw = 580, lh = Math.round(lw * logo.height / logo.width);
+    g.drawImage(logo, M, y, lw, lh); y += lh + 20;
+  } else {
+    g.textAlign = "left"; g.fillStyle = DOC_INK; F("800", 36);
+    g.fillText((s.company || "Vibe Marketing").toUpperCase(), M, y + 32); y += 62;
+  }
+  g.textAlign = "left"; g.fillStyle = DOC_MUTE; F("500", 19);
+  [].concat(wrap(s.address || "", 500), s.gstin ? ["GSTIN " + s.gstin] : [], ["Mob: " + CONTACT.phone])
+    .filter(Boolean).forEach(l => { g.fillText(l, M, y); y += 25; });
+  const leftEnd = y;
+
+  g.textAlign = "right";
+  g.fillStyle = DOC_ORANGE; F("800", 54); g.fillText("CREDIT NOTE", RIGHT, 132);
+  g.fillStyle = DOC_INK; F("600", 23); g.fillText("Note# " + cn.no, RIGHT, 176);
+
+  y = Math.max(leftEnd + 14, 216);
+  g.strokeStyle = DOC_LINE; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(M, y); g.lineTo(RIGHT, y); g.stroke();
+  y += 42;
+
+  g.textAlign = "left";
+  g.fillStyle = DOC_ORANGE; F("800", 19); g.fillText("ISSUED TO", M, y); y += 33;
+  g.fillStyle = DOC_INK; F("800", 27); g.fillText(v ? v.name : "—", M, y); y += 31;
+  F("500", 20); g.fillStyle = DOC_MUTE;
+  [v && v.area ? v.area : "", v && v.gst ? "GSTIN " + v.gst : ""].filter(Boolean)
+    .forEach(l => { g.fillText(l, M, y); y += 25; });
+  y += 22;
+
+  const pos = stateOf(v).split("-");
+  g.fillStyle = DOC_INK; F("600", 20);
+  g.fillText("Place of supply: " + (pos[1] || "Tamil Nadu") + " (" + pos[0] + ")", M, y); y += 40;
+
+  const meta = [["Note Date", dmy(cn.date)], ["Against Invoice", "#" + (cn.againstInv || "—")],
+                ["Campaign", o.title || "—"], ["Reason", cn.reason || "—"]];
+  const cw = (RIGHT - M) / 2;
+  g.fillStyle = "#F2F3F5"; g.fillRect(M, y, RIGHT - M, 44);
+  g.strokeStyle = DOC_LINE; g.lineWidth = 1;
+  g.strokeRect(M, y, RIGHT - M, 176);
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(M, y + i * 44); g.lineTo(RIGHT, y + i * 44); g.stroke(); }
+  g.beginPath(); g.moveTo(M + cw, y); g.lineTo(M + cw, y + 176); g.stroke();
+  meta.forEach((r, i) => {
+    g.textAlign = "left";
+    g.fillStyle = DOC_MUTE; F("700", 17); g.fillText(r[0].toUpperCase(), M + 14, y + i * 44 + 28);
+    g.fillStyle = DOC_INK;  F("600", 20);
+    const val = wrap(String(r[1]), cw - 28)[0];
+    g.fillText(val, M + cw + 14, y + i * 44 + 28);
+  });
+  y += 176 + 44;
+
+  const tl = 700;
+  const row = (label, val, opt) => {
+    const o2 = opt || {}, h = o2.h || 46;
+    if (o2.fill) { g.fillStyle = o2.fill; g.fillRect(tl, y, RIGHT - tl, h); }
+    g.strokeStyle = DOC_LINE; g.lineWidth = 1; g.strokeRect(tl, y, RIGHT - tl, h);
+    g.fillStyle = o2.fg || DOC_INK; F(o2.bold ? "800" : "500", o2.size || 21);
+    g.textAlign = "left";  g.fillText(label, tl + 16, y + h / 2 + 8);
+    g.textAlign = "right"; g.fillText(val, RIGHT - 16, y + h / 2 + 8);
+    y += h;
+  };
+  row("Taxable value credited", money(cn.sub));
+  if (+cn.gst > 0) {
+    if (cn.igst > 0) row("IGST 18%", money(cn.igst));
+    else { row("CGST 9%", money(cn.cgst)); row("SGST 9%", money(cn.sgst)); }
+  }
+  row("Total credited", money(cn.total), { fill: "#3A3A3A", fg: "#fff", bold: true, h: 54, size: 23 });
+  y += 32;
+
+  g.textAlign = "left"; g.fillStyle = DOC_MUTE; F("700", 17);
+  g.fillText("TOTAL IN WORDS", M, y); y += 28;
+  g.fillStyle = DOC_INK; F("600", 20);
+  wrap(rupeesInWords(cn.total), RIGHT - M).forEach(l => { g.fillText(l, M, y); y += 26; });
+  y += 30;
+
+  g.fillStyle = DOC_MUTE; F("500", 19);
+  wrap("This credit note reduces the amount payable against the invoice named above. "
+     + "The original invoice remains valid and unchanged.", RIGHT - M)
+    .forEach(l => { g.fillText(l, M, y); y += 26; });
+
+  g.fillStyle = DOC_ORANGE; g.fillRect(0, PAGE_H - 9, PAGE_W, 9);
+  g.textAlign = "center"; g.fillStyle = DOC_MUTE; F("500", 17);
+  g.fillText((s.company || "Vibe Marketing") + "   ·   " + CONTACT.phone, PAGE_W / 2, PAGE_H - 32);
+
+  return [{ url: P.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H }];
 };
 
 /* ---------------------------- message templates ---------------------------- */
@@ -1333,7 +1571,9 @@ const blankData = () => ({
     managerPhone: "", managerEmail: "", company: "Vibe Marketing", gstin: "", invPrefix: "VM/PI",
     serviceReminderDays: 90,
   },
-  users: [], vendors: [], vehicles: [], drivers: [], managers: [], orders: [], payments: [], jobs: [],
+  users: [], vendors: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [],
+  fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
   tombstones: [], lastSync: "", lastPush: "",
@@ -1342,8 +1582,12 @@ const blankData = () => ({
 /* Which local collections are mirrored to the server, and the name the server
    knows them by. Everything else (settings, occasions, proofs, attendance) is
    either device-local by design or already synced by its own endpoint. */
-const SYNC_KEYS = { vendors:"vendor", orders:"order", payments:"payment", vehicles:"vehicle" };
-const SYNC_KEY_OF = { vendor:"vendors", order:"orders", payment:"payments", vehicle:"vehicles" };
+const SYNC_KEYS = { vendors:"vendor", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
+                    advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun",
+                    fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher" };
+const SYNC_KEY_OF = { vendor:"vendors", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
+                      advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns",
+                      fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -1610,8 +1854,9 @@ const ICONS = {
 
 /* ---------------------------- forms ---------------------------- */
 function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { name:"", cat:"Jewellery", person:"", phone:"", email:"", gst:"", area:"", note:"" });
+  const [f, set] = useState(init || { name:"", cat:"Jewellery", person:"", phone:"", email:"", gst:"", area:"", note:"", state: HOME_STATE, creditDays: 0 });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  const inter = isInterstate(f, {});
   return (
     <Sheet title={init ? "Edit vendor" : "New vendor"} onClose={onClose}>
       <F label="Shop name"><input value={f.name} onChange={u("name")} placeholder="Vasan Thanga Maligai" /></F>
@@ -1625,8 +1870,37 @@ function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
       </div>
       <F label="Email (for invoices)"><input value={f.email} onChange={u("email")} inputMode="email" /></F>
       <F label="Area / address"><input value={f.area} onChange={u("area")} /></F>
+      <div className="vz-2">
+        <F label="State (place of supply)">
+          <select value={f.state || HOME_STATE} onChange={u("state")}>
+            {STATES.map(s => <option key={s} value={s}>{s.split("-")[1]} ({s.slice(0, 2)})</option>)}
+          </select>
+        </F>
+        <F label="Credit period">
+          <select value={+f.creditDays || 0} onChange={e => set({ ...f, creditDays: +e.target.value })}>
+            {CREDIT_DAYS.map(d => <option key={d} value={d}>{d === 0 ? "On completion of campaign" : d + " days from invoice"}</option>)}
+          </select>
+        </F>
+      </div>
+      <F label="How this customer is billed">
+        <select value={f.billing || "end"} onChange={u("billing")}>
+          <option value="end">Once, when the campaign finishes</option>
+          <option value="monthly">Month by month while it runs</option>
+        </select>
+      </F>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        The campaign inherits this, and it can still be changed on the campaign itself.
+      </div>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        {inter
+          ? "Outside Tamil Nadu — invoices to this customer carry IGST 18%."
+          : "Tamil Nadu — invoices carry CGST 9% + SGST 9%."}
+        {String(f.gst || "").trim() && /^\d{2}/.test(String(f.gst).trim())
+          ? " Taken from the GSTIN (" + String(f.gst).trim().slice(0, 2) + ")."
+          : ""}
+      </div>
       <F label="Notes"><textarea rows={2} value={f.note} onChange={u("note")} /></F>
-      <button className="vz-btn" disabled={!f.name.trim()} onClick={() => onSave({ ...f, id: f.id || uid() })}>Save vendor</button>
+      <button className="vz-btn" disabled={!f.name.trim()} onClick={() => onSave({ ...f, id: f.id || uid(), creditDays: +f.creditDays || 0, state: f.state || HOME_STATE })}>Save vendor</button>
       {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete vendor</button>}
     </Sheet>
   );
@@ -1684,6 +1958,12 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
         <F label="Fabrication ₹"><input type="number" value={f.fabrication} onChange={num("fabrication")} inputMode="numeric" min="0" /></F>
         <F label="Flex printing ₹"><input type="number" value={f.flex} onChange={num("flex")} inputMode="numeric" min="0" /></F>
       </div>
+      <F label="Billing">
+        <select value={f.billing || (vendors.find(v => v.id === f.vendorId) || {}).billing || "end"} onChange={u("billing")}>
+          <option value="end">Invoice once, when it finishes</option>
+          <option value="monthly">Invoice month by month while it runs</option>
+        </select>
+      </F>
       <F label="Route / coverage"><input value={f.route} onChange={u("route")} placeholder="Thillai Nagar → Chatram" /></F>
 
       {/* Outstation running. The rate is only a warning on the quotation; it
@@ -1780,7 +2060,7 @@ function VehicleForm({ init, drivers, plates, canEdit = true, canDel = true, onS
 
 function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave, onDelete, onClose }) {
   const [f, set] = useState(init || {
-    name:"", phone:"", wage:700, joined:today(), aadhaar:"", pan:"", dl:"", dlExpiry:"",
+    name:"", phone:"", wage:700, batta:"", joined:today(), aadhaar:"", pan:"", dl:"", dlExpiry:"",
     photoId:"", dlFrontId:"", dlBackId:"", bank:false, address:"", refPhone:"", pin:"",
   });
   const faceRef = useRef(null), frontRef = useRef(null), backRef = useRef(null);
@@ -1825,6 +2105,12 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
         <F label="Daily wage ₹"><input type="number" value={f.wage} onChange={u("wage")} inputMode="numeric" /></F>
         <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
       </div>
+      <F label="Outstation batta ₹ per day">
+        <input type="number" value={f.batta === undefined ? "" : f.batta} onChange={u("batta")} inputMode="numeric" placeholder="0" />
+      </F>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        Paid on top of the daily wage for any day ticked as outstation on the payroll sheet.
+      </div>
       <F label="Home address"><textarea rows={2} value={f.address} onChange={u("address")} /></F>
 
       <div className="vz-eyebrow" style={{ marginTop:14 }}>Driving licence</div>
@@ -1856,7 +2142,7 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
           style={{ fontFamily:"var(--mono)", letterSpacing:6 }} placeholder={String(f.phone || "").replace(/\D/g, "").slice(-4) || "----"} />
       </F>
       {canEdit && <button className="vz-btn" disabled={!ready}
-        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim() })}>Save driver</button>}
+        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), wage: +f.wage || 0, batta: +f.batta || 0 })}>Save driver</button>}
       {canEdit && !ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name, 10-digit phone, emergency contact, licence number, licence expiry, and licence front &amp; back photos.</div>}
       {!canEdit && <div className="vz-meta">View only — ask an admin to make changes.</div>}
       {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete driver</button>}
@@ -1864,12 +2150,50 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
   );
 }
 
+/* Office / field staff on a fixed weekly wage — a supervisor or helper, not a
+   driver, paid the same amount every Saturday whether or not there is
+   anything to sign in for. Kept separate from drivers, whose pay depends on
+   which days they actually worked. */
+function StaffForm({ init, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", joined:today(), active:true });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  const ready = f.name.trim() && +f.weeklyWage > 0;
+  return (
+    <Sheet title={init ? "Edit staff" : "Add staff"} onClose={onClose}>
+      <F label="Name"><input value={f.name} onChange={u("name")} placeholder="Full name" /></F>
+      <div className="vz-2">
+        <F label="Phone"><input value={f.phone} onChange={u("phone")} inputMode="tel" placeholder="10-digit" /></F>
+        <F label="Role / title"><input value={f.role} onChange={u("role")} placeholder="Supervisor" /></F>
+      </div>
+      <div className="vz-2">
+        <F label="Weekly wage ₹"><input type="number" value={f.weeklyWage} onChange={u("weeklyWage")} inputMode="numeric" min="0" /></F>
+        <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
+      </div>
+      <label className="vz-check">
+        <input type="checkbox" checked={f.active !== false} onChange={e => set({ ...f, active: e.target.checked })} />
+        Active — paid every week until turned off
+      </label>
+      <button className="vz-btn" disabled={!ready}
+        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), weeklyWage: +f.weeklyWage || 0 })}>
+        Save staff
+      </button>
+      {!ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name and a weekly wage above zero.</div>}
+      {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Remove from staff</button>}
+    </Sheet>
+  );
+}
+
 function PaymentForm({ orders, vendors, paidOn, onSave, onClose }) {
-  const [f, set] = useState({ orderId: orders[0]?.id || "", date: today(), amount:"", mode:"UPI", kind:"Advance", ref:"" });
+  const [f, set] = useState({ orderId: orders[0]?.id || "", date: today(), amount:"", mode:"UPI", kind:"Advance", ref:"", tds:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const ord = orders.find(o => o.id === f.orderId);
   const due = ord ? Math.max(0, orderMath(ord).total - (paidOn ? paidOn(ord.id) : 0)) : 0;
-  const over = +f.amount > due && due >= 0 && ord;
+  const settles = (+f.amount || 0) + (+f.tds || 0);
+  const over = settles > due && due >= 0 && ord;
+  // 194C on advertising is 2% of the taxable value for a company, 1% for an
+  // individual or HUF. Offered as a tap, not enforced — the figure that matters
+  // is whatever the customer's remittance advice actually says.
+  const taxable = ord ? orderMath(ord).sub : 0;
   return (
     <Sheet title="Record payment" onClose={onClose}>
       <F label="Against campaign">
@@ -1889,12 +2213,25 @@ function PaymentForm({ orders, vendors, paidOn, onSave, onClose }) {
         <F label="Mode"><select value={f.mode} onChange={u("mode")}>{["UPI","Cash","Bank transfer","Cheque"].map(k => <option key={k}>{k}</option>)}</select></F>
       </div>
       <F label="Reference / UTR"><input value={f.ref} onChange={u("ref")} /></F>
+      <F label="TDS deducted by the customer ₹">
+        <input type="number" value={f.tds} onChange={u("tds")} inputMode="numeric" placeholder="0 — most customers pay in full" />
+      </F>
+      {ord && taxable > 0 && (
+        <div className="vz-inline" style={{ marginTop:-4, marginBottom:8, flexWrap:"wrap" }}>
+          <button className="vz-chip c-blue" onClick={() => set({ ...f, tds: String(Math.round(taxable * 0.02)) })}>194C 2% · {inr(Math.round(taxable * 0.02))}</button>
+          <button className="vz-chip c-blue" onClick={() => set({ ...f, tds: String(Math.round(taxable * 0.01)) })}>194C 1% · {inr(Math.round(taxable * 0.01))}</button>
+          {+f.tds > 0 && <button className="vz-chip c-grey" onClick={() => set({ ...f, tds: "" })}>No TDS</button>}
+        </div>
+      )}
       {ord && <div className="vz-kv" style={{ borderBottom:"none" }}><span>Outstanding on this campaign</span><b className="vz-money">{inr(due)}</b></div>}
+      {+f.tds > 0 && <div className="vz-kv" style={{ borderBottom:"none" }}>
+        <span>Settles</span><b className="vz-money">{inr(settles)} <small style={{ fontWeight:400 }}>({inr(+f.amount || 0)} received + {inr(+f.tds)} TDS)</small></b>
+      </div>}
       {over && <div className="vz-meta" style={{ color:"#8A6100" }}>
-        This is more than the {inr(due)} outstanding — the campaign will show as overpaid.
+        This settles more than the {inr(due)} outstanding — the campaign will show as overpaid.
       </div>}
       <button className="vz-btn" disabled={!(+f.amount > 0)}
-        onClick={() => { if (+f.amount > 0) onSave({ ...f, id: uid(), amount: +f.amount }); }}>Save payment</button>
+        onClick={() => { if (+f.amount > 0) onSave({ ...f, id: uid(), amount: +f.amount, tds: +f.tds || 0 }); }}>Save payment</button>
     </Sheet>
   );
 }
@@ -2155,8 +2492,12 @@ function OfficeUsersSheet({ setToast, onClose }) {
    invoice itself was printed from, never from figures typed again. */
 const csvCell = (v) => {
   const s = String(v == null ? "" : v);
-  // A leading =, +, - or @ is treated as a formula by Excel; quote it out.
-  const safe = /^[=+\-@]/.test(s) ? "'" + s : s;
+  /* A leading =, + or @ is treated as a formula by Excel and has to be quoted
+     out. A leading minus does too — unless the cell is simply a negative
+     number, which it usually is here. Guarding those as well turned every
+     credit note and deduction into text the accountant could not add up. */
+  const isNumber = /^-?\d+(\.\d+)?$/.test(s);
+  const safe = (!isNumber && /^[=+\-@]/.test(s)) ? "'" + s : s;
   return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
 };
 const downloadCsv = (name, rows) => {
@@ -2175,29 +2516,428 @@ const monthLabel = (ym) => {
   return MONTH_NAMES[(+p[1] || 1) - 1] + " " + p[0];
 };
 
+/* Salary week: Sunday to Saturday, paid on the Saturday. Weeks are keyed by
+   their Saturday's date, since that is the day that actually means something
+   to whoever is running payroll — "the week ending 16 Aug", not an ISO week
+   number nobody uses. Built from UTC noon throughout so a day never slips
+   across midnight from a timezone offset. */
+const weekEnding = (dateStr) => {
+  const d = new Date((dateStr || today()) + "T12:00:00Z");
+  const untilSat = 6 - d.getUTCDay();                 // 0 (Sun) .. 6 (Sat) -> 6 .. 0
+  d.setUTCDate(d.getUTCDate() + untilSat);
+  return localDay(d);
+};
+const weekRange = (satStr) => {
+  const sat = new Date(satStr + "T12:00:00Z");
+  const sun = new Date(sat); sun.setUTCDate(sat.getUTCDate() - 6);
+  return { start: localDay(sun), end: satStr };
+};
+const weekLabel = (satStr) => {
+  const { start } = weekRange(satStr);
+  const s = new Date(start + "T12:00:00Z"), e = new Date(satStr + "T12:00:00Z");
+  const sameMonth = s.getUTCMonth() === e.getUTCMonth();
+  const sd = String(s.getUTCDate()).padStart(2, "0"), ed = String(e.getUTCDate()).padStart(2, "0");
+  return sameMonth
+    ? sd + "–" + ed + " " + MONTH_NAMES[e.getUTCMonth()] + " " + e.getUTCFullYear()
+    : sd + " " + MONTH_NAMES[s.getUTCMonth()] + " – " + ed + " " + MONTH_NAMES[e.getUTCMonth()] + " " + e.getUTCFullYear();
+};
+
+/* ---------------------------- credit notes ----------------------------
+   A numbered tax invoice cannot be deleted — not in law and not here. When a
+   campaign is cut short, a rate was wrong or the customer disputes, the invoice
+   stands and a credit note is raised against it. It carries its own number
+   series, reduces what the customer owes, and reverses the tax that was
+   charged so the month's GST comes out right. */
+const cnMath = (order, taxable) => {
+  const sub = Math.max(0, Math.round(+taxable || 0));
+  const gst = order && order.gst ? Math.round(sub * 0.18) : 0;
+  const inter = !!(order && order.igst);
+  const cgst = inter ? 0 : Math.floor(gst / 2);
+  const sgst = inter ? 0 : gst - cgst;
+  return { sub, gst, cgst, sgst, igst: inter ? gst : 0, inter, total: sub + gst };
+};
+const notesFor = (db, orderId) => (db.creditNotes || []).filter(c => c.orderId === orderId);
+const creditedOn = (db, orderId) => notesFor(db, orderId).reduce((s, c) => s + (+c.total || 0), 0);
+
+/* ---------------------------- money out ----------------------------
+   Everything that leaves the business other than wages: what it was, what it
+   was for, and the GST paid on it — that tax is input credit and comes off
+   what we hand over on the 20th. */
+const EXPENSE_CATS = ["Diesel", "Flex printing", "Fabrication", "Tolls & parking", "Permit & RTO",
+                      "Insurance", "Vehicle EMI", "Rent", "Office & phone", "Other"];
+const expensesIn = (db, month) => (db.expenses || []).filter(e => String(e.date || "").slice(0, 7) === month);
+const expenseTotal = (list) => list.reduce((s, e) => s + (+e.amount || 0), 0);
+const inputGstIn = (db, month) => expensesIn(db, month).reduce((s, e) => s + (+e.gstPaid || 0), 0);
+
+/* ---------------------------- fuel cards ----------------------------
+   One prepaid card per van. The balance is not something the app can work out
+   on its own — the pump knows it, the card's SMS knows it — so it is carried on
+   the card and moved by two things only: a recharge puts money on, and reading
+   today's balance off the card corrects it. Checking the cards is the first
+   thing done every morning, so this screen is built to be read in one look. */
+const LOW_FUEL_DEFAULT = 1000;
+const cardBalance = (card) => Math.round(+((card || {}).balance) || 0);
+const cardLow = (card, settings) => cardBalance(card) < (+((settings || {}).fuelLow) || LOW_FUEL_DEFAULT);
+const lastRecharge = (db, cardId) => (db.fuelTxns || [])
+  .filter(t => t.cardId === cardId && t.type === "recharge")
+  .sort((a, b) => (a.date < b.date ? 1 : -1))[0] || null;
+const cardChecked = (card) => (card && card.balanceAt) || "";
+/* Cards worth acting on first: empty ones, then the ones nobody has looked at. */
+const cardsToWatch = (db) => (db.fuelCards || [])
+  .filter(c => c.active !== false)
+  .sort((a, b) => cardBalance(a) - cardBalance(b));
+
+/* ---------------------------- follow-ups ----------------------------
+   Chasing money is a conversation, not a list. What was said and when to ring
+   again is the part that was living in her head. */
+const FOLLOWUP_OUTCOMES = [
+  { k:"promised", label:"Promised to pay", chip:"c-green" },
+  { k:"noanswer", label:"No answer",       chip:"c-grey"  },
+  { k:"partial",  label:"Will pay part",   chip:"c-yellow" },
+  { k:"dispute",  label:"Disputes it",     chip:"c-red"   },
+  { k:"note",     label:"Just a note",     chip:"c-blue"  },
+];
+const followupsFor = (db, orderId) => (db.followups || [])
+  .filter(f => f.orderId === orderId)
+  .sort((a, b) => (a.date < b.date ? 1 : -1));
+const lastFollowup = (db, orderId) => followupsFor(db, orderId)[0] || null;
+/* Everything whose next call has come due — the morning's list. */
+const followupsDue = (db) => {
+  const seen = {};
+  (db.followups || []).forEach(f => {
+    if (!f.nextOn) return;
+    const cur = seen[f.orderId];
+    if (!cur || cur.date < f.date) seen[f.orderId] = f;
+  });
+  return Object.values(seen).filter(f => f.nextOn <= today());
+};
+
+/* ---------------------------- the day book ----------------------------
+   What she would otherwise type into Tally, made once here. Every invoice,
+   credit note, receipt, expense and payroll run already in the app becomes a
+   voucher with its two sides and its ledger names; anything that happened
+   outside the app is added by hand. Each one is ticked off when it is in the
+   books, so nothing is entered twice and nothing is missed. */
+const LEDGERS = {
+  sales:  "Sales — Mobile Van Advertising",
+  cgst:   "Output CGST",
+  sgst:   "Output SGST",
+  igst:   "Output IGST",
+  inCgst: "Input CGST",
+  inSgst: "Input SGST",
+  inIgst: "Input IGST",
+  tds:    "TDS Receivable",
+  wages:  "Wages & Batta",
+  cash:   "Cash",
+  bank:   "Bank",
+};
+const modeLedger = (mode) => /cash/i.test(String(mode || "")) ? LEDGERS.cash : LEDGERS.bank;
+
+/* One voucher: a type, a date, a party, and the lines that must balance. */
+const dayBook = (db, month) => {
+  const out = [];
+  const vendorName = (id) => ((db.vendors || []).find(v => v.id === id) || {}).name || "Unknown customer";
+  const inMonth = (d) => String(d || "").slice(0, 7) === month;
+
+  // Sales — one per numbered invoice, part-billed campaigns included.
+  (db.orders || []).forEach(o => {
+    const v = (db.vendors || []).find(x => x.id === o.vendorId);
+    billsOf(o, v).forEach(b => {
+      if (!inMonth(b.date)) return;
+      const party = vendorName(o.vendorId);
+      const lines = [{ dr: party, amount: b.total }, { cr: LEDGERS.sales, amount: b.sub }];
+      if (b.igst > 0) lines.push({ cr: LEDGERS.igst, amount: b.igst });
+      if (b.cgst > 0) lines.push({ cr: LEDGERS.cgst, amount: b.cgst });
+      if (b.sgst > 0) lines.push({ cr: LEDGERS.sgst, amount: b.sgst });
+      out.push({ id: "sal_" + o.id + "_" + b.id, date: b.date, type: "Sales", ref: "#" + b.invNo,
+                 party, narration: o.title || o.no, amount: b.total, lines });
+    });
+  });
+
+  // Credit notes — the sales entry, reversed.
+  (db.creditNotes || []).forEach(c => {
+    if (!inMonth(c.date)) return;
+    const o = (db.orders || []).find(x => x.id === c.orderId) || {};
+    const party = vendorName(o.vendorId);
+    const lines = [{ dr: LEDGERS.sales, amount: c.sub }];
+    if (c.igst > 0) lines.push({ dr: LEDGERS.igst, amount: c.igst });
+    if (c.cgst > 0) lines.push({ dr: LEDGERS.cgst, amount: c.cgst });
+    if (c.sgst > 0) lines.push({ dr: LEDGERS.sgst, amount: c.sgst });
+    lines.push({ cr: party, amount: c.total });
+    out.push({ id: "cn_" + c.id, date: c.date, type: "Credit Note", ref: c.no,
+               party, narration: c.reason || "", amount: c.total, lines });
+  });
+
+  // Receipts — money in, with the TDS the customer kept back sitting beside it.
+  (db.payments || []).forEach(p => {
+    if (!inMonth(p.date)) return;
+    const o = (db.orders || []).find(x => x.id === p.orderId) || {};
+    const party = vendorName(o.vendorId);
+    const cash = +p.amount || 0, tds = +p.tds || 0;
+    const lines = [{ dr: modeLedger(p.mode), amount: cash }];
+    if (tds > 0) lines.push({ dr: LEDGERS.tds, amount: tds });
+    lines.push({ cr: party, amount: cash + tds });
+    out.push({ id: "rcp_" + p.id, date: p.date, type: "Receipt", ref: p.ref || p.mode || "",
+               party, narration: (o.title || "") + (tds > 0 ? " · TDS " + inr(tds) : ""), amount: cash + tds, lines });
+  });
+
+  // Payments — every expense, with its input GST split out where there is one.
+  (db.expenses || []).forEach(e => {
+    if (!inMonth(e.date)) return;
+    const gst = +e.gstPaid || 0, amt = +e.amount || 0;
+    const lines = [{ dr: e.cat || "Other expenses", amount: amt - gst }];
+    if (gst > 0) lines.push({ dr: LEDGERS.inCgst + " / " + LEDGERS.inSgst, amount: gst });
+    lines.push({ cr: modeLedger(e.mode), amount: amt });
+    out.push({ id: "exp_" + e.id, date: e.date, type: "Payment", ref: e.mode || "",
+               party: e.cat || "Other", narration: e.note || "", amount: amt, lines });
+  });
+
+  // Payroll — one voucher for the week that went out.
+  (db.payruns || []).forEach(p => {
+    if (!p.paidOn || !inMonth(p.paidOn)) return;
+    out.push({ id: "pay_" + p.id, date: p.paidOn, type: "Payment", ref: "Week ending " + dmy(p.weekEnd),
+               party: LEDGERS.wages, narration: p.lines.length + " people",
+               amount: p.total, lines: [{ dr: LEDGERS.wages, amount: p.total }, { cr: modeLedger(p.mode), amount: p.total }] });
+  });
+
+  // Anything that happened outside the app and was entered by hand.
+  (db.vouchers || []).forEach(v => {
+    if (!inMonth(v.date)) return;
+    out.push({ id: "man_" + v.id, date: v.date, type: v.type || "Journal", ref: v.ref || "",
+               party: v.dr, narration: v.narration || "", amount: +v.amount || 0, manual: true,
+               lines: [{ dr: v.dr, amount: +v.amount || 0 }, { cr: v.cr, amount: +v.amount || 0 }] });
+  });
+
+  return out.sort((a, b) => (a.date === b.date ? a.type.localeCompare(b.type) : (a.date < b.date ? -1 : 1)));
+};
+
+/* ---------------------------- part-billing ----------------------------
+   Some customers are billed month by month while the campaign runs, some once
+   at the end. Both end up as numbered tax invoices; the monthly ones live in
+   `parts` so each carries its own period, number and due date.
+
+   billsOf() is the one list every money screen reads, so a campaign billed in
+   three slices and one billed whole are counted the same way. */
+const billsOf = (o, v) => {
+  if (o && (o.parts || []).length) return o.parts.slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (o && o.invNo) {
+    const m = orderMath(o);
+    return [{ id: "whole", invNo: o.invNo, date: o.invDate || o.created, dueDate: dueDateOf(o, v),
+              from: o.start || "", to: o.end || "", sub: m.sub, gst: m.gst, cgst: m.cgst, sgst: m.sgst,
+              igst: m.igst, inter: m.inter, total: m.total, whole: true }];
+  }
+  return [];
+};
+const billedTotal = (o, v) => billsOf(o, v).reduce((s, b) => s + (+b.total || 0), 0);
+/* How a campaign is billed: its own setting, falling back to the customer's. */
+const billingOf = (o, v) => (o && o.billing) || (v && v.billing) || "end";
+
+/* The next unbilled slice of a monthly campaign: from the day after the last
+   billed period to the end of that calendar month, clipped to the campaign. */
+const nextSlice = (o, v) => {
+  const bills = billsOf(o, v);
+  const start = bills.length ? addDays(bills[bills.length - 1].to, 1) : (o.start || today());
+  if (o.end && start > o.end) return null;                       // fully billed
+  const d = new Date(start + "T12:00:00Z");
+  const monthEnd = localDay(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 12)));
+  const to = o.end && o.end < monthEnd ? o.end : monthEnd;
+  const days = spanDays(start, to) || 0;
+  const first = bills.length === 0;
+  const last = !!(o.end && to >= o.end);
+  const m = orderMath(o);
+  // The vans and the rate are the campaign's; the days are this slice's. Flex
+  // and fabrication are a one-off, so they ride on the first bill only, and the
+  // outstation running is only known at the end.
+  const base = Math.round((+o.vehicles || 0) * (+o.rate || 0) * days);
+  const extras = first ? (+o.fabrication || 0) + (+o.flex || 0) : 0;
+  const outstation = last ? m.outstation : 0;
+  return { from: start, to, days, sub: base + extras + outstation, first, last };
+};
+
+/* ---------------------------- finance maths ----------------------------
+   One place where money is worked out, read by the payroll sheet, the campaign
+   P&L, the receivables list and the forecast alike. When these lived inside the
+   screens that showed them, the same week's wages came to two different figures
+   depending on which screen you were standing on. */
+
+/* What a driver is owed for one week, and what comes off it.
+   Wage is per day on duty; batta is per day marked outstation; advances taken
+   during the week are recovered from that week's pay, never more than it. */
+const driverWeek = (db, driver, weekStart, weekEnd) => {
+  const days = (db.attendance || []).filter(a => a.driverId === driver.id
+    && String(a.date || "") >= weekStart && String(a.date || "") <= weekEnd);
+  const outDays = days.filter(a => a.outstation).length;
+  const wage = days.length * (+driver.wage || 0);
+  const batta = outDays * (+driver.batta || 0);
+  const gross = wage + batta;
+  const owed = advanceOwed(db, driver.id, weekEnd);
+  const deduct = Math.min(owed, gross);
+  return { days: days.length, outDays, wage, batta, gross, advance: deduct, owed, net: gross - deduct, records: days };
+};
+
+/* An advance is money handed over ahead of the wage; it is outstanding until
+   the weeks that follow have covered it. Recovery is applied week by week in
+   order, so a Friday advance never disappears against a wage already paid. */
+const advanceOwed = (db, driverId, uptoWeekEnd) => {
+  const taken = (db.advances || [])
+    .filter(a => a.driverId === driverId && String(a.date || "") <= uptoWeekEnd)
+    .reduce((s, a) => s + (+a.amount || 0), 0);
+  if (taken <= 0) return 0;
+  // Everything already recovered in earlier weeks.
+  const first = (db.advances || []).filter(a => a.driverId === driverId)
+    .reduce((mn, a) => (!mn || a.date < mn ? a.date : mn), "");
+  let recovered = 0;
+  if (first) {
+    const drv = (db.drivers || []).find(d => d.id === driverId) || {};
+    for (let w = weekEnding(first); w < uptoWeekEnd; w = addDays(w, 7)) {
+      const { start } = weekRange(w);
+      const days = (db.attendance || []).filter(a => a.driverId === driverId
+        && String(a.date || "") >= start && String(a.date || "") <= w);
+      const takenBy = (db.advances || []).filter(a => a.driverId === driverId && String(a.date || "") <= w)
+        .reduce((s, a) => s + (+a.amount || 0), 0);
+      const gross = days.length * (+drv.wage || 0) + days.filter(a => a.outstation).length * (+drv.batta || 0);
+      recovered += Math.min(Math.max(0, takenBy - recovered), gross);
+    }
+  }
+  return Math.max(0, taken - recovered);
+};
+
+/* Which campaigns a vehicle was carrying on a given day. A van can carry two
+   brands at once, so the day's wage is split between them rather than charged
+   twice — the total across all campaigns always equals the wage actually paid. */
+const ordersOnDay = (orders, vehicleId, date) => (orders || []).filter(o =>
+  (o.vehicleIds || []).includes(vehicleId) &&
+  (!o.start || o.start <= date) && (!o.end || o.end >= date));
+
+/* Everything one campaign cost and earned. Driver wages come from the days its
+   vehicles actually ran, not from a guess at the number of days quoted. */
+const campaignPnl = (db, order) => {
+  const m = orderMath(order);
+  const ids = order.vehicleIds || [];
+  let wages = 0, battas = 0, dutyDays = 0;
+  (db.attendance || []).forEach(a => {
+    if (!ids.includes(a.vehicleId)) return;
+    const date = String(a.date || "");
+    if ((order.start && date < order.start) || (order.end && date > order.end)) return;
+    const drv = (db.drivers || []).find(d => d.id === a.driverId);
+    if (!drv) return;
+    const share = Math.max(1, ordersOnDay(db.orders, a.vehicleId, date).length);
+    wages += (+drv.wage || 0) / share;
+    battas += a.outstation ? (+drv.batta || 0) / share : 0;
+    dutyDays += 1 / share;
+  });
+  wages = Math.round(wages); battas = Math.round(battas);
+  // Workshop jobs on those vans while the campaign was running.
+  const workshop = (db.jobs || []).filter(j => ids.includes(j.vehicleId)
+    && (!order.start || String(j.date || "") >= order.start)
+    && (!order.end || String(j.date || "") <= order.end))
+    .reduce((s, j) => s + (+j.cost || 0), 0);
+  const production = (+order.fabrication || 0) + (+order.flex || 0);
+  /* Money out that belongs to this campaign: anything booked directly against
+     it, plus running costs on its vans while it was on the road — shared the
+     same way the wages are when a van carried two brands at once. */
+  let running = 0;
+  (db.expenses || []).forEach(e => {
+    const date = String(e.date || "");
+    if (e.orderId === order.id) { running += +e.amount || 0; return; }
+    if (e.orderId) return;                                   // belongs to a different campaign
+    if (!e.vehicleId || !ids.includes(e.vehicleId)) return;
+    if ((order.start && date < order.start) || (order.end && date > order.end)) return;
+    const share = Math.max(1, ordersOnDay(db.orders, e.vehicleId, date).length);
+    running += (+e.amount || 0) / share;
+  });
+  running = Math.round(running);
+  const cost = wages + battas + workshop + production + running;
+  // Margin is worked on the money we keep — GST collected belongs to the
+  // government, and counting it as revenue flattered every campaign by 18%.
+  return { m, revenue: m.sub, wages, battas, workshop, production, running, cost,
+           margin: m.sub - cost, dutyDays: Math.round(dutyDays * 10) / 10 };
+};
+
+/* Receivables: one row per invoice still owed, aged from its own due date. */
+const AGE_BUCKETS = [
+  { k:"cur",  label:"Not yet due",  test:(d) => d >= 0 },
+  { k:"b30",  label:"1–30 days",    test:(d) => d < 0 && d >= -30 },
+  { k:"b60",  label:"31–60 days",   test:(d) => d < -30 && d >= -60 },
+  { k:"b90",  label:"61–90 days",   test:(d) => d < -60 && d >= -90 },
+  { k:"b90p", label:"Over 90 days", test:(d) => d < -90 },
+];
+const receivables = (db, paidOn) => {
+  const rows = [];
+  (db.orders || []).forEach(o => {
+    if (o.stage === "Proforma" && !o.invNo && !(o.parts || []).length) return;   // a quotation is not owed yet
+    const v = (db.vendors || []).find(x => x.id === o.vendorId);
+    const m = orderMath(o);
+    let bills = billsOf(o, v);
+    if (!bills.length) {
+      // Confirmed but not yet invoiced: owed on the campaign's own terms.
+      bills = [{ id: "unbilled", invNo: null, date: o.created, dueDate: dueDateOf(o, v),
+                 from: o.start || "", to: o.end || "", total: m.total }];
+    }
+    /* Money in is held against the campaign, not the slice, so it settles the
+       oldest bill first — which is how a customer paying "one month" is meant
+       to be applied. Credit notes reduce the same balance but are kept apart
+       from cash: a customer who was credited has not paid. */
+    let cash = paidOn(o.id), credit = creditedOn(db, o.id);
+    bills.forEach(b => {
+      const total = +b.total || 0;
+      const paid = Math.min(cash, total); cash -= paid;
+      const credited = Math.min(credit, total - paid); credit -= credited;
+      const due = Math.round(total - paid - credited);
+      if (due <= 0) return;
+      const dueOn = b.dueDate || dueDateOf(o, v);
+      rows.push({ o, v, m, bill: b, paid, credited, due, dueOn, daysLeft: daysTo(dueOn) || 0 });
+    });
+  });
+  rows.sort((a, b) => (a.dueOn < b.dueOn ? -1 : 1));
+  const buckets = {}; AGE_BUCKETS.forEach(b => { buckets[b.k] = 0; });
+  rows.forEach(r => { const b = AGE_BUCKETS.find(b => b.test(r.daysLeft)); if (b) buckets[b.k] += r.due; });
+  const total = rows.reduce((s, r) => s + r.due, 0);
+  const overdue = rows.filter(r => r.daysLeft < 0).reduce((s, r) => s + r.due, 0);
+  return { rows, buckets, total, overdue };
+};
+
 function GstSheet({ db, vendorOf, onClose }) {
   const s = db.settings || {};
   const [month, setMonth] = useState(today().slice(0, 7));
 
-  /* An order counts as an invoice once it has been given an invoice number.
-     Its date is the invoice date, not the day the campaign was raised. */
+  /* Every numbered tax invoice raised in the month — a campaign billed once at
+     the end counts as one, a campaign billed monthly as one per slice. */
   const invoices = (db.orders || [])
-    .filter(o => o.invNo)
-    .map(o => ({ o, v: vendorOf(o.vendorId), m: orderMath(o), date: String(o.invDate || o.created || "").slice(0, 10) }))
+    .flatMap(o => {
+      const v = vendorOf(o.vendorId);
+      return billsOf(o, v).map(b => ({ o, v, m: b, date: String(b.date || "").slice(0, 10) }));
+    })
     .filter(x => x.date.slice(0, 7) === month)
-    .sort((a, b) => (a.date === b.date ? (+a.o.invNo) - (+b.o.invNo) : (a.date < b.date ? -1 : 1)));
+    .sort((a, b) => (a.date === b.date ? (+a.m.invNo) - (+b.m.invNo) : (a.date < b.date ? -1 : 1)));
 
   const sum = invoices.reduce((t, x) => ({
-    taxable: t.taxable + x.m.sub, cgst: t.cgst + x.m.cgst, sgst: t.sgst + x.m.sgst, total: t.total + x.m.total,
-  }), { taxable:0, cgst:0, sgst:0, total:0 });
+    taxable: t.taxable + x.m.sub, cgst: t.cgst + x.m.cgst, sgst: t.sgst + x.m.sgst,
+    igst: t.igst + x.m.igst, total: t.total + x.m.total,
+  }), { taxable:0, cgst:0, sgst:0, igst:0, total:0 });
+
+  /* Credit notes raised in the month reverse tax already charged, and input GST
+     paid on our own bills comes off too. What actually leaves on the 20th is
+     output tax, less both. */
+  const notes = (db.creditNotes || [])
+    .filter(c => String(c.date || "").slice(0, 7) === month)
+    .map(c => ({ c, o: (db.orders || []).find(o => o.id === c.orderId), v: vendorOf((( db.orders || []).find(o => o.id === c.orderId) || {}).vendorId) }))
+    .sort((a, b) => (a.c.date < b.c.date ? -1 : 1));
+  const noteSum = notes.reduce((t, x) => ({
+    taxable: t.taxable + (+x.c.sub || 0), tax: t.tax + (+x.c.gst || 0), total: t.total + (+x.c.total || 0),
+  }), { taxable:0, tax:0, total:0 });
+  const inputGst = inputGstIn(db, month);
+  const outputGst = sum.cgst + sum.sgst + sum.igst;
+  const netGst = Math.max(0, outputGst - noteSum.tax - inputGst);
 
   // Money actually received in the month, whatever it was invoiced against.
   const receipts = (db.payments || []).filter(p => String(p.date || "").slice(0, 7) === month);
   const received = receipts.reduce((t, p) => t + (+p.amount || 0), 0);
+  const tds = receipts.reduce((t, p) => t + (+p.tds || 0), 0);
 
   // Quotations still waiting to become invoices — not taxable yet, but finance
   // asks what is coming, and an old one usually means nobody chased it.
-  const openProformas = (db.orders || []).filter(o => !o.invNo && o.stage !== "Completed");
+  const openProformas = (db.orders || []).filter(o => !o.invNo && !(o.parts || []).length && o.stage !== "Completed");
 
   const months = [];
   for (let i = 0; i < 12; i++) {
@@ -2209,28 +2949,44 @@ function GstSheet({ db, vendorOf, onClose }) {
     const rows = [[
       "Invoice No", "Invoice Date", "Customer", "Customer GSTIN", "Place of Supply",
       "HSN/SAC", "Taxable Value", "CGST Rate", "CGST Amount", "SGST Rate", "SGST Amount",
-      "Invoice Total", "Campaign", "Vehicles", "Days",
+      "IGST Rate", "IGST Amount", "Invoice Total", "Campaign", "Vehicles", "Days",
     ]];
     invoices.forEach(({ o, v, m, date }) => rows.push([
-      o.invNo, dmy(date), v ? v.name : "", v && v.gst ? v.gst : "", s.placeOfSupply || "33-Tamil Nadu",
-      s.sac || "998365", m.sub, o.gst ? "9%" : "0%", m.cgst, o.gst ? "9%" : "0%", m.sgst,
-      m.total, o.title || "", o.vehicles || 0, m.days,
+      m.invNo, dmy(date), v ? v.name : "", v && v.gst ? v.gst : "", stateOf(v),
+      s.sac || "998365", m.sub,
+      o.gst && !m.inter ? "9%" : "0%", m.cgst, o.gst && !m.inter ? "9%" : "0%", m.sgst,
+      o.gst && m.inter ? "18%" : "0%", m.igst,
+      m.total, o.title || "", o.vehicles || 0, m.days || spanDays(m.from, m.to),
     ]));
     rows.push([]);
-    rows.push(["", "", "", "", "", "TOTAL", sum.taxable, "", sum.cgst, "", sum.sgst, sum.total]);
+    rows.push(["", "", "", "", "", "TOTAL", sum.taxable, "", sum.cgst, "", sum.sgst, "", sum.igst, sum.total]);
+    if (notes.length) {
+      rows.push([]);
+      rows.push(["CREDIT NOTES"]);
+      rows.push(["Note No", "Date", "Customer", "Against Invoice", "Reason", "", "Taxable", "", "CGST", "", "SGST", "", "IGST", "Total"]);
+      notes.forEach(({ c, v }) => rows.push([
+        c.no, dmy(c.date), v ? v.name : "", c.againstInv || "", c.reason || "", "", -c.sub, "",
+        -(c.cgst || 0), "", -(c.sgst || 0), "", -(c.igst || 0), -c.total,
+      ]));
+    }
+    rows.push([]);
+    rows.push(["", "", "", "", "", "Output tax", "", "", "", "", "", "", "", outputGst]);
+    rows.push(["", "", "", "", "", "Less credit notes", "", "", "", "", "", "", "", -noteSum.tax]);
+    rows.push(["", "", "", "", "", "Less input GST on expenses", "", "", "", "", "", "", "", -inputGst]);
+    rows.push(["", "", "", "", "", "NET GST PAYABLE", "", "", "", "", "", "", "", netGst]);
     downloadCsv("gst-invoices-" + month + ".csv", rows);
   };
 
   const exportReceipts = () => {
-    const rows = [["Date", "Customer", "Campaign", "Invoice No", "Method", "Reference", "Amount"]];
+    const rows = [["Date", "Customer", "Campaign", "Invoice No", "Method", "Reference", "Amount", "TDS deducted", "Settled"]];
     receipts.forEach(p => {
       const o = (db.orders || []).find(x => x.id === p.orderId);
       const v = o ? vendorOf(o.vendorId) : null;
       rows.push([dmy(p.date), v ? v.name : "", o ? o.title : "", o && o.invNo ? o.invNo : "",
-                 p.mode || "", p.ref || "", +p.amount || 0]);
+                 p.mode || "", p.ref || "", +p.amount || 0, +p.tds || 0, (+p.amount || 0) + (+p.tds || 0)]);
     });
     rows.push([]);
-    rows.push(["", "", "", "", "", "TOTAL", received]);
+    rows.push(["", "", "", "", "", "TOTAL", received, tds, received + tds]);
     downloadCsv("receipts-" + month + ".csv", rows);
   };
 
@@ -2244,9 +3000,12 @@ function GstSheet({ db, vendorOf, onClose }) {
 
       <div className="vz-grid" style={{ marginBottom:6 }}>
         <div className="vz-stat"><i>Taxable value</i><b style={{ fontSize:17 }}>{inr(sum.taxable)}</b><small>{invoices.length} invoice{invoices.length === 1 ? "" : "s"}</small></div>
-        <div className="vz-stat"><i>GST payable</i><b style={{ fontSize:17 }}>{inr(sum.cgst + sum.sgst)}</b><small>CGST {inr(sum.cgst)} · SGST {inr(sum.sgst)}</small></div>
+        <div className="vz-stat"><i>GST payable</i><b style={{ fontSize:17 }}>{inr(netGst)}</b>
+          <small>{noteSum.tax || inputGst
+            ? "output " + inr(outputGst) + (noteSum.tax ? " − notes " + inr(noteSum.tax) : "") + (inputGst ? " − input " + inr(inputGst) : "")
+            : (sum.igst > 0 ? "IGST " + inr(sum.igst) + " · " : "") + "CGST " + inr(sum.cgst) + " · SGST " + inr(sum.sgst)}</small></div>
         <div className="vz-stat"><i>Invoiced</i><b style={{ fontSize:17 }}>{inr(sum.total)}</b><small>including tax</small></div>
-        <div className="vz-stat"><i>Received</i><b style={{ fontSize:17 }}>{inr(received)}</b><small>{receipts.length} payment{receipts.length === 1 ? "" : "s"}</small></div>
+        <div className="vz-stat"><i>Received</i><b style={{ fontSize:17 }}>{inr(received)}</b><small>{tds > 0 ? inr(tds) + " TDS deducted" : receipts.length + " payment" + (receipts.length === 1 ? "" : "s")}</small></div>
       </div>
 
       <div className="vz-2">
@@ -2260,21 +3019,59 @@ function GstSheet({ db, vendorOf, onClose }) {
       <div className="vz-eyebrow">Tax invoices · {monthLabel(month)}</div>
       {invoices.length === 0 && <div className="vz-card"><div className="vz-meta">No tax invoice was raised in this month.</div></div>}
       {invoices.map(({ o, v, m, date }) => (
-        <div className="vz-card" key={o.id}>
+        <div className="vz-card" key={o.id + ":" + m.id}>
           <div className="vz-row">
             <div style={{ minWidth:0 }}>
-              <div className="vz-title">#{o.invNo} · {v ? v.name : "—"}</div>
-              <div className="vz-meta">{dmy(date)} · {o.title || "—"}</div>
+              <div className="vz-title">#{m.invNo} · {v ? v.name : "—"}</div>
+              <div className="vz-meta">{dmy(date)} · {o.title || "—"}
+                {m.whole ? "" : " · " + dmy(m.from) + " to " + dmy(m.to)}</div>
               <div className="vz-meta">{v && v.gst ? "GSTIN " + v.gst : "No GSTIN on file — B2C"}</div>
             </div>
             <b className="vz-money">{inr(m.total)}</b>
           </div>
           <div className="vz-kv"><span>Taxable</span><b className="vz-money">{inr(m.sub)}</b></div>
-          {o.gst
-            ? <div className="vz-kv"><span>CGST 9% + SGST 9%</span><b className="vz-money">{inr(m.cgst)} + {inr(m.sgst)}</b></div>
-            : <div className="vz-kv"><span>Tax</span><b className="vz-money" style={{ color:"#B4262A" }}>not charged</b></div>}
+          {!o.gst
+            ? <div className="vz-kv"><span>Tax</span><b className="vz-money" style={{ color:"#B4262A" }}>not charged</b></div>
+            : m.inter
+              ? <div className="vz-kv"><span>IGST 18% · {stateOf(v).split("-")[1]}</span><b className="vz-money">{inr(m.igst)}</b></div>
+              : <div className="vz-kv"><span>CGST 9% + SGST 9%</span><b className="vz-money">{inr(m.cgst)} + {inr(m.sgst)}</b></div>}
         </div>
       ))}
+
+      {notes.length > 0 && (
+        <>
+          <div className="vz-eyebrow">Credit notes · {monthLabel(month)}</div>
+          {notes.map(({ c, v }) => (
+            <div className="vz-card" key={c.id} style={{ background:"#FFF6F6", borderColor:"#F2C9C9" }}>
+              <div className="vz-row">
+                <div style={{ minWidth:0 }}>
+                  <div className="vz-title">{c.no} · {v ? v.name : "—"}</div>
+                  <div className="vz-meta">{dmy(c.date)} · against invoice #{c.againstInv} · {c.reason || "no reason given"}</div>
+                </div>
+                <b className="vz-money" style={{ color:"#B4262A" }}>− {inr(c.total)}</b>
+              </div>
+              <div className="vz-kv"><span>Taxable reversed</span><b className="vz-money">− {inr(c.sub)}</b></div>
+              {(+c.gst || 0) > 0 && <div className="vz-kv"><span>Tax reversed</span><b className="vz-money">− {inr(c.gst)}</b></div>}
+            </div>
+          ))}
+        </>
+      )}
+
+      {(noteSum.tax > 0 || inputGst > 0) && (
+        <>
+          <div className="vz-eyebrow">What actually leaves on the 20th</div>
+          <div className="vz-card">
+            <div className="vz-kv"><span>Tax charged on invoices</span><b className="vz-money">{inr(outputGst)}</b></div>
+            {noteSum.tax > 0 && <div className="vz-kv"><span>Less credit notes</span><b className="vz-money">− {inr(noteSum.tax)}</b></div>}
+            {inputGst > 0 && <div className="vz-kv"><span>Less input GST on expenses</span><b className="vz-money">− {inr(inputGst)}</b></div>}
+            <div className="vz-kv"><span style={{ fontWeight:700 }}>Net GST payable</span><b className="vz-money" style={{ fontSize:15 }}>{inr(netGst)}</b></div>
+          </div>
+          <div className="vz-meta" style={{ marginTop:-2 }}>
+            Input credit is the GST on our own bills — flex, fabrication, spares, insurance. It is only
+            claimable if the supplier has filed it, so treat this as the best case.
+          </div>
+        </>
+      )}
 
       {openProformas.length > 0 && (
         <>
@@ -2291,6 +3088,1319 @@ function GstSheet({ db, vendorOf, onClose }) {
           })}
         </>
       )}
+    </Sheet>
+  );
+}
+
+/* ---------------------------- petrol cards ----------------------------
+   The first job of the morning: which van's card is empty. Sorted lowest
+   first, because that is the order she works down. */
+function FuelCardsSheet({ db, vehOf, perm, onAddCard, onEditCard, onRecharge, onBalance, onClose }) {
+  const cards = cardsToWatch(db);
+  const low = cards.filter(c => cardLow(c, db.settings));
+  const threshold = +((db.settings || {}).fuelLow) || LOW_FUEL_DEFAULT;
+  const mth = today().slice(0, 7);
+  const rechargedThisMonth = (db.fuelTxns || [])
+    .filter(t => t.type === "recharge" && String(t.date || "").slice(0, 7) === mth)
+    .reduce((s, t) => s + (+t.amount || 0), 0);
+
+  return (
+    <Sheet title="Petrol cards" onClose={onClose}>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Need a recharge</i>
+          <b style={{ fontSize:18, color: low.length ? "#E5484D" : "#178951" }}>{low.length}</b>
+          <small>of {cards.length} card{cards.length === 1 ? "" : "s"} · under {inr(threshold)}</small></div>
+        <div className="vz-stat"><i>Recharged this month</i><b style={{ fontSize:18 }}>{inr(rechargedThisMonth)}</b>
+          <small>counts as diesel spend</small></div>
+      </div>
+
+      {cards.length === 0 && (
+        <div className="vz-card"><div className="vz-meta">
+          No cards yet. Add one for each van — the card number and what is on it today.
+        </div></div>
+      )}
+
+      {cards.map(c => {
+        const veh = vehOf(c.vehicleId);
+        const last = lastRecharge(db, c.id);
+        const checked = cardChecked(c);
+        const staleDays = checked ? Math.abs(daysTo(checked) || 0) : null;
+        const isLow = cardLow(c, db.settings);
+        return (
+          <div className="vz-card" key={c.id}
+            style={isLow ? { background:"#FFF6F6", borderColor:"#F2C9C9" } : null}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title" style={{ fontFamily:"var(--mono)" }}>{veh ? veh.plate : "— no van —"}</div>
+                <div className="vz-meta">{c.number ? "Card " + c.number : "no card number"}{c.label ? " · " + c.label : ""}</div>
+                <div className="vz-meta">
+                  {checked ? "Balance read " + (staleDays === 0 ? "today" : staleDays + " day" + (staleDays === 1 ? "" : "s") + " ago") : "never checked"}
+                  {last ? " · last recharge " + dmy(last.date) + " " + inr(last.amount) : " · never recharged"}
+                </div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div className="vz-money" style={{ fontSize:16, color: isLow ? "#B4262A" : "var(--ink)" }}>{inr(cardBalance(c))}</div>
+                {isLow && <Chip c="c-red">recharge</Chip>}
+              </div>
+            </div>
+            {perm.money && (
+              <div className="vz-inline" style={{ marginTop:9, flexWrap:"wrap" }}>
+                <button className="vz-chip c-green" onClick={() => onRecharge(c)}>Recharge</button>
+                <button className="vz-chip c-blue" onClick={() => onBalance(c)}>Balance today</button>
+                <button className="vz-chip c-grey" onClick={() => onEditCard(c)}>Edit</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {perm.money && <button className="vz-btn alt" onClick={() => onAddCard()}>+ Add a card</button>}
+
+      <div className="vz-eyebrow">Recent recharges</div>
+      {(db.fuelTxns || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 12).map(t => {
+        const card = (db.fuelCards || []).find(c => c.id === t.cardId);
+        const veh = card ? vehOf(card.vehicleId) : null;
+        return (
+          <div className="vz-kv" key={t.id} style={{ background:"#fff", padding:"10px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+            <span>{dmy(t.date)} · {veh ? veh.plate : "—"}<br />
+              <small style={{ color:"var(--muted)" }}>{t.type === "recharge" ? "Recharged" : "Balance corrected to " + inr(t.balance)}</small></span>
+            <b className="vz-money">{t.type === "recharge" ? inr(t.amount) : "—"}</b>
+          </div>
+        );
+      })}
+      {(db.fuelTxns || []).length === 0 && <div className="vz-card"><div className="vz-meta">Nothing yet.</div></div>}
+
+      <div className="vz-meta">
+        A recharge is money leaving the business, so it is also recorded as diesel spend against that
+        van — it reaches the campaign that van was carrying, and the month's costs, on its own.
+      </div>
+    </Sheet>
+  );
+}
+
+function FuelCardForm({ init, db, vehOf, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { vehicleId:"", number:"", label:"", balance:"", balanceAt: today() });
+  const taken = new Set((db.fuelCards || []).filter(c => c.id !== (init || {}).id).map(c => c.vehicleId));
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  return (
+    <Sheet title={init ? "Edit card" : "Add a petrol card"} onClose={onClose}>
+      <F label="Which van">
+        <select value={f.vehicleId} onChange={u("vehicleId")}>
+          <option value="">— choose the van —</option>
+          {(db.vehicles || []).map(v => (
+            <option key={v.id} value={v.id} disabled={taken.has(v.id)}>
+              {v.plate}{taken.has(v.id) ? " — already has a card" : ""}
+            </option>
+          ))}
+        </select>
+      </F>
+      <div className="vz-2">
+        <F label="Card number (last digits)"><input value={f.number} onChange={u("number")} inputMode="numeric" placeholder="4471" /></F>
+        <F label="Balance on it today ₹"><input type="number" value={f.balance} onChange={u("balance")} inputMode="numeric" /></F>
+      </div>
+      <F label="Which company (optional)"><input value={f.label} onChange={u("label")} placeholder="Indian Oil, HP…" /></F>
+      <button className="vz-btn" disabled={!f.vehicleId}
+        onClick={() => onSave({ ...f, id: f.id || uid(), balance: +f.balance || 0, balanceAt: today() })}>
+        Save card
+      </button>
+      {init && <button className="vz-btn warn" onClick={() => { if (window.confirm("Remove this card? The recharges already recorded stay.")) onDelete(init.id); }}>Remove card</button>}
+    </Sheet>
+  );
+}
+
+/* Recharge, or correct the balance to whatever the card actually says. */
+function FuelTxnForm({ card, vehOf, kind, onSave, onClose }) {
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today());
+  const veh = vehOf(card.vehicleId);
+  const recharge = kind === "recharge";
+  const n = +amount || 0;
+  return (
+    <Sheet title={(recharge ? "Recharge · " : "Balance today · ") + (veh ? veh.plate : "card")} onClose={onClose}>
+      <div className="vz-card" style={{ background:"#FAFBFC" }}>
+        <div className="vz-kv"><span>On the card now</span><b className="vz-money">{inr(cardBalance(card))}</b></div>
+        {recharge && n > 0 && <div className="vz-kv"><span>After this recharge</span><b className="vz-money">{inr(cardBalance(card) + n)}</b></div>}
+      </div>
+      <div className="vz-2">
+        <F label={recharge ? "Recharge amount ₹" : "What the card says now ₹"}>
+          <input type="number" value={amount} onChange={e => setAmount(e.target.value)} inputMode="numeric" autoFocus />
+        </F>
+        <F label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} /></F>
+      </div>
+      <button className="vz-btn" disabled={!(n > 0) && !(!recharge && amount !== "")}
+        onClick={() => onSave({ id: uid(), cardId: card.id, date, type: recharge ? "recharge" : "reading",
+                                amount: recharge ? n : 0, balance: recharge ? cardBalance(card) + n : n })}>
+        {recharge ? "Record recharge of " + inr(n) : "Set balance to " + inr(n)}
+      </button>
+      <div className="vz-meta">
+        {recharge
+          ? "This also goes into expenses as diesel for " + (veh ? veh.plate : "this van") + ", so it reaches the month's costs and the campaign it was carrying."
+          : "Use this when the card's own balance has drifted from ours — the pump's figure wins."}
+      </div>
+    </Sheet>
+  );
+}
+
+/* ---------------------------- follow-ups ---------------------------- */
+function FollowupForm({ row, db, onSave, onClose }) {
+  const [f, set] = useState({ outcome:"promised", note:"", nextOn: addDays(today(), 3) });
+  const past = followupsFor(db, row.o.id);
+  return (
+    <Sheet title={"Follow-up · " + (row.v ? row.v.name : "customer")} onClose={onClose}>
+      <div className="vz-card" style={{ background:"#FAFBFC" }}>
+        <div className="vz-kv"><span>{row.bill.invNo ? "Invoice #" + row.bill.invNo : row.o.no}</span><b className="vz-money">{inr(row.due)}</b></div>
+        <div className="vz-kv"><span>Due</span><b>{dmy(row.dueOn)}{row.daysLeft < 0 ? " · " + -row.daysLeft + " days over" : ""}</b></div>
+      </div>
+      <F label="What happened">
+        <select value={f.outcome} onChange={e => set({ ...f, outcome: e.target.value })}>
+          {FOLLOWUP_OUTCOMES.map(o => <option key={o.k} value={o.k}>{o.label}</option>)}
+        </select>
+      </F>
+      <F label="What they said"><textarea rows={2} value={f.note} onChange={e => set({ ...f, note: e.target.value })}
+        placeholder="Spoke to Vasanth — cheque on Friday" /></F>
+      <F label="Call again on"><input type="date" value={f.nextOn} onChange={e => set({ ...f, nextOn: e.target.value })} /></F>
+      <div className="vz-inline" style={{ marginTop:-4, marginBottom:10, flexWrap:"wrap" }}>
+        {[["Tomorrow", 1], ["In 3 days", 3], ["Next week", 7], ["In 2 weeks", 14]].map(([lbl, d]) => (
+          <button key={lbl} className="vz-chip c-blue" onClick={() => set({ ...f, nextOn: addDays(today(), d) })}>{lbl}</button>
+        ))}
+      </div>
+      <button className="vz-btn"
+        onClick={() => onSave({ id: uid(), orderId: row.o.id, vendorId: row.v ? row.v.id : "", date: today(),
+                                outcome: f.outcome, note: f.note.trim(), nextOn: f.nextOn })}>
+        Save follow-up
+      </button>
+
+      {past.length > 0 && <div className="vz-eyebrow">Everything said so far</div>}
+      {past.map(p => {
+        const o = FOLLOWUP_OUTCOMES.find(x => x.k === p.outcome) || FOLLOWUP_OUTCOMES[4];
+        return (
+          <div className="vz-card" key={p.id}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-meta" style={{ marginTop:0 }}>{dmy(p.date)}</div>
+                {p.note && <div style={{ fontSize:14 }}>{p.note}</div>}
+                {p.nextOn && <div className="vz-meta">Next: {dmy(p.nextOn)}</div>}
+              </div>
+              <Chip c={o.chip}>{o.label}</Chip>
+            </div>
+          </div>
+        );
+      })}
+    </Sheet>
+  );
+}
+
+/* ---------------------------- money out ----------------------------
+   Everything the business pays for other than wages. Until this existed the
+   app knew every rupee coming in and almost none going out, so the forecast
+   read as if the vans ran on air. */
+function ExpenseForm({ init, db, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { date: today(), cat:"Diesel", amount:"", gstPaid:"", vehicleId:"", orderId:"", mode:"Cash", note:"" });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  return (
+    <Sheet title={init ? "Edit expense" : "Record an expense"} onClose={onClose}>
+      <div className="vz-2">
+        <F label="Amount ₹"><input type="number" value={f.amount} onChange={u("amount")} inputMode="numeric" /></F>
+        <F label="Date"><input type="date" value={f.date} onChange={u("date")} /></F>
+      </div>
+      <F label="What for"><select value={f.cat} onChange={u("cat")}>{EXPENSE_CATS.map(c => <option key={c}>{c}</option>)}</select></F>
+      <div className="vz-2">
+        <F label="Paid by"><select value={f.mode} onChange={u("mode")}>{["Cash","UPI","Bank transfer","Card","Cheque"].map(k => <option key={k}>{k}</option>)}</select></F>
+        <F label="GST paid on it ₹">
+          <input type="number" value={f.gstPaid} onChange={u("gstPaid")} inputMode="numeric" placeholder="0" />
+        </F>
+      </div>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        Fill the GST only if you have a tax invoice for it — it comes off what we pay on the 20th.
+        Diesel carries no GST credit.
+      </div>
+      <F label="Which vehicle (optional)">
+        <select value={f.vehicleId} onChange={u("vehicleId")}>
+          <option value="">— not vehicle-specific —</option>
+          {(db.vehicles || []).map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}
+        </select>
+      </F>
+      <F label="Against a campaign (optional)">
+        <select value={f.orderId} onChange={u("orderId")}>
+          <option value="">— general running cost —</option>
+          {(db.orders || []).map(o => <option key={o.id} value={o.id}>{o.no} · {o.title}</option>)}
+        </select>
+      </F>
+      <F label="Note"><input value={f.note} onChange={u("note")} placeholder="bill number, pump, supplier…" /></F>
+      <button className="vz-btn" disabled={!(+f.amount > 0)}
+        onClick={() => onSave({ ...f, id: f.id || uid(), amount: +f.amount, gstPaid: +f.gstPaid || 0 })}>
+        Save expense
+      </button>
+      {init && <button className="vz-btn warn" onClick={() => { if (window.confirm("Delete this expense?")) onDelete(init.id); }}>Delete</button>}
+    </Sheet>
+  );
+}
+
+function ExpensesSheet({ db, vehOf, onAdd, onEdit, onClose }) {
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+  const list = expensesIn(db, month).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const total = expenseTotal(list);
+  const gst = list.reduce((s, e) => s + (+e.gstPaid || 0), 0);
+
+  const byCat = {};
+  list.forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + (+e.amount || 0); });
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+
+  const exportCsv = () => {
+    const rows = [["Date", "Category", "Amount", "GST paid", "Paid by", "Vehicle", "Campaign", "Note"]];
+    list.forEach(e => {
+      const o = (db.orders || []).find(x => x.id === e.orderId);
+      rows.push([dmy(e.date), e.cat, +e.amount || 0, +e.gstPaid || 0, e.mode || "",
+                 (vehOf(e.vehicleId) || {}).plate || "", o ? o.title : "", e.note || ""]);
+    });
+    rows.push([]);
+    rows.push(["", "TOTAL", total, gst]);
+    downloadCsv("expenses-" + month + ".csv", rows);
+  };
+
+  return (
+    <Sheet title="Expenses" onClose={onClose}>
+      <F label="Month">
+        <select value={month} onChange={e => setMonth(e.target.value)}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </F>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Spent</i><b style={{ fontSize:17 }}>{inr(total)}</b><small>{list.length} entr{list.length === 1 ? "y" : "ies"}</small></div>
+        <div className="vz-stat"><i>Input GST</i><b style={{ fontSize:17 }}>{inr(gst)}</b><small>claimable against output tax</small></div>
+      </div>
+
+      <button className="vz-btn go" onClick={() => onAdd()}>+ Record an expense</button>
+      <button className="vz-btn alt" style={{ marginTop:0 }} disabled={!list.length} onClick={exportCsv}>Export</button>
+
+      {cats.length > 0 && <>
+        <div className="vz-eyebrow">Where it went</div>
+        {cats.map(([c, amt]) => (
+          <div className="vz-kv" key={c} style={{ background:"#fff", padding:"10px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+            <span>{c}</span><b className="vz-money">{inr(amt)}</b>
+          </div>
+        ))}
+      </>}
+
+      <div className="vz-eyebrow">Every entry</div>
+      {list.length === 0 && <div className="vz-card"><div className="vz-meta">Nothing recorded this month.</div></div>}
+      {list.map(e => {
+        const o = (db.orders || []).find(x => x.id === e.orderId);
+        const veh = vehOf(e.vehicleId);
+        return (
+          <button className="vz-card vz-tapcard" key={e.id} onClick={() => onEdit(e)}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title">{e.cat}</div>
+                <div className="vz-meta">{dmy(e.date)} · {e.mode || "—"}{veh ? " · " + veh.plate : ""}{o ? " · " + o.title : ""}</div>
+                {e.note && <div className="vz-meta">{e.note}</div>}
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div className="vz-money">{inr(e.amount)}</div>
+                {(+e.gstPaid || 0) > 0 && <div className="vz-meta">GST {inr(e.gstPaid)}</div>}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </Sheet>
+  );
+}
+
+/* ---------------------------- credit notes ----------------------------
+   Raised against an invoice that has already gone out. Full cancels it, part
+   reduces it — either way the original invoice stays exactly as it was sent. */
+function CreditNoteForm({ db, vendorOf, paidOn, nextNo, onSave, onClose }) {
+  const billed = (db.orders || [])
+    .filter(o => o.invNo || (o.parts || []).length)
+    .sort((a, b) => (String(a.invDate || a.created) < String(b.invDate || b.created) ? 1 : -1));
+  const [f, set] = useState({ orderId: billed[0]?.id || "", date: today(), amount:"", reason:"", full:true });
+  const o = billed.find(x => x.id === f.orderId);
+  const v = o ? vendorOf(o.vendorId) : null;
+  const bills = o ? billsOf(o, v) : [];
+  const invoiced = bills.reduce((s, b) => s + (+b.total || 0), 0);
+  const alreadyCredited = o ? creditedOn(db, o.id) : 0;
+  // Never credit more than is left uncredited — a note bigger than the invoice
+  // is not a correction, it is a mistake waiting for the GST officer.
+  const creditable = Math.max(0, invoiced - alreadyCredited);
+  const taxableLeft = o ? Math.round(creditable / (o.gst ? 1.18 : 1)) : 0;
+  const sub = f.full ? taxableLeft : Math.round(+f.amount || 0);
+  const m = cnMath(o, sub);
+  const over = m.total > creditable + 1;
+  const ready = o && sub > 0 && !over && f.reason.trim();
+  return (
+    <Sheet title="Raise a credit note" onClose={onClose}>
+      <F label="Against which invoice">
+        <select value={f.orderId} onChange={e => set({ ...f, orderId: e.target.value, amount:"" })}>
+          {billed.map(x => {
+            const vv = vendorOf(x.vendorId);
+            const nos = billsOf(x, vv).map(b => "#" + b.invNo).join(", ");
+            return <option key={x.id} value={x.id}>{nos} · {vv ? vv.name : "—"} · {x.title}</option>;
+          })}
+        </select>
+      </F>
+      {!o && <div className="vz-meta">No invoice has been raised yet — there is nothing to credit.</div>}
+      {o && <>
+        <div className="vz-card" style={{ background:"#FAFBFC" }}>
+          <div className="vz-kv"><span>Invoiced</span><b className="vz-money">{inr(invoiced)}</b></div>
+          <div className="vz-kv"><span>Received</span><b className="vz-money">{inr(paidOn(o.id))}</b></div>
+          {alreadyCredited > 0 && <div className="vz-kv"><span>Already credited</span><b className="vz-money">{inr(alreadyCredited)}</b></div>}
+          <div className="vz-kv"><span>Can still be credited</span><b className="vz-money">{inr(creditable)}</b></div>
+        </div>
+
+        <div className="vz-mode" style={{ margin:"12px auto", width:"fit-content" }}>
+          <button data-on={f.full ? "1" : "0"} onClick={() => set({ ...f, full:true })}>Cancel it in full</button>
+          <button data-on={!f.full ? "1" : "0"} onClick={() => set({ ...f, full:false })}>Credit part of it</button>
+        </div>
+
+        {!f.full && (
+          <F label="Amount to credit ₹ (before GST)">
+            <input type="number" value={f.amount} onChange={e => set({ ...f, amount: e.target.value })} inputMode="numeric" />
+          </F>
+        )}
+        <div className="vz-2">
+          <F label="Date"><input type="date" value={f.date} onChange={e => set({ ...f, date: e.target.value })} /></F>
+          <F label="Note number"><input value={nextNo} readOnly style={{ fontFamily:"var(--mono)" }} /></F>
+        </div>
+        <F label="Reason (printed on the note)">
+          <input value={f.reason} onChange={e => set({ ...f, reason: e.target.value })}
+            placeholder="campaign cut short / rate corrected / billed twice" />
+        </F>
+
+        <div className="vz-card">
+          <div className="vz-kv"><span>Taxable credited</span><b className="vz-money">{inr(m.sub)}</b></div>
+          {o.gst && (m.inter
+            ? <div className="vz-kv"><span>IGST 18% reversed</span><b className="vz-money">{inr(m.igst)}</b></div>
+            : <div className="vz-kv"><span>CGST + SGST reversed</span><b className="vz-money">{inr(m.cgst)} + {inr(m.sgst)}</b></div>)}
+          <div className="vz-kv"><span style={{ fontWeight:700 }}>Credit note total</span><b className="vz-money" style={{ fontSize:15 }}>{inr(m.total)}</b></div>
+        </div>
+        {over && <div className="vz-meta" style={{ color:"#B4262A" }}>
+          That is more than the {inr(creditable)} left on this invoice.
+        </div>}
+        {!f.reason.trim() && <div className="vz-meta" style={{ color:"#8A6100" }}>A reason is required — it goes on the note and the GST return.</div>}
+
+        <button className="vz-btn" disabled={!ready}
+          onClick={() => onSave({
+            id: uid(), orderId: o.id, no: nextNo, date: f.date, reason: f.reason.trim(),
+            againstInv: bills.map(b => b.invNo).join(", "),
+            sub: m.sub, gst: m.gst, cgst: m.cgst, sgst: m.sgst, igst: m.igst, total: m.total,
+          })}>
+          Raise credit note for {inr(m.total)}
+        </button>
+        <div className="vz-meta">
+          The invoice stays exactly as it was sent. This note reverses the amount and its tax,
+          and the customer's balance drops by {inr(m.total)}.
+        </div>
+      </>}
+    </Sheet>
+  );
+}
+
+/* ---------------------------- the day book ----------------------------
+   The entry made once, here, instead of again in Tally. Every voucher the
+   month produced, with both its sides, ticked off as it goes into the books
+   so nothing is keyed twice and nothing is missed. */
+function DayBookSheet({ db, onMark, onAddVoucher, onClose }) {
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const [only, setOnly] = useState("todo");        // todo | all
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+  const done = new Set((db.tallyMarks || []).map(m => m.id));
+  const all = dayBook(db, month);
+  const list = only === "todo" ? all.filter(v => !done.has(v.id)) : all;
+  const pending = all.filter(v => !done.has(v.id)).length;
+
+  const TYPE_CHIP = { Sales:"c-green", "Credit Note":"c-red", Receipt:"c-blue", Payment:"c-yellow", Journal:"c-grey" };
+
+  const exportCsv = () => {
+    const rows = [["Date", "Voucher type", "Reference", "Party / narration", "Ledger", "Debit", "Credit", "In books"]];
+    all.forEach(v => v.lines.forEach((l, i) => rows.push([
+      i === 0 ? dmy(v.date) : "", i === 0 ? v.type : "", i === 0 ? v.ref : "",
+      i === 0 ? (v.party + (v.narration ? " — " + v.narration : "")) : "",
+      l.dr || l.cr, l.dr ? l.amount : "", l.cr ? l.amount : "",
+      i === 0 ? (done.has(v.id) ? "yes" : "no") : "",
+    ])));
+    downloadCsv("day-book-" + month + ".csv", rows);
+  };
+
+  return (
+    <Sheet title="Day book" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0 }}>
+        Every entry the month has produced, with both sides and the ledger it belongs to.
+        Tick one when it is in the books.
+      </div>
+      <F label="Month">
+        <select value={month} onChange={e => setMonth(e.target.value)}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </F>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Still to enter</i>
+          <b style={{ fontSize:18, color: pending ? "#E5484D" : "#178951" }}>{pending}</b>
+          <small>of {all.length} voucher{all.length === 1 ? "" : "s"}</small></div>
+        <div className="vz-stat"><i>Month</i><b style={{ fontSize:18 }}>{monthLabel(month)}</b><small>{done.size} ticked in all</small></div>
+      </div>
+
+      <div className="vz-mode" style={{ margin:"10px auto", width:"fit-content" }}>
+        <button data-on={only === "todo" ? "1" : "0"} onClick={() => setOnly("todo")}>Still to enter</button>
+        <button data-on={only === "all" ? "1" : "0"} onClick={() => setOnly("all")}>Everything</button>
+      </div>
+      <div className="vz-2">
+        <button className="vz-btn alt" style={{ margin:0 }} onClick={() => onAddVoucher()}>+ Entry by hand</button>
+        <button className="vz-btn alt" style={{ margin:0 }} disabled={!all.length} onClick={exportCsv}>Export</button>
+      </div>
+
+      {list.length === 0 && (
+        <div className="vz-card"><div className="vz-meta">
+          {all.length ? "Everything this month is in the books." : "Nothing happened this month."}
+        </div></div>
+      )}
+
+      {list.map(v => {
+        const isDone = done.has(v.id);
+        return (
+          <div className="vz-card" key={v.id} style={isDone ? { background:"#F7FAF8", borderColor:"#CFE3D6" } : null}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title">{v.party}</div>
+                <div className="vz-meta">{dmy(v.date)}{v.ref ? " · " + v.ref : ""}{v.narration ? " · " + v.narration : ""}</div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div className="vz-money">{inr(v.amount)}</div>
+                <Chip c={TYPE_CHIP[v.type] || "c-grey"}>{v.type}</Chip>
+              </div>
+            </div>
+            {v.lines.map((l, i) => (
+              <div className="vz-kv" key={i}>
+                <span style={{ fontFamily:"var(--mono)", fontSize:12 }}>
+                  {l.dr ? "Dr" : "  Cr"} &nbsp;{l.dr || l.cr}
+                </span>
+                <b className="vz-money">{inr(l.amount)}</b>
+              </div>
+            ))}
+            <button className={"vz-chip " + (isDone ? "c-green" : "c-grey")} style={{ marginTop:9 }}
+              onClick={() => onMark(v.id, !isDone)}>
+              {isDone ? "In the books ✓" : "Mark as entered"}
+            </button>
+          </div>
+        );
+      })}
+    </Sheet>
+  );
+}
+
+/* Something that happened outside the app — bank charges, an owner's drawing,
+   a journal the accountant asked for. */
+function VoucherForm({ db, onSave, onClose }) {
+  const [f, set] = useState({ date: today(), type:"Payment", dr:"", cr: LEDGERS.bank, amount:"", ref:"", narration:"" });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  const suggestions = [...new Set([...EXPENSE_CATS, ...Object.values(LEDGERS)])];
+  return (
+    <Sheet title="Entry by hand" onClose={onClose}>
+      <div className="vz-2">
+        <F label="Amount ₹"><input type="number" value={f.amount} onChange={u("amount")} inputMode="numeric" autoFocus /></F>
+        <F label="Date"><input type="date" value={f.date} onChange={u("date")} /></F>
+      </div>
+      <F label="Voucher type">
+        <select value={f.type} onChange={u("type")}>
+          {["Payment", "Receipt", "Journal", "Contra"].map(t => <option key={t}>{t}</option>)}
+        </select>
+      </F>
+      <F label="Debit (what it was for)">
+        <input list="vz-ledgers" value={f.dr} onChange={u("dr")} placeholder="Bank charges" />
+      </F>
+      <F label="Credit (where it came from)">
+        <input list="vz-ledgers" value={f.cr} onChange={u("cr")} />
+      </F>
+      <datalist id="vz-ledgers">{suggestions.map(s => <option key={s} value={s} />)}</datalist>
+      <F label="Narration"><input value={f.narration} onChange={u("narration")} placeholder="what this was" /></F>
+      <button className="vz-btn" disabled={!(+f.amount > 0) || !f.dr.trim() || !f.cr.trim()}
+        onClick={() => onSave({ id: uid(), ...f, dr: f.dr.trim(), cr: f.cr.trim(), amount: +f.amount })}>
+        Save entry
+      </button>
+      <div className="vz-meta">
+        Invoices, receipts, expenses and payroll are already in the day book on their own —
+        this is only for what happened outside the app.
+      </div>
+    </Sheet>
+  );
+}
+
+/* ---------------------------- reports ----------------------------
+   Everything the office is ever asked for, over any stretch of time, as a file
+   that opens in Excel. One period picker at the top drives all of them, so a
+   month's sales and that month's expenses can never be measured over two
+   different windows. */
+const FY_START_MONTH = 4;                       // April, as the Indian year runs
+const fyOf = (d) => {
+  const y = +String(d).slice(0, 4), m = +String(d).slice(5, 7);
+  return m >= FY_START_MONTH ? y : y - 1;
+};
+const fyRange = (y) => ({ from: y + "-04-01", to: (y + 1) + "-03-31", label: "FY " + y + "–" + String(y + 1).slice(2) });
+const monthRange = (ym) => {
+  const [y, m] = ym.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: ym + "-01", to: ym + "-" + pad2(last), label: monthLabel(ym) };
+};
+const quarterRange = (y, q) => {
+  const startM = FY_START_MONTH + (q - 1) * 3;
+  const sy = y + (startM > 12 ? 1 : 0), sm = ((startM - 1) % 12) + 1;
+  const from = sy + "-" + pad2(sm) + "-01";
+  const endD = new Date(Date.UTC(sy, sm + 2, 0));
+  return { from, to: localDay(endD), label: "Q" + q + " " + fyRange(y).label };
+};
+
+/* Everything that happened between two dates, worked out once. */
+const periodFigures = (db, from, to, paidOn) => {
+  const inP = (d) => { const s = String(d || "").slice(0, 10); return s >= from && s <= to; };
+
+  const bills = (db.orders || []).flatMap(o => {
+    const v = (db.vendors || []).find(x => x.id === o.vendorId);
+    return billsOf(o, v).filter(b => inP(b.date)).map(b => ({ o, v, b }));
+  });
+  const notes = (db.creditNotes || []).filter(c => inP(c.date));
+  const receipts = (db.payments || []).filter(p => inP(p.date));
+  const spend = (db.expenses || []).filter(e => inP(e.date));
+  const jobs = (db.jobs || []).filter(j => inP(j.date));
+  const runs = (db.payruns || []).filter(p => p.paidOn && inP(p.paidOn));
+
+  const revenue = bills.reduce((s, x) => s + (+x.b.sub || 0), 0) - notes.reduce((s, c) => s + (+c.sub || 0), 0);
+  const outTax = bills.reduce((s, x) => s + (+x.b.gst || 0), 0) - notes.reduce((s, c) => s + (+c.gst || 0), 0);
+  const inTax = spend.reduce((s, e) => s + (+e.gstPaid || 0), 0);
+  const collected = receipts.reduce((s, p) => s + (+p.amount || 0), 0);
+  const tds = receipts.reduce((s, p) => s + (+p.tds || 0), 0);
+  const wages = runs.reduce((s, p) => s + (+p.total || 0), 0);
+  const workshop = jobs.reduce((s, j) => s + (+j.cost || 0), 0);
+
+  const byCat = {};
+  spend.forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + (+e.amount || 0); });
+  const DIRECT = ["Diesel", "Flex printing", "Fabrication", "Tolls & parking"];
+  const direct = DIRECT.reduce((s, c) => s + (byCat[c] || 0), 0);
+  const overhead = Object.entries(byCat).filter(([c]) => !DIRECT.includes(c)).reduce((s, [, v]) => s + v, 0);
+
+  const grossCost = wages + direct + workshop;
+  return { from, to, bills, notes, receipts, spend, jobs, runs, byCat,
+           revenue, outTax, inTax, netTax: Math.max(0, outTax - inTax),
+           collected, tds, wages, workshop, direct, overhead,
+           gross: revenue - grossCost, net: revenue - grossCost - overhead, grossCost };
+};
+
+function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
+  const [mode, setMode] = useState("month");     // day | month | quarter | year | custom
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const [day, setDay] = useState(today());
+  const [fy, setFy] = useState(fyOf(today()));
+  const [q, setQ] = useState(Math.floor(((+today().slice(5, 7) - FY_START_MONTH + 12) % 12) / 3) + 1);
+  const [custom, setCustom] = useState({ from: addDays(today(), -30), to: today() });
+
+  const range = mode === "day" ? { from: day, to: day, label: dmy(day) }
+    : mode === "month" ? monthRange(month)
+    : mode === "quarter" ? quarterRange(fy, q)
+    : mode === "year" ? fyRange(fy)
+    : { from: custom.from, to: custom.to, label: dmy(custom.from) + " – " + dmy(custom.to) };
+
+  const f = periodFigures(db, range.from, range.to, paidOn);
+  const stamp = range.from + "_to_" + range.to;
+  const months = [];
+  for (let i = 0; i < 18; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+  const fys = [];
+  for (let i = 0; i < 4; i++) fys.push(fyOf(today()) - i);
+
+  /* ---- the reports themselves ---- */
+  const head = (title) => [[((db.settings || {}).company || "Vibe Marketing")],
+                           [title + " · " + range.label], []];
+
+  const repSales = () => {
+    const rows = head("Sales register").concat([[
+      "Invoice No", "Date", "Customer", "GSTIN", "Place of supply", "Campaign", "Period",
+      "Taxable", "CGST", "SGST", "IGST", "Invoice total"]]);
+    f.bills.forEach(({ o, v, b }) => rows.push([
+      b.invNo, dmy(b.date), v ? v.name : "", (v && v.gst) || "", stateOf(v), o.title || "",
+      b.whole ? "" : dmy(b.from) + " to " + dmy(b.to),
+      b.sub, b.cgst, b.sgst, b.igst, b.total]));
+    rows.push([]);
+    rows.push(["", "", "", "", "", "", "TOTAL",
+      f.bills.reduce((s, x) => s + x.b.sub, 0), f.bills.reduce((s, x) => s + x.b.cgst, 0),
+      f.bills.reduce((s, x) => s + x.b.sgst, 0), f.bills.reduce((s, x) => s + x.b.igst, 0),
+      f.bills.reduce((s, x) => s + x.b.total, 0)]);
+    downloadCsv("sales-register-" + stamp + ".csv", rows);
+  };
+
+  const repCollections = () => {
+    const rows = head("Collections").concat([["Date", "Customer", "Campaign", "Invoice", "Mode", "Reference", "Received", "TDS", "Settled"]]);
+    f.receipts.forEach(p => {
+      const o = (db.orders || []).find(x => x.id === p.orderId) || {};
+      const v = vendorOf(o.vendorId);
+      rows.push([dmy(p.date), v ? v.name : "", o.title || "", o.invNo || "", p.mode || "", p.ref || "",
+                 +p.amount || 0, +p.tds || 0, (+p.amount || 0) + (+p.tds || 0)]);
+    });
+    rows.push([]);
+    rows.push(["", "", "", "", "", "TOTAL", f.collected, f.tds, f.collected + f.tds]);
+    downloadCsv("collections-" + stamp + ".csv", rows);
+  };
+
+  const repOutstanding = () => {
+    const r = receivables(db, paidOn);
+    const rows = head("Outstanding as at " + dmy(range.to)).concat([[
+      "Customer", "Invoice", "Campaign", "Invoice date", "Due date", "Invoiced", "Received", "Credited", "Balance", "Days overdue"]]);
+    r.rows.forEach(x => rows.push([
+      x.v ? x.v.name : "", x.bill.invNo || "not invoiced", x.o.title || "",
+      dmy(x.bill.date || ""), dmy(x.dueOn), x.bill.total, x.paid, x.credited || 0, x.due,
+      x.daysLeft < 0 ? -x.daysLeft : 0]));
+    rows.push([]);
+    AGE_BUCKETS.forEach(b => rows.push(["", "", "", "", b.label, "", "", "", r.buckets[b.k]]));
+    rows.push(["", "", "", "", "TOTAL", "", "", "", r.total]);
+    downloadCsv("outstanding-" + range.to + ".csv", rows);
+  };
+
+  /* The customer ledger — every document against a customer with a running
+     balance. This is what anyone means by "send me their account". */
+  const repLedger = () => {
+    const rows = head("Customer ledger").concat([["Customer", "Date", "Particulars", "Debit", "Credit", "Balance"]]);
+    (db.vendors || []).forEach(v => {
+      const entries = [];
+      (db.orders || []).filter(o => o.vendorId === v.id).forEach(o => {
+        billsOf(o, v).forEach(b => entries.push({ date: b.date, what: "Invoice #" + b.invNo + " · " + (o.title || ""), dr: b.total, cr: 0 }));
+      });
+      (db.creditNotes || []).forEach(c => {
+        const o = (db.orders || []).find(x => x.id === c.orderId);
+        if (!o || o.vendorId !== v.id) return;
+        entries.push({ date: c.date, what: "Credit note " + c.no + " · " + (c.reason || ""), dr: 0, cr: c.total });
+      });
+      (db.payments || []).forEach(p => {
+        const o = (db.orders || []).find(x => x.id === p.orderId);
+        if (!o || o.vendorId !== v.id) return;
+        entries.push({ date: p.date, what: "Receipt " + (p.mode || "") + (p.ref ? " " + p.ref : ""), dr: 0, cr: +p.amount || 0 });
+        if (+p.tds > 0) entries.push({ date: p.date, what: "TDS deducted", dr: 0, cr: +p.tds });
+      });
+      if (!entries.length) return;
+      entries.sort((a, b) => (a.date < b.date ? -1 : 1));
+      let bal = 0;
+      rows.push([v.name, "", (v.gst ? "GSTIN " + v.gst + " · " : "") + (creditDaysOf(v) ? creditDaysOf(v) + "-day terms" : "pays on completion"), "", "", ""]);
+      entries.forEach(e => { bal += e.dr - e.cr; rows.push(["", dmy(e.date), e.what, e.dr || "", e.cr || "", bal]); });
+      rows.push(["", "", "Closing balance", "", "", bal]);
+      rows.push([]);
+    });
+    downloadCsv("customer-ledger-" + stamp + ".csv", rows);
+  };
+
+  const repExpenses = () => {
+    const rows = head("Expenses").concat([["Date", "Category", "Amount", "GST paid", "Paid by", "Vehicle", "Campaign", "Note"]]);
+    f.spend.forEach(e => {
+      const o = (db.orders || []).find(x => x.id === e.orderId);
+      rows.push([dmy(e.date), e.cat, +e.amount || 0, +e.gstPaid || 0, e.mode || "",
+                 (vehOf(e.vehicleId) || {}).plate || "", o ? o.title : "", e.note || ""]);
+    });
+    rows.push([]);
+    Object.entries(f.byCat).sort((a, b) => b[1] - a[1]).forEach(([c, v]) => rows.push(["", c, v]));
+    rows.push(["", "TOTAL", f.spend.reduce((s, e) => s + (+e.amount || 0), 0), f.inTax]);
+    downloadCsv("expenses-" + stamp + ".csv", rows);
+  };
+
+  const repPayroll = () => {
+    const rows = head("Payroll register").concat([["Week ending", "Paid on", "Name", "Type", "Days", "Outstation", "Wage", "Batta", "Advance", "Net", "Released by", "Paid by"]]);
+    f.runs.forEach(p => (p.lines || []).forEach(l => rows.push([
+      dmy(p.weekEnd), dmy(p.paidOn), l.name, l.kind, l.days || "", l.outDays || "",
+      l.wage || l.net, l.batta || 0, l.advance || 0, l.net, p.initiatedBy || "", p.paidBy || ""])));
+    rows.push([]);
+    rows.push(["", "", "", "", "", "", "", "", "TOTAL", f.wages]);
+    downloadCsv("payroll-" + stamp + ".csv", rows);
+  };
+
+  /* GSTR-1 shape: B2B invoices listed one by one, B2C summarised, then the
+     3B summary the return actually asks for. */
+  const repGst = () => {
+    const b2b = f.bills.filter(x => x.v && String(x.v.gst || "").trim());
+    const b2c = f.bills.filter(x => !x.v || !String(x.v.gst || "").trim());
+    const rows = head("GST return");
+    rows.push(["B2B — invoices to registered customers"]);
+    rows.push(["GSTIN", "Customer", "Invoice No", "Date", "Invoice value", "Place of supply", "Rate", "Taxable", "CGST", "SGST", "IGST"]);
+    b2b.forEach(({ o, v, b }) => rows.push([
+      v.gst, v.name, b.invNo, dmy(b.date), b.total, stateOf(v), o.gst ? "18%" : "0%",
+      b.sub, b.cgst, b.sgst, b.igst]));
+    rows.push([]);
+    rows.push(["B2C — customers with no GSTIN"]);
+    rows.push(["Invoice No", "Date", "Customer", "Place of supply", "Rate", "Taxable", "CGST", "SGST", "IGST", "Total"]);
+    b2c.forEach(({ o, v, b }) => rows.push([
+      b.invNo, dmy(b.date), v ? v.name : "", stateOf(v), o.gst ? "18%" : "0%",
+      b.sub, b.cgst, b.sgst, b.igst, b.total]));
+    rows.push([]);
+    rows.push(["Credit notes"]);
+    rows.push(["Note No", "Date", "Customer", "Against invoice", "Reason", "Taxable", "Tax", "Total"]);
+    f.notes.forEach(c => {
+      const o = (db.orders || []).find(x => x.id === c.orderId) || {};
+      rows.push([c.no, dmy(c.date), (vendorOf(o.vendorId) || {}).name || "", c.againstInv, c.reason, -c.sub, -c.gst, -c.total]);
+    });
+    rows.push([]);
+    rows.push(["Summary for GSTR-3B"]);
+    rows.push(["Taxable value of supplies", f.revenue]);
+    rows.push(["Output tax", f.outTax]);
+    rows.push(["Input tax credit on expenses", f.inTax]);
+    rows.push(["Net GST payable", f.netTax]);
+    rows.push(["HSN / SAC", (db.settings || {}).sac || "998365"]);
+    downloadCsv("gst-return-" + stamp + ".csv", rows);
+  };
+
+  const repPnl = () => {
+    const rows = head("Profit & loss");
+    rows.push(["INCOME"]);
+    rows.push(["Campaign revenue (excluding GST)", f.revenue]);
+    rows.push([]);
+    rows.push(["DIRECT COSTS"]);
+    rows.push(["Driver & staff wages", f.wages]);
+    ["Diesel", "Flex printing", "Fabrication", "Tolls & parking"].forEach(c => {
+      if (f.byCat[c]) rows.push([c, f.byCat[c]]);
+    });
+    rows.push(["Workshop & repairs", f.workshop]);
+    rows.push(["Total direct costs", f.grossCost]);
+    rows.push([]);
+    rows.push(["GROSS PROFIT", f.gross]);
+    rows.push([]);
+    rows.push(["OVERHEADS"]);
+    Object.entries(f.byCat).filter(([c]) => !["Diesel", "Flex printing", "Fabrication", "Tolls & parking"].includes(c))
+      .sort((a, b) => b[1] - a[1]).forEach(([c, v]) => rows.push([c, v]));
+    rows.push(["Total overheads", f.overhead]);
+    rows.push([]);
+    rows.push(["NET PROFIT", f.net]);
+    rows.push([]);
+    rows.push(["Note", "Revenue is invoiced value excluding GST, net of credit notes. GST is not income."]);
+    downloadCsv("profit-and-loss-" + stamp + ".csv", rows);
+  };
+
+  const repDayBook = () => {
+    const marks = new Set((db.tallyMarks || []).map(m => m.id));
+    const rows = head("Day book");
+    rows.push(["Date", "Voucher", "Reference", "Party / narration", "Ledger", "Debit", "Credit", "In books"]);
+    const ms = {};
+    (db.orders || []).length;                       // day book is built month by month
+    for (let d = new Date(range.from + "T12:00:00Z"); localDay(d) <= range.to; d.setUTCMonth(d.getUTCMonth() + 1)) {
+      ms[d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1)] = true;
+    }
+    Object.keys(ms).forEach(m => dayBook(db, m)
+      .filter(v => v.date >= range.from && v.date <= range.to)
+      .forEach(v => v.lines.forEach((l, i) => rows.push([
+        i === 0 ? dmy(v.date) : "", i === 0 ? v.type : "", i === 0 ? v.ref : "",
+        i === 0 ? v.party + (v.narration ? " — " + v.narration : "") : "",
+        l.dr || l.cr, l.dr ? l.amount : "", l.cr ? l.amount : "",
+        i === 0 ? (marks.has(v.id) ? "yes" : "no") : "",
+      ]))));
+    downloadCsv("day-book-" + stamp + ".csv", rows);
+  };
+
+  const repFuel = () => {
+    const rows = head("Petrol cards").concat([["Vehicle", "Card", "Balance now", "Balance read on", "Recharges in period", "Total recharged"]]);
+    (db.fuelCards || []).forEach(c => {
+      const txns = (db.fuelTxns || []).filter(t => t.cardId === c.id && t.type === "recharge"
+        && String(t.date) >= range.from && String(t.date) <= range.to);
+      rows.push([(vehOf(c.vehicleId) || {}).plate || "", c.number || "", cardBalance(c),
+                 dmy(c.balanceAt || ""), txns.length, txns.reduce((s, t) => s + (+t.amount || 0), 0)]);
+    });
+    rows.push([]);
+    rows.push(["Every recharge"]);
+    rows.push(["Date", "Vehicle", "Card", "Amount"]);
+    (db.fuelTxns || []).filter(t => t.type === "recharge" && String(t.date) >= range.from && String(t.date) <= range.to)
+      .sort((a, b) => (a.date < b.date ? -1 : 1))
+      .forEach(t => {
+        const c = (db.fuelCards || []).find(x => x.id === t.cardId) || {};
+        rows.push([dmy(t.date), (vehOf(c.vehicleId) || {}).plate || "", c.number || "", +t.amount || 0]);
+      });
+    downloadCsv("petrol-cards-" + stamp + ".csv", rows);
+  };
+
+  const repTds = () => {
+    const rows = head("TDS deducted by customers").concat([["Customer", "PAN / GSTIN", "Date", "Invoice", "Received", "TDS"]]);
+    const byV = {};
+    f.receipts.filter(p => +p.tds > 0).forEach(p => {
+      const o = (db.orders || []).find(x => x.id === p.orderId) || {};
+      const v = vendorOf(o.vendorId);
+      const key = v ? v.id : "_";
+      byV[key] = (byV[key] || 0) + (+p.tds || 0);
+      rows.push([v ? v.name : "", (v && v.gst) || "", dmy(p.date), o.invNo || "", +p.amount || 0, +p.tds || 0]);
+    });
+    rows.push([]);
+    rows.push(["", "", "", "", "TOTAL TDS", f.tds]);
+    downloadCsv("tds-" + stamp + ".csv", rows);
+  };
+
+  const repCampaigns = () => {
+    const rows = head("Campaign profitability").concat([[
+      "Campaign", "Customer", "Period", "Vans", "Duty days", "Revenue", "Wages", "Batta",
+      "Production", "Running", "Workshop", "Total cost", "Margin", "Margin %"]]);
+    (db.orders || []).forEach(o => {
+      const p = campaignPnl(db, o), v = vendorOf(o.vendorId);
+      rows.push([o.title || o.no, v ? v.name : "", (o.start || "") + " to " + (o.end || ""),
+        (o.vehicleIds || []).length, p.dutyDays, p.revenue, p.wages, p.battas, p.production,
+        p.running, p.workshop, p.cost, p.margin,
+        p.revenue > 0 ? Math.round((p.margin / p.revenue) * 100) + "%" : ""]);
+    });
+    downloadCsv("campaign-profit-" + stamp + ".csv", rows);
+  };
+
+  const REPORTS = [
+    ["Profit & loss", "Income against every cost, down to the net.", repPnl],
+    ["GST return", "B2B, B2C and credit notes, with the GSTR-3B summary.", repGst],
+    ["Sales register", "Every invoice raised, with its tax split out.", repSales],
+    ["Collections", "Money received, and the TDS kept back with it.", repCollections],
+    ["Outstanding & ageing", "Who owes what, aged, as at the end date.", repOutstanding],
+    ["Customer ledger", "Every document against each customer, with a running balance.", repLedger],
+    ["Expenses", "Everything paid out, by category.", repExpenses],
+    ["Payroll register", "Every week paid, name by name.", repPayroll],
+    ["Campaign profitability", "What each campaign made after its own costs.", repCampaigns],
+    ["Day book", "Every voucher, both sides, ticked or not.", repDayBook],
+    ["Petrol cards", "Balances and every recharge in the period.", repFuel],
+    ["TDS deducted", "By customer, for the return and for 26AS.", repTds],
+  ];
+
+  const Money = ({ label, value, strong }) => (
+    <div className="vz-kv" style={strong ? { borderTop:"1px solid var(--ink)", borderBottom:"none", paddingTop:9 } : null}>
+      <span style={strong ? { fontWeight:800, color:"var(--ink)" } : null}>{label}</span>
+      <b className="vz-money" style={strong ? { fontSize:15 } : null}>{inr(value)}</b>
+    </div>
+  );
+
+  return (
+    <Sheet title="Reports" onClose={onClose}>
+      <div className="vz-mode" style={{ margin:"0 auto 12px", width:"fit-content", flexWrap:"wrap" }}>
+        {[["day","Day"],["month","Month"],["quarter","Quarter"],["year","Year"],["custom","Range"]].map(([k, lbl]) =>
+          <button key={k} data-on={mode === k ? "1" : "0"} onClick={() => setMode(k)}>{lbl}</button>)}
+      </div>
+
+      {mode === "day" && <F label="Which day"><input type="date" value={day} onChange={e => setDay(e.target.value)} /></F>}
+      {mode === "month" && (
+        <F label="Which month">
+          <select value={month} onChange={e => setMonth(e.target.value)}>
+            {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+        </F>
+      )}
+      {(mode === "quarter" || mode === "year") && (
+        <div className="vz-2">
+          <F label="Financial year">
+            <select value={fy} onChange={e => setFy(+e.target.value)}>
+              {fys.map(y => <option key={y} value={y}>{fyRange(y).label}</option>)}
+            </select>
+          </F>
+          {mode === "quarter" && (
+            <F label="Quarter">
+              <select value={q} onChange={e => setQ(+e.target.value)}>
+                {[1, 2, 3, 4].map(n => <option key={n} value={n}>Q{n} · {dmy(quarterRange(fy, n).from).slice(3)} – {dmy(quarterRange(fy, n).to).slice(3)}</option>)}
+              </select>
+            </F>
+          )}
+        </div>
+      )}
+      {mode === "custom" && (
+        <div className="vz-2">
+          <F label="From"><input type="date" value={custom.from} onChange={e => setCustom({ ...custom, from: e.target.value })} /></F>
+          <F label="To"><input type="date" value={custom.to} onChange={e => setCustom({ ...custom, to: e.target.value })} /></F>
+        </div>
+      )}
+
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Revenue</i><b style={{ fontSize:17 }}>{inr(f.revenue)}</b><small>excluding GST</small></div>
+        <div className="vz-stat"><i>Net profit</i><b style={{ fontSize:17, color: f.net >= 0 ? "#178951" : "#E5484D" }}>{inr(f.net)}</b><small>after every cost</small></div>
+        <div className="vz-stat"><i>Collected</i><b style={{ fontSize:17 }}>{inr(f.collected)}</b><small>{f.tds > 0 ? "+ " + inr(f.tds) + " TDS" : "in the period"}</small></div>
+        <div className="vz-stat"><i>GST payable</i><b style={{ fontSize:17 }}>{inr(f.netTax)}</b><small>output less input</small></div>
+      </div>
+
+      <div className="vz-eyebrow">Profit &amp; loss · {range.label}</div>
+      <div className="vz-card">
+        <Money label="Campaign revenue (excl. GST)" value={f.revenue} />
+        <div className="vz-eyebrow" style={{ marginTop:10 }}>Direct costs</div>
+        <Money label="Driver &amp; staff wages" value={f.wages} />
+        {["Diesel", "Flex printing", "Fabrication", "Tolls & parking"].map(c => (
+          f.byCat[c] ? <Money key={c} label={c} value={f.byCat[c]} /> : null
+        ))}
+        {f.workshop > 0 && <Money label="Workshop &amp; repairs" value={f.workshop} />}
+        <Money label="Gross profit" value={f.gross} strong />
+        {f.overhead > 0 && <>
+          <div className="vz-eyebrow" style={{ marginTop:10 }}>Overheads</div>
+          {Object.entries(f.byCat)
+            .filter(([c]) => !["Diesel", "Flex printing", "Fabrication", "Tolls & parking"].includes(c))
+            .sort((a, b) => b[1] - a[1])
+            .map(([c, v]) => <Money key={c} label={c} value={v} />)}
+        </>}
+        <Money label="Net profit" value={f.net} strong />
+      </div>
+      <div className="vz-meta" style={{ marginTop:-2 }}>
+        Revenue is what was invoiced in this period excluding GST, less credit notes. Wages are the weeks
+        actually paid. GST is not income and is not counted here.
+      </div>
+
+      <div className="vz-eyebrow">Download</div>
+      {REPORTS.map(([name, blurb, fn]) => (
+        <button className="vz-card vz-tapcard" key={name} style={{ width:"100%", textAlign:"left" }} onClick={fn}>
+          <div className="vz-row">
+            <div style={{ minWidth:0 }}>
+              <div className="vz-title">{name}</div>
+              <div className="vz-meta">{blurb}</div>
+            </div>
+            <Chip c="c-blue">Excel</Chip>
+          </div>
+        </button>
+      ))}
+      <div className="vz-meta">
+        Every file covers {range.label} and opens in Excel. The rupee sign and Tamil names come through
+        correctly.
+      </div>
+    </Sheet>
+  );
+}
+
+/* ---------------------------- receivables ----------------------------
+   Who owes us, how long it has been owed, and the message that asks for it.
+   The single "Outstanding" figure on the money screen was true but useless:
+   it never said which customer to ring this morning. */
+function ReceivablesSheet({ db, paidOn, onOpenOrder, onSend, onFollowup, onClose }) {
+  const [view, setView] = useState("customer");     // customer | invoice
+  const r = receivables(db, paidOn);
+  const dueToday = followupsDue(db);
+  const dueIds = new Set(dueToday.map(f => f.orderId));
+
+  // Group by customer, worst first — that is the order they get chased in.
+  const byVendor = {};
+  r.rows.forEach(row => {
+    const k = row.v ? row.v.id : "_";
+    if (!byVendor[k]) byVendor[k] = { v: row.v, rows: [], due: 0, overdue: 0, oldest: 0 };
+    const g = byVendor[k];
+    g.rows.push(row); g.due += row.due;
+    if (row.daysLeft < 0) { g.overdue += row.due; g.oldest = Math.max(g.oldest, -row.daysLeft); }
+  });
+  const groups = Object.values(byVendor).sort((a, b) => (b.overdue - a.overdue) || (b.due - a.due));
+
+  const exportCsv = () => {
+    const rows = [["Customer", "Invoice No", "Campaign", "Period", "Invoice Date", "Due Date", "Invoiced", "Received", "Credited", "Balance", "Days overdue"]];
+    r.rows.forEach(x => rows.push([
+      x.v ? x.v.name : "—", x.bill.invNo || "not invoiced", x.o.title || "",
+      x.bill.from ? dmy(x.bill.from) + " to " + dmy(x.bill.to) : "",
+      dmy(x.bill.date || ""), dmy(x.dueOn), x.bill.total, x.paid, x.credited || 0, x.due, x.daysLeft < 0 ? -x.daysLeft : 0,
+    ]));
+    rows.push([]);
+    rows.push(["", "", "", "", "", "TOTAL", "", "", "", r.total, ""]);
+    AGE_BUCKETS.forEach(b => rows.push(["", "", "", "", "", b.label, "", "", "", r.buckets[b.k], ""]));
+    downloadCsv("receivables-" + today() + ".csv", rows);
+  };
+
+  return (
+    <Sheet title="Pending from customers" onClose={onClose}>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Total pending</i><b style={{ fontSize:17 }}>{inr(r.total)}</b><small>{r.rows.length} invoice{r.rows.length === 1 ? "" : "s"}</small></div>
+        <div className="vz-stat"><i>Overdue</i><b style={{ fontSize:17, color: r.overdue ? "#E5484D" : "#178951" }}>{inr(r.overdue)}</b><small>past the agreed date</small></div>
+      </div>
+
+      {dueToday.length > 0 && (
+        <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+          <div className="vz-title" style={{ fontSize:15 }}>
+            {dueToday.length} to call back {dueToday.some(f => f.nextOn < today()) ? "— some overdue" : "today"}
+          </div>
+          <div className="vz-meta" style={{ marginTop:2 }}>
+            {dueToday.slice(0, 4).map(f => {
+              const v = (db.vendors || []).find(x => x.id === f.vendorId);
+              return (v ? v.name : "a customer") + (f.nextOn < today() ? " (" + dmy(f.nextOn) + ")" : "");
+            }).join(" · ")}
+          </div>
+        </div>
+      )}
+
+      <div className="vz-eyebrow">Ageing</div>
+      {AGE_BUCKETS.map(b => (
+        <div className="vz-kv" key={b.k} style={{ background:"#fff", padding:"10px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+          <span style={{ color: b.k === "b90p" ? "#B4262A" : "var(--ink)" }}>{b.label}</span>
+          <b className="vz-money">{inr(r.buckets[b.k])}</b>
+        </div>
+      ))}
+
+      <div className="vz-mode" style={{ margin:"12px auto", width:"fit-content" }}>
+        <button data-on={view === "customer" ? "1" : "0"} onClick={() => setView("customer")}>By customer</button>
+        <button data-on={view === "invoice" ? "1" : "0"} onClick={() => setView("invoice")}>By invoice</button>
+      </div>
+
+      <button className="vz-btn alt" style={{ marginTop:0 }} disabled={!r.rows.length} onClick={exportCsv}>Export for the accountant</button>
+
+      {r.rows.length === 0 && <div className="vz-card"><div className="vz-meta">Nothing is pending. Every invoice raised has been settled.</div></div>}
+
+      {view === "customer" && groups.map(g => (
+        <div className="vz-card" key={g.v ? g.v.id : "_"}>
+          <div className="vz-row">
+            <div style={{ minWidth:0 }}>
+              <div className="vz-title">{g.v ? g.v.name : "— no customer —"}</div>
+              <div className="vz-meta">
+                {g.rows.length} invoice{g.rows.length === 1 ? "" : "s"}
+                {g.v && creditDaysOf(g.v) > 0 ? " · " + creditDaysOf(g.v) + "-day terms" : " · pays on completion"}
+                {g.oldest > 0 ? " · oldest " + g.oldest + " days over" : ""}
+              </div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <div className="vz-money">{inr(g.due)}</div>
+              {g.overdue > 0 && <Chip c="c-red">{inr(g.overdue)} overdue</Chip>}
+            </div>
+          </div>
+          {g.rows.map(x => {
+            const last = lastFollowup(db, x.o.id);
+            const oc = last ? (FOLLOWUP_OUTCOMES.find(o => o.k === last.outcome) || FOLLOWUP_OUTCOMES[4]) : null;
+            return (
+              <div key={x.o.id + ":" + x.bill.id}>
+                <div className="vz-kv">
+                  <span>{x.bill.invNo ? "#" + x.bill.invNo : x.o.no + " · not invoiced"} · due {dmy(x.dueOn)}
+                    {x.daysLeft < 0 && <b style={{ color:"#B4262A" }}> · {-x.daysLeft}d over</b>}</span>
+                  <b className="vz-money">{inr(x.due)}</b>
+                </div>
+                {/* What was said last time, so she is not ringing a man who
+                    already promised a cheque on Friday. */}
+                {last && (
+                  <div className="vz-meta" style={{ marginTop:-2, marginBottom:6 }}>
+                    <b>{oc.label}</b> {dmy(last.date)}{last.note ? " — " + last.note : ""}
+                    {last.nextOn && <span style={{ color: last.nextOn <= today() ? "#B4262A" : "var(--muted)" }}>
+                      {" · call again " + dmy(last.nextOn)}</span>}
+                  </div>
+                )}
+                <button className={"vz-chip " + (dueIds.has(x.o.id) ? "c-red" : "c-blue")}
+                  style={{ marginBottom:8 }} onClick={() => onFollowup(x)}>
+                  {last ? "Log another follow-up" : "Log a follow-up"}
+                </button>
+              </div>
+            );
+          })}
+          {g.v && (g.v.phone || g.v.email) && (
+            <button className="vz-chip c-green" style={{ marginTop:9 }} onClick={() => onSend(g)}>Send statement</button>
+          )}
+        </div>
+      ))}
+
+      {view === "invoice" && r.rows.map(x => (
+        <button className="vz-card vz-tapcard" key={x.o.id + ":" + x.bill.id} onClick={() => onOpenOrder(x.o.id)}>
+          <div className="vz-row">
+            <div style={{ minWidth:0 }}>
+              <div className="vz-title">{x.bill.invNo ? "#" + x.bill.invNo : x.o.no} · {x.v ? x.v.name : "—"}</div>
+              <div className="vz-meta">{x.o.title || "—"} · due {dmy(x.dueOn)}
+                {x.bill.from && !x.bill.whole ? " · " + dmy(x.bill.from) + "–" + dmy(x.bill.to) : ""}</div>
+              <div className="vz-meta">
+                {x.bill.invNo ? "Invoiced " : "Not invoiced yet · "}{inr(x.bill.total)} · received {inr(x.paid)}
+                {x.credited > 0 ? " · credited " + inr(x.credited) : ""}
+              </div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <div className="vz-money">{inr(x.due)}</div>
+              <Chip c={x.daysLeft < 0 ? "c-red" : "c-blue"}>{x.daysLeft < 0 ? -x.daysLeft + "d over" : "in " + x.daysLeft + "d"}</Chip>
+            </div>
+          </div>
+        </button>
+      ))}
+    </Sheet>
+  );
+}
+
+/* ---------------------------- forecast ----------------------------
+   What is expected in and what is committed out, month by month. Nothing here
+   is a projection of business we hope to win — only campaigns already on the
+   books, wages the fleet is already earning and tax already charged. */
+function ForecastSheet({ db, paidOn, onClose }) {
+  const r = receivables(db, paidOn);
+  const months = [];
+  for (let i = 0; i < 4; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+
+  /* Wages are the fleet's own run-rate: what the last four weeks actually cost,
+     carried forward. Quoting the rate card instead would forecast a fleet that
+     never has a van in the workshop. */
+  const curWeek = weekEnding(today());
+  let weeks = 0, wageSum = 0;
+  /* Start at the week in progress, not the one before it. A fleet that has only
+     just started recording duty had every completed week empty, so the forecast
+     showed a payroll of nothing at all. */
+  for (let i = 0; i <= 4; i++) {
+    const w = addDays(curWeek, -7 * i), { start } = weekRange(w);
+    const recs = (db.attendance || []).filter(a => String(a.date || "") >= start && String(a.date || "") <= w);
+    if (!recs.length) continue;
+    weeks++;
+    wageSum += (db.drivers || []).reduce((s, d) => {
+      const mine = recs.filter(a => a.driverId === d.id);
+      return s + mine.length * (+d.wage || 0) + mine.filter(a => a.outstation).length * (+d.batta || 0);
+    }, 0);
+  }
+  const weeklyWages = weeks ? Math.round(wageSum / weeks) : 0;
+  const staffWeekly = (db.staff || []).filter(s => s.active !== false).reduce((s, x) => s + (+x.weeklyWage || 0), 0);
+  const monthlyPayroll = Math.round((weeklyWages + staffWeekly) * 52 / 12);
+
+  /* Running costs carried forward the same way: the average of whatever the
+     last three months actually cost. Months with nothing recorded are left out
+     rather than averaged in as zero, which would halve the figure. */
+  let mCount = 0, mSum = 0;
+  for (let i = 0; i <= 3; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    const mo = d.getFullYear() + "-" + pad2(d.getMonth() + 1);
+    const spent = expenseTotal(expensesIn(db, mo));
+    if (spent > 0) { mCount++; mSum += spent; }
+  }
+  const monthlyExpenses = mCount ? Math.round(mSum / mCount) : 0;
+  const anyExpense = (db.expenses || []).length > 0;
+
+  const rows = months.map(mo => {
+    // Money in: the balance on every invoice whose due date falls in the month.
+    // Anything already overdue is expected this month — it is owed now.
+    const collect = r.rows.filter(x => {
+      const m2 = String(x.dueOn).slice(0, 7);
+      return mo === months[0] ? m2 <= mo : m2 === mo;
+    }).reduce((s, x) => s + x.due, 0);
+
+    // GST charged on invoices raised in the previous month is payable on the
+    // 20th of this one. It is not our money and it leaves on a fixed date.
+    const prev = (() => { const d = new Date(mo + "-01T12:00:00Z"); d.setUTCMonth(d.getUTCMonth() - 1); return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1); })();
+    const outTax = (db.orders || []).flatMap(o => billsOf(o, (db.vendors || []).find(x => x.id === o.vendorId)))
+      .filter(b => String(b.date || "").slice(0, 7) === prev)
+      .reduce((s, b) => s + (+b.gst || 0), 0);
+    const credited = (db.creditNotes || []).filter(c => String(c.date || "").slice(0, 7) === prev)
+      .reduce((s, c) => s + (+c.gst || 0), 0);
+    const gstOut = Math.max(0, outTax - credited - inputGstIn(db, prev));
+
+    // Straight off the vehicle records, not the alert list: alerts only reach
+    // 30 days ahead, and a forecast that stops at 30 days is not a forecast.
+    let renewals = 0;
+    (db.vehicles || []).forEach(v => DOCS.forEach(doc => {
+      if (String(v[doc.k] || "").slice(0, 7) === mo) renewals++;
+    }));
+
+    return { mo, collect, gstOut, payroll: monthlyPayroll, expenses: monthlyExpenses, renewals,
+             net: collect - gstOut - monthlyPayroll - monthlyExpenses };
+  });
+
+  let running = 0;
+  return (
+    <Sheet title="Forecast" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0, marginBottom:10 }}>
+        Built only from campaigns already invoiced and wages already being paid — no guessed business.
+      </div>
+
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Due to come in</i><b style={{ fontSize:17 }}>{inr(r.total)}</b><small>{r.rows.length} invoices</small></div>
+        <div className="vz-stat"><i>Payroll a month</i><b style={{ fontSize:17 }}>{inr(monthlyPayroll)}</b><small>{weeks ? "from " + weeks + " week" + (weeks === 1 ? "" : "s") + " of duty" : "no attendance yet"}</small></div>
+        <div className="vz-stat"><i>Running costs</i><b style={{ fontSize:17 }}>{inr(monthlyExpenses)}</b><small>{mCount ? "average of " + mCount + " month" + (mCount === 1 ? "" : "s") : "nothing recorded"}</small></div>
+      </div>
+      {!anyExpense && (
+        <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+          <div className="vz-meta" style={{ marginTop:0, color:"#8A6100" }}>
+            No expenses have been recorded, so this forecast counts only wages and GST going out.
+            Diesel, flex, tolls and EMIs are missing — record them and these figures become real.
+          </div>
+        </div>
+      )}
+
+      {rows.map(x => {
+        running += x.net;
+        return (
+          <div className="vz-card" key={x.mo}>
+            <div className="vz-row">
+              <div>
+                <div className="vz-title">{monthLabel(x.mo)}</div>
+                <div className="vz-meta">{x.mo === months[0] ? "this month, including everything overdue" : "on the agreed due dates"}</div>
+              </div>
+              <b className="vz-money" style={{ color: x.net >= 0 ? "#178951" : "#E5484D" }}>{inr(x.net)}</b>
+            </div>
+            <div className="vz-kv"><span>Collections expected</span><b className="vz-money" style={{ color:"#178951" }}>{inr(x.collect)}</b></div>
+            <div className="vz-kv"><span>Payroll (drivers + staff)</span><b className="vz-money">− {inr(x.payroll)}</b></div>
+            <div className="vz-kv"><span>Running costs (diesel, flex, tolls…)</span><b className="vz-money">− {inr(x.expenses)}</b></div>
+            <div className="vz-kv"><span>GST payable on the 20th</span><b className="vz-money">− {inr(x.gstOut)}</b></div>
+            <div className="vz-kv"><span>Running position</span><b className="vz-money" style={{ color: running >= 0 ? "#178951" : "#E5484D" }}>{inr(running)}</b></div>
+            {x.renewals > 0 && <div className="vz-meta" style={{ color:"#8A6100" }}>
+              {x.renewals} vehicle document{x.renewals === 1 ? "" : "s"} fall due this month — insurance and FC are not in the figures above.
+            </div>}
+          </div>
+        );
+      })}
+
+      <div className="vz-meta">
+        Workshop spend is not forecast: it happens when it happens. Keep a month of payroll aside for it.
+      </div>
+    </Sheet>
+  );
+}
+
+/* ---------------------------- campaign P&L ----------------------------
+   What each campaign actually made, once the wages of the vans that carried it
+   are counted against it. A campaign that quoted well and ran on six vans for
+   two months is not the same campaign at the end of the month. */
+function CampaignPnlSheet({ db, vendorOf, onOpenOrder, onClose }) {
+  const [only, setOnly] = useState("all");         // all | running | done
+  const list = (db.orders || [])
+    .filter(o => only === "all" || (only === "running" ? (o.stage === "Running" || o.stage === "Advance paid") : o.stage === "Completed"))
+    .map(o => ({ o, v: vendorOf(o.vendorId), p: campaignPnl(db, o) }))
+    .sort((a, b) => (a.p.margin - b.p.margin));     // worst first: those are the ones to look at
+
+  const tot = list.reduce((t, x) => ({
+    revenue: t.revenue + x.p.revenue, cost: t.cost + x.p.cost, margin: t.margin + x.p.margin,
+    wages: t.wages + x.p.wages + x.p.battas,
+  }), { revenue:0, cost:0, margin:0, wages:0 });
+
+  const exportCsv = () => {
+    const rows = [["Campaign", "Customer", "Period", "Vans", "Duty days", "Revenue (excl GST)",
+                   "Driver wages", "Batta", "Production", "Running costs", "Workshop", "Total cost", "Margin", "Margin %"]];
+    list.forEach(({ o, v, p }) => rows.push([
+      o.title || o.no, v ? v.name : "", (o.start || "") + " to " + (o.end || ""), (o.vehicleIds || []).length,
+      p.dutyDays, p.revenue, p.wages, p.battas, p.production, p.running, p.workshop, p.cost, p.margin,
+      p.revenue > 0 ? Math.round((p.margin / p.revenue) * 100) + "%" : "",
+    ]));
+    downloadCsv("campaign-pnl-" + today() + ".csv", rows);
+  };
+
+  return (
+    <Sheet title="What each campaign made" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0 }}>
+        Driver wages are taken from the days these vans were actually on duty inside the campaign
+        period. A van carrying two brands on one day splits that day's wage between them.
+      </div>
+
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Revenue (excl GST)</i><b style={{ fontSize:17 }}>{inr(tot.revenue)}</b><small>{list.length} campaigns</small></div>
+        <div className="vz-stat"><i>Margin</i><b style={{ fontSize:17, color: tot.margin >= 0 ? "#178951" : "#E5484D" }}>{inr(tot.margin)}</b><small>after wages &amp; production</small></div>
+      </div>
+
+      <div className="vz-mode" style={{ margin:"10px auto", width:"fit-content" }}>
+        {[["all", "All"], ["running", "Running"], ["done", "Completed"]].map(([k, lbl]) =>
+          <button key={k} data-on={only === k ? "1" : "0"} onClick={() => setOnly(k)}>{lbl}</button>)}
+      </div>
+      <button className="vz-btn alt" style={{ marginTop:0 }} disabled={!list.length} onClick={exportCsv}>Export</button>
+
+      {list.length === 0 && <div className="vz-card"><div className="vz-meta">No campaigns in this view.</div></div>}
+      {list.map(({ o, v, p }) => {
+        const pct = p.revenue > 0 ? Math.round((p.margin / p.revenue) * 100) : 0;
+        return (
+          <div className="vz-card" key={o.id}>
+            <div className="vz-row">
+              <button className="vz-tapcard" style={{ flex:1 }} onClick={() => onOpenOrder(o.id)}>
+                <div className="vz-title">{o.title || o.no}</div>
+                <div className="vz-meta">{v ? v.name : "—"} · {(o.vehicleIds || []).length} van(s) · {p.dutyDays} duty days</div>
+              </button>
+              <div style={{ textAlign:"right" }}>
+                <div className="vz-money" style={{ color: p.margin >= 0 ? "#178951" : "#E5484D" }}>{inr(p.margin)}</div>
+                <Chip c={pct >= 40 ? "c-green" : pct >= 15 ? "c-yellow" : "c-red"}>{pct}%</Chip>
+              </div>
+            </div>
+            <div className="vz-kv"><span>Revenue excluding GST</span><b className="vz-money">{inr(p.revenue)}</b></div>
+            <div className="vz-kv"><span>Driver wages{p.battas > 0 ? " + batta" : ""}</span><b className="vz-money">− {inr(p.wages + p.battas)}</b></div>
+            {p.production > 0 && <div className="vz-kv"><span>Flex &amp; fabrication</span><b className="vz-money">− {inr(p.production)}</b></div>}
+            {p.running > 0 && <div className="vz-kv"><span>Diesel &amp; running</span><b className="vz-money">− {inr(p.running)}</b></div>}
+            {p.workshop > 0 && <div className="vz-kv"><span>Workshop while running</span><b className="vz-money">− {inr(p.workshop)}</b></div>}
+            {p.dutyDays === 0 && (o.vehicleIds || []).length > 0 && (
+              <div className="vz-meta" style={{ color:"#8A6100" }}>
+                No duty was recorded for these vans in this period — the wage cost here is not real yet.
+              </div>
+            )}
+          </div>
+        );
+      })}
     </Sheet>
   );
 }
@@ -2362,21 +4472,91 @@ function OfficePunchIn({ db, vehOf, onPunchIn }) {
   );
 }
 
-function AttendanceSheet({ db, vehOf, drvOf, onPunchIn, onPunchOut, onClose }) {
+/* Cash handed to a driver ahead of his wage. It is recovered from the coming
+   weeks automatically, so nobody has to remember it on a Saturday. */
+function AdvanceForm({ driver, db, onSave, onDelete, onClose }) {
+  const [f, set] = useState({ date: today(), amount:"", note:"" });
+  const mine = (db.advances || []).filter(a => a.driverId === driver.id).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const owed = advanceOwed(db, driver.id, weekEnding(today()));
+  return (
+    <Sheet title={"Advance · " + driver.name} onClose={onClose}>
+      <div className="vz-stat" style={{ marginBottom:10 }}>
+        <i>Still to recover</i><b style={{ fontSize:18 }}>{inr(owed)}</b>
+        <small>comes off the coming weeks' wages</small>
+      </div>
+      <div className="vz-2">
+        <F label="Amount ₹"><input type="number" value={f.amount} onChange={e => set({ ...f, amount: e.target.value })} inputMode="numeric" /></F>
+        <F label="Given on"><input type="date" value={f.date} onChange={e => set({ ...f, date: e.target.value })} /></F>
+      </div>
+      <F label="What for (optional)"><input value={f.note} onChange={e => set({ ...f, note: e.target.value })} placeholder="hospital, school fees…" /></F>
+      <button className="vz-btn" disabled={!(+f.amount > 0)}
+        onClick={() => onSave({ id: uid(), driverId: driver.id, date: f.date, amount: +f.amount, note: f.note.trim() })}>
+        Record advance
+      </button>
+      {mine.length > 0 && <div className="vz-eyebrow">Advances given</div>}
+      {mine.map(a => (
+        <div className="vz-kv" key={a.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+          <span>{dmy(a.date)}{a.note ? " · " + a.note : ""}</span>
+          <span style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <b className="vz-money">{inr(a.amount)}</b>
+            <button className="vz-chip c-red" onClick={() => { if (window.confirm("Delete this advance? The wages already worked out will change.")) onDelete(a.id); }}>Delete</button>
+          </span>
+        </div>
+      ))}
+      <div className="vz-meta">
+        Recovery is capped at what he earned that week, so an advance never leaves a man with nothing.
+      </div>
+    </Sheet>
+  );
+}
+
+function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onAdvance, onPayWeek, onPayslip, onClose }) {
   const [closing, setClosing] = useState(null);   // {id, km} while ending a duty
-  const month = today().slice(0, 7);
-  const recs = (db.attendance || []).filter(a => String(a.date).slice(0, 7) === month);
-  const rows = db.drivers.map(d => {
-    const mine = recs.filter(a => a.driverId === d.id);
-    return { d, days: mine.length, pay: mine.length * (+d.wage || 0) };
-  }).sort((a, b) => b.days - a.days);
-  const bill = rows.reduce((s, r) => s + r.pay, 0);
+  const [openRow, setOpenRow] = useState("");     // driver whose week is expanded
+  // Payroll runs Sunday to Saturday and is keyed by the Saturday it is paid
+  // on — "the week ending 16 Aug" is what means something here, not a month.
+  const [weekEnd, setWeekEnd] = useState(weekEnding(today()));
+  const { start: weekStart } = weekRange(weekEnd);
+  const inWeek = (d) => d >= weekStart && d <= weekEnd;
+
+  const weekRecs = (db.attendance || []).filter(a => inWeek(String(a.date || "")));
+  const driverRows = db.drivers.map(d => {
+    const w = driverWeek(db, d, weekStart, weekEnd);
+    return { id: d.id, kind: "driver", name: d.name, w, rec: d,
+      sub: w.days + " day" + (w.days === 1 ? "" : "s") + " × " + inr(d.wage)
+        + (w.batta > 0 ? " + batta " + inr(w.batta) : "")
+        + (w.advance > 0 ? " − advance " + inr(w.advance) : ""),
+      pay: w.net };
+  });
+  // A fixed weekly wage, paid whether or not there was work that week — but
+  // not before the person joined, and not once turned inactive.
+  const staffRows = (db.staff || [])
+    .filter(s => s.active !== false && (!s.joined || s.joined <= weekEnd))
+    .map(s => ({ id: s.id, kind: "staff", name: s.name,
+      sub: "weekly" + (s.role ? " · " + s.role : ""), pay: +s.weeklyWage || 0, rec: s }));
+  const rows = [...driverRows, ...staffRows].sort((a, b) => b.pay - a.pay);
+  const driverBill = driverRows.reduce((s, r) => s + r.pay, 0);
+  const staffBill = staffRows.reduce((s, r) => s + r.pay, 0);
+  const bill = driverBill + staffBill;
+  // A week that has been paid says so, and says when. Without this a settled
+  // week and one nobody has touched looked exactly alike on a Monday morning.
+  const payrun = (db.payruns || []).find(p => p.weekEnd === weekEnd);
+  // Weeks recorded before payroll had a release step carry no status, only a
+  // paid date. They were paid, and must not reappear as waiting for approval.
+  const wasPaid = !!payrun && (payrun.status === "paid" || (!payrun.status && !!payrun.paidOn));
+
+  const weeks = [];
+  for (let i = 0; i < 10; i++) {
+    const d = new Date(weekEnding(today()) + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 7 * i);
+    weeks.push(localDay(d));
+  }
+
   const log = (db.attendance || []).filter(a => a.date === today());
   return (
-    <Sheet title="Attendance & wages" onClose={onClose}>
+    <Sheet title="Attendance & payroll" onClose={onClose}>
       <div className="vz-grid" style={{ marginBottom:4 }}>
         <div className="vz-stat"><i>Present today</i><b>{log.length}<small style={{ fontSize:13 }}> / {db.drivers.length}</small></b><small>signed in with a vehicle</small></div>
-        <div className="vz-stat"><i>Wage bill, this month</i><b style={{ fontSize:18 }}>{inr(bill)}</b><small>days worked × daily rate</small></div>
+        <div className="vz-stat"><i>Payroll, week ending {dmy(weekEnd)}</i><b style={{ fontSize:18 }}>{inr(bill)}</b><small>drivers {inr(driverBill)} · staff {inr(staffBill)}</small></div>
       </div>
 
       <OfficePunchIn db={db} vehOf={vehOf} onPunchIn={onPunchIn} />
@@ -2431,16 +4611,137 @@ function AttendanceSheet({ db, vehOf, drvOf, onPunchIn, onPunchOut, onClose }) {
         );
       })}
 
-      <div className="vz-eyebrow">This month</div>
-      {rows.map(r => (
-        <div className="vz-kv" key={r.d.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
-          <span style={{ color:"var(--ink)", fontWeight:600 }}>{r.d.name}<br /><small style={{ color:"var(--muted)", fontWeight:400 }}>{r.days} days × {inr(r.d.wage)}</small></span>
-          <b className="vz-money">{inr(r.pay)}</b>
-        </div>
-      ))}
+      <div className="vz-eyebrow">Payroll</div>
+      <F label="Week ending (Saturday)">
+        <select value={weekEnd} onChange={e => setWeekEnd(e.target.value)}>
+          {weeks.map(w => <option key={w} value={w}>{weekLabel(w)}{w === weekEnding(today()) ? " — current" : ""}</option>)}
+        </select>
+      </F>
+      {rows.length === 0 && <div className="vz-card"><div className="vz-meta">No drivers or staff to pay yet.</div></div>}
+      {rows.map(r => {
+        const row = (
+          <>
+            <span style={{ color:"var(--ink)", fontWeight:600 }}>
+              {r.name}
+              {r.kind === "staff" && <Chip c="c-blue"> staff</Chip>}
+              <br /><small style={{ color:"var(--muted)", fontWeight:400 }}>{r.sub}</small>
+            </span>
+            <b className="vz-money">{inr(r.pay)}</b>
+          </>
+        );
+        if (r.kind === "staff") {
+          return perm.money
+            ? <button className="vz-kv vz-tapcard" key={r.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6, width:"100%", textAlign:"left" }}
+                onClick={() => onEditStaff(r.rec)}>{row}</button>
+            : <div className="vz-kv" key={r.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>{row}</div>;
+        }
+        /* A driver's week opens up: every day he was out, with the outstation
+           tick that earns him his batta, and what he has taken in advance. The
+           tick has to live here — the day is only known to be outstation once
+           the van is back. */
+        const open = openRow === r.id;
+        return (
+          <div key={r.id} style={{ background:"#fff", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+            <button className="vz-kv vz-tapcard" style={{ padding:"11px 13px", width:"100%", textAlign:"left", background:"transparent", border:0 }}
+              onClick={() => setOpenRow(open ? "" : r.id)}>{row}</button>
+            {open && (
+              <div style={{ padding:"0 13px 12px" }}>
+                {r.w.records.length === 0 && <div className="vz-meta">No duty recorded this week.</div>}
+                {r.w.records.slice().sort((a, b) => (a.date < b.date ? -1 : 1)).map(a => (
+                  <div className="vz-kv" key={a.id}>
+                    <span>{dmy(a.date)} · {a.vehiclePlate || (vehOf(a.vehicleId) || {}).plate || "—"}
+                      {(a.openKm != null && a.closeKm != null) ? "  " + (a.closeKm - a.openKm) + " km" : ""}</span>
+                    {perm.money
+                      ? <button className={"vz-chip " + (a.outstation ? "c-green" : "c-grey")} onClick={() => onOutstation(a, !a.outstation)}>
+                          {a.outstation ? "Outstation ✓" : "Outstation"}
+                        </button>
+                      : (a.outstation ? <Chip c="c-green">Outstation</Chip> : <span className="vz-meta">Local</span>)}
+                  </div>
+                ))}
+                <div className="vz-kv"><span>Wage · {r.w.days} day(s)</span><b className="vz-money">{inr(r.w.wage)}</b></div>
+                {(+r.rec.batta || 0) > 0 && <div className="vz-kv"><span>Batta · {r.w.outDays} outstation day(s)</span><b className="vz-money">{inr(r.w.batta)}</b></div>}
+                {r.w.advance > 0 && <div className="vz-kv"><span>Advance recovered</span><b className="vz-money" style={{ color:"#B4262A" }}>− {inr(r.w.advance)}</b></div>}
+                {r.w.owed > r.w.advance && <div className="vz-meta" style={{ color:"#8A6100" }}>
+                  {inr(r.w.owed - r.w.advance)} of advance still to recover after this week.
+                </div>}
+                <div className="vz-kv"><span style={{ fontWeight:700 }}>Net payable</span><b className="vz-money" style={{ fontSize:15 }}>{inr(r.w.net)}</b></div>
+                {perm.money && <div className="vz-inline" style={{ marginTop:8, flexWrap:"wrap" }}>
+                  <button className="vz-chip c-blue" onClick={() => onAdvance(r.rec)}>Give an advance</button>
+                  <button className="vz-chip c-green" onClick={() => onPayslip(r.rec, r.w, weekEnd)}>Send payslip</button>
+                </div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
       <div className="vz-kv" style={{ padding:"12px 2px" }}>
         <span style={{ fontWeight:700, color:"var(--ink)" }}>Total payable</span>
         <b className="vz-money" style={{ fontSize:16 }}>{inr(bill)}</b>
+      </div>
+
+      {/* Wages go out in two hands: whoever owns the business releases the week,
+          and finance pays it. Both are stamped, so it is always clear who
+          approved what. */}
+      {wasPaid ? (
+        <div className="vz-card" style={{ background:"#EAF6EE", borderColor:"#BFE6CC" }}>
+          <div className="vz-row">
+            <div>
+              <div className="vz-title" style={{ color:"#12703A" }}>Paid</div>
+              <div className="vz-meta">{dmy(payrun.paidOn)} · {payrun.mode} · {payrun.lines.length} people</div>
+              {(payrun.initiatedBy || payrun.paidBy) &&
+                <div className="vz-meta">Released by {payrun.initiatedBy || "—"} · paid by {payrun.paidBy || "—"}</div>}
+            </div>
+            <b className="vz-money" style={{ color:"#12703A" }}>{inr(payrun.total)}</b>
+          </div>
+          {Math.abs(payrun.total - bill) > 1 && (
+            <div className="vz-meta" style={{ color:"#8A6100" }}>
+              The week now works out to {inr(bill)} — attendance or an advance changed after it was paid.
+              The figure above is what actually went out.
+            </div>
+          )}
+        </div>
+      ) : payrun ? (
+        <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+          <div className="vz-row">
+            <div>
+              <div className="vz-title" style={{ color:"#8A6100" }}>Released for payment</div>
+              <div className="vz-meta">by {payrun.initiatedBy || "—"} on {dmy(payrun.initiatedOn)}</div>
+            </div>
+            <b className="vz-money">{inr(payrun.total)}</b>
+          </div>
+          {perm.money
+            ? <button className="vz-btn go" style={{ marginBottom:0 }} onClick={() => onPayWeek(weekEnd, rows, bill, "pay")}>
+                Mark it paid — {inr(payrun.total)}
+              </button>
+            : <div className="vz-meta">Waiting for finance to pay it.</div>}
+        </div>
+      ) : bill > 0 && (
+        perm.users
+          ? <button className="vz-btn go" onClick={() => onPayWeek(weekEnd, rows, bill, "release")}>
+              Release this week for payment — {inr(bill)}
+            </button>
+          : <div className="vz-card" style={{ background:"#FAFBFC" }}>
+              <div className="vz-meta" style={{ marginTop:0 }}>
+                {inr(bill)} is worked out for this week. It cannot be paid until the week is released
+                for payment by a Director.
+              </div>
+            </div>
+      )}
+
+      {perm.money && (
+        <button className="vz-btn alt" onClick={() => onEditStaff(null)}>Add staff — fixed weekly wage</button>
+      )}
+      <button className="vz-btn alt" disabled={!rows.length} onClick={() => {
+        const out = [["Week ending", "Name", "Type", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
+        driverRows.forEach(r => out.push([dmy(weekEnd), r.name, "Driver", r.w.days, r.w.outDays, r.w.wage, r.w.batta, r.w.advance, r.w.net]));
+        staffRows.forEach(r => out.push([dmy(weekEnd), r.name, "Staff", "", "", r.pay, 0, 0, r.pay]));
+        out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", bill]);
+        downloadCsv("payroll-week-ending-" + weekEnd + ".csv", out);
+      }}>Export this week's payroll</button>
+      <div className="vz-meta">
+        Drivers are paid for each day they signed in this week, plus batta for any day ticked
+        outstation, less any advance still to recover. Staff are paid the same amount every
+        week they are active, whether or not there was field work.
       </div>
     </Sheet>
   );
@@ -3016,12 +5317,27 @@ function VibeCRM() {
         }
         if (Array.isArray(at)) {
           const byId = {}; (next.attendance || []).forEach(a => { byId[a.id] = a; });
-          at.forEach(r => { byId[r.id] = {
+          /* Spread the row we already hold, not a bare object: the server table
+             carries no driverId and no outstation tick, so replacing the row
+             wholesale used to erase both every 15 seconds — which quietly took
+             the day out of that driver's payroll. */
+          at.forEach(r => { byId[r.id] = { ...(byId[r.id] || {}),
             id: r.id, date: r.date, vehicleId: r.vehicle_id, vehiclePlate: r.vehicle_plate || "", driverName: r.driver_name,
             inAt: srvISO(r.in_at), outAt: srvISO(r.out_at), lat: r.lat != null ? +r.lat : null,
             lng: r.lng != null ? +r.lng : null, autoClosed: !!(+r.auto_closed),
             openKm: r.open_km != null ? +r.open_km : null, closeKm: r.close_km != null ? +r.close_km : null,
             selfieUrl: r.selfie_url || "" }; });
+          /* A shift punched on the driver's own phone reaches us with his name
+             but no id. Payroll and campaign costing are keyed on the id, so tie
+             it back to the roster by name — otherwise the men who actually use
+             the app are the ones missing from their own wage sheet. */
+          const roster = next.drivers || [];
+          Object.keys(byId).forEach(k => {
+            const a = byId[k];
+            if (a.driverId || !a.driverName) return;
+            const hit = roster.find(d => String(d.name || "").trim().toLowerCase() === String(a.driverName).trim().toLowerCase());
+            if (hit) byId[k] = { ...a, driverId: hit.id };
+          });
           next = { ...next, attendance: Object.values(byId) };
         }
         return next;
@@ -3088,7 +5404,12 @@ function VibeCRM() {
   const orderOf = (id) => db.orders.find(o => o.id === id);
   const vehOf = (id) => db.vehicles.find(v => v.id === id);
   const drvOf = (id) => db.drivers.find(d => d.id === id);
-  const paidOn = (oid) => db.payments.filter(p => p.orderId === oid).reduce((s, p) => s + p.amount, 0);
+  /* What the invoice has been settled by — not what reached the bank. A customer
+     who deducts TDS pays 98% and the rest sits with the government against our
+     PAN; counting only the cash left every such invoice looking part-paid
+     forever and the chase list full of people who owe nothing. */
+  const paidOn = (oid) => db.payments.filter(p => p.orderId === oid)
+    .reduce((s, p) => s + (+p.amount || 0) + (+p.tds || 0), 0);
 
   const stats = useMemo(() => {
     const onRoad = db.vehicles.filter(v => v.status === "On road").length;
@@ -3499,6 +5820,128 @@ function VibeCRM() {
     });
   };
 
+  /* A statement of account: every invoice of theirs still open, what is overdue,
+     and the total. Sent the same way as everything else — WhatsApp or email,
+     with the message written and the customer's own terms quoted back. */
+  const sendStatement = (g) => {
+    const v = g.v;
+    const lines = g.rows.map(x =>
+      "• " + (x.bill.invNo ? "Invoice #" + x.bill.invNo : x.o.no) + " — " + inr(x.due)
+      + " (due " + dmy(x.dueOn) + (x.daysLeft < 0 ? ", " + -x.daysLeft + " days over" : "") + ")");
+    const text = ["*VIBE MARKETING* — statement of account", "",
+      "Dear " + (v.person || v.name) + ",", "",
+      "Our records show the following outstanding against your campaigns:", "",
+      ...lines, "",
+      "*Total outstanding: " + inr(g.due) + "*",
+      creditDaysOf(v) > 0 ? "Agreed credit period: " + creditDaysOf(v) + " days from invoice date." : "",
+      "", "If any of this has already been paid, please share the reference and we will update our books.",
+      "", "Thank you for your business.", "— " + (db.settings.company || "Vibe Marketing")].filter(l => l !== "").join("\n");
+    setSend({
+      title: "Statement — " + v.name, to: v.name, phone: v.phone, email: v.email,
+      subject: "Statement of account — " + inr(g.due) + " outstanding",
+      text,
+      onSent: (ch) => setToast("Statement sent · " + ch),
+    });
+  };
+
+  /* Putting money on a card is money leaving the business, so a recharge is two
+     things at once: the card's balance goes up, and diesel spend goes on the
+     books against that van. Correcting a balance moves neither — it only tells
+     us what the pump already knows. */
+  const rechargeCard = (card, t) => {
+    put("fuelTxns", t);
+    put("fuelCards", { ...card, balance: t.balance, balanceAt: t.date });
+    if (t.type === "recharge" && t.amount > 0) {
+      const veh = vehOf(card.vehicleId);
+      put("expenses", {
+        id: uid(), date: t.date, cat: "Diesel", amount: t.amount, gstPaid: 0,
+        vehicleId: card.vehicleId, orderId: "", mode: "Bank transfer",
+        note: "Petrol card recharge" + (veh ? " · " + veh.plate : "") + (card.number ? " · " + card.number : ""),
+        fromCard: card.id,
+      });
+      setToast("Recharged " + inr(t.amount) + " — also recorded as diesel");
+    } else {
+      setToast("Balance updated");
+    }
+  };
+
+  /* Payroll actually leaving the bank. The week is stored as it stood the day
+     it was paid — attendance corrected afterwards must not rewrite history. */
+  const payWeek = (weekEnd, rows, total, step) => {
+    const who = db.adminName || "office";
+    if (step === "release") {
+      if (!window.confirm("Release the week ending " + dmy(weekEnd) + " for payment — " + inr(total) + "?")) return;
+      put("payruns", {
+        id: "pr_" + weekEnd, weekEnd, status: "released", total,
+        initiatedBy: who, initiatedOn: today(), mode: "Cash",
+        // The week is frozen as it stood when it was released — that is what
+        // was approved, and it is what finance pays.
+        lines: rows.map(r => r.kind === "driver"
+          ? { id: r.id, name: r.name, kind: "driver", days: r.w.days, outDays: r.w.outDays,
+              wage: r.w.wage, batta: r.w.batta, advance: r.w.advance, net: r.w.net }
+          : { id: r.id, name: r.name, kind: "staff", net: r.pay }),
+      });
+      setToast("Released for payment · " + inr(total));
+      return;
+    }
+    const cur = (db.payruns || []).find(p => p.weekEnd === weekEnd);
+    if (!cur) { setToast("This week has not been released for payment yet"); return; }
+    if (!window.confirm("Record " + inr(cur.total) + " as paid for the week ending " + dmy(weekEnd) + "?")) return;
+    put("payruns", { ...cur, status: "paid", paidOn: today(), paidBy: who });
+    setToast("Week ending " + dmy(weekEnd) + " marked paid");
+  };
+
+  /* What a driver is handed, in the language he reads. He cannot see the app's
+     payroll screen, so this is the only account he gets of his own week. */
+  const sendPayslip = (drv, w, weekEnd) => {
+    const ta = (db.settings.driverLang || "en") === "ta";
+    const { start } = weekRange(weekEnd);
+    const lines = ta
+      ? ["*VIBE MARKETING* — ஊதிய விவரம்", "",
+         drv.name, dmy(start) + " முதல் " + dmy(weekEnd) + " வரை", "",
+         "வேலை நாட்கள்: " + w.days + " × " + inr(drv.wage) + " = " + inr(w.wage),
+         w.batta > 0 ? "வெளியூர் பத்தா: " + w.outDays + " நாள் = " + inr(w.batta) : "",
+         w.advance > 0 ? "முன்பணம் பிடித்தம்: −" + inr(w.advance) : "",
+         "", "*கையில் கிடைப்பது: " + inr(w.net) + "*",
+         w.owed > w.advance ? "மீதி முன்பணம்: " + inr(w.owed - w.advance) : ""]
+      : ["*VIBE MARKETING* — wage slip", "",
+         drv.name, "Week " + dmy(start) + " to " + dmy(weekEnd), "",
+         "Days worked: " + w.days + " × " + inr(drv.wage) + " = " + inr(w.wage),
+         w.batta > 0 ? "Outstation batta: " + w.outDays + " day(s) = " + inr(w.batta) : "",
+         w.advance > 0 ? "Advance recovered: −" + inr(w.advance) : "",
+         "", "*Net paid: " + inr(w.net) + "*",
+         w.owed > w.advance ? "Advance still to recover: " + inr(w.owed - w.advance) : ""];
+    setSend({
+      title: "Payslip — " + drv.name, to: drv.name, phone: drv.phone, email: "",
+      subject: "Wage slip — week ending " + dmy(weekEnd),
+      text: lines.filter(l => l !== "").join("\n"),
+      onSent: (ch) => setToast("Payslip sent · " + ch),
+    });
+  };
+
+  /* The credit note document, built and offered the same way an invoice is. */
+  const openCreditNote = async (cn) => {
+    const o = orderOf(cn.orderId), v = o ? vendorOf(o.vendorId) : null;
+    setDocBusy(true);
+    try {
+      const pages = await creditNotePage({ s: db.settings, v, o: o || {}, cn });
+      const blob = pdfFromPages(pages);
+      setSheet(null);
+      setDoc({
+        pages, blob, title: "CREDIT NOTE", order: o, vendor: v,
+        file: "Credit-Note-" + String(cn.no).replace(/\W+/g, "-") + ".pdf",
+        text: ["Hello " + (v ? (v.person || v.name) : "") + ",", "",
+               "Credit note " + cn.no + " for " + inr(cn.total) + " has been raised against invoice #"
+               + cn.againstInv + " (" + (o ? o.title : "") + ").",
+               "Reason: " + cn.reason + ".", "",
+               "Your outstanding reduces by " + inr(cn.total) + ". The original invoice remains unchanged.",
+               "", "Thank you.", signOff()].join("\n"),
+        subject: "Credit note " + cn.no + " — " + (db.settings.company || "Vibe Marketing"),
+      });
+    } catch (e) { setToast("Could not build the credit note"); }
+    setDocBusy(false);
+  };
+
   /* ------------------------- screens ------------------------- */
   const Home = () => (
     <>
@@ -3762,10 +6205,39 @@ function VibeCRM() {
   /* Number the invoice only now, so backing out of the question above doesn't
      burn an invoice number, then build the same two-page PDF as the quotation. */
   const raiseInvoice = (o, km) => {
-    let ord = { ...o, outKm: km || 0 };
+    const v = vendorOf(o.vendorId);
+    // Re-read the customer at the moment of invoicing: their state and credit
+    // terms may have been corrected since the campaign was first raised.
+    let ord = { ...o, outKm: km || 0, igst: isInterstate(v, db.settings) };
+
+    /* Billed month by month: each raise takes the next unbilled slice and gives
+       it its own number, period and due date. The flex and fabrication ride on
+       the first bill, the outstation running on the last. */
+    if (billingOf(ord, v) === "monthly") {
+      const slice = nextSlice(ord, v);
+      if (!slice) { setToast("Every month of this campaign has already been invoiced"); setInvAsk(null); return; }
+      const n = db.settings.nextInvNo || 1;
+      const t = cnMath(ord, slice.sub);
+      const part = { id: uid(), invNo: n, date: today(), days: slice.days,
+                     dueDate: creditDaysOf(v) > 0 ? addDays(today(), creditDaysOf(v)) : slice.to,
+                     from: slice.from, to: slice.to, first: slice.first, last: slice.last,
+                     sub: t.sub, gst: t.gst, cgst: t.cgst, sgst: t.sgst, igst: t.igst, inter: t.inter, total: t.total };
+      ord = { ...ord, parts: [...(ord.parts || []), part] };
+      setSetting("nextInvNo", n + 1);
+      put("orders", ord);
+      setInvAsk(null);
+      // The PDF prints this slice, not the whole campaign.
+      openDoc({ ...ord, invNo: part.invNo, invDate: part.date, dueDate: part.dueDate,
+                start: part.from, end: part.to, dayWise: true, days: part.days,
+                fabrication: part.first ? ord.fabrication : 0, flex: part.first ? ord.flex : 0,
+                outKm: part.last ? (km || 0) : 0 }, "TAX INVOICE");
+      return;
+    }
+
     if (!ord.invNo) {
       const n = db.settings.nextInvNo || 1;
       ord = { ...ord, invNo: n, invDate: today() };
+      ord = { ...ord, dueDate: creditDaysOf(v) > 0 ? addDays(ord.invDate, creditDaysOf(v)) : (ord.end || ord.invDate) };
       setSetting("nextInvNo", n + 1);
     }
     put("orders", ord);
@@ -3969,12 +6441,21 @@ function VibeCRM() {
       {fleetView === "vehicles" && db.vehicles.map(v => {
         const d = drvOf(v.driverId);
         const fc = daysTo(v.fcDue), ins = daysTo(v.insDue);
+        // The status chip is set by hand (On road / Workshop / Idle) and can go
+        // stale. Today's open attendance record says who is actually driving
+        // this van right now, which is what Finance is really asking for.
+        const running = (db.attendance || []).find(a => a.vehicleId === v.id && a.date === today() && !a.outAt);
         return (
           <button className="vz-card vz-tapcard" key={v.id} onClick={() => setSheet({ type:"vehicle", data:v })}>
             <div className="vz-row">
               <div>
                 <div className="vz-title" style={{ fontFamily:"var(--mono)" }}>{v.plate}</div>
                 <div className="vz-meta">{v.model} · {v.driverName || (d ? d.name : "No driver")}<br />{v.boardSize}</div>
+                {running && (
+                  <div className="vz-meta" style={{ color:"#178951", fontWeight:700, marginTop:4 }}>
+                    ● On road now — {running.driverName || "—"} since {clock(running.inAt).split(", ").pop()}
+                  </div>
+                )}
               </div>
               <div style={{ textAlign:"right" }}>
                 <Chip c={v.status === "On road" ? "c-green" : v.status === "Workshop" ? "c-red" : "c-grey"}>{v.status}</Chip>
@@ -3991,7 +6472,7 @@ function VibeCRM() {
       {fleetView === "drivers" && (
         <div className="vz-eyebrow" style={{ marginTop:0 }}>
           Today · {(db.attendance || []).filter(a => a.date === today()).length} of {db.drivers.length} signed in
-          <button onClick={() => setSheet({ type:"attendance" })}>Attendance & wages</button>
+          <button onClick={() => setSheet({ type:"attendance" })}>Attendance & payroll</button>
         </div>
       )}
       {fleetView === "drivers" && db.drivers.map(d => {
@@ -4038,7 +6519,7 @@ function VibeCRM() {
                   <div style={{ textAlign:"right" }}>
                     <div className="vz-money">{inr(j.cost)}</div>
                     <Chip c={j.done ? "c-green" : "c-yellow"}>{j.done ? "Done" : "Open"}</Chip>
-                    {perm.del && <div><button className="vz-chip c-red" style={{ marginTop:6 }}
+                    {perm.fleetEdit && <div><button className="vz-chip c-red" style={{ marginTop:6 }}
                       onClick={() => { if (window.confirm("Delete this job?")) { drop("jobs", j.id); setToast("Job deleted"); } }}>Delete</button></div>}
                   </div>
                 </div>
@@ -4119,15 +6600,154 @@ function VibeCRM() {
     const spend = db.jobs.reduce((s, j) => s + j.cost, 0);
     const mth = today().slice(0, 7);
     const wages = (db.attendance || []).filter(a => String(a.date).slice(0, 7) === mth)
-      .reduce((s, a) => { const d = drvOf(a.driverId); return s + (+(d && d.wage) || 0); }, 0);
+      .reduce((s, a) => { const d = drvOf(a.driverId); return s + (+(d && d.wage) || 0) + (a.outstation ? (+(d && d.batta) || 0) : 0); }, 0);
+    const rec = receivables(db, paidOn);
+    const thisMonthSpend = expenseTotal(expensesIn(db, mth));
+    const thisMonthInputGst = inputGstIn(db, mth);
+    const lowCards = (db.fuelCards || []).filter(c => c.active !== false && cardLow(c, db.settings));
+    const callsDue = followupsDue(db);
+    const marked = new Set((db.tallyMarks || []).map(m => m.id));
+    const pendingVouchers = dayBook(db, mth).filter(v => !marked.has(v.id)).length;
+    // TDS the customers have kept back this financial year (April to March).
+    const fyStart = (today().slice(5, 7) >= "04" ? today().slice(0, 4) : String(+today().slice(0, 4) - 1)) + "-04-01";
+    const tdsYtd = (db.payments || []).filter(p => String(p.date || "") >= fyStart).reduce((s, p) => s + (+p.tds || 0), 0);
+    // This week's payroll, for the shortcut below — same Sunday-to-Saturday
+    // window as the Attendance & payroll sheet, so the two never disagree.
+    const curWeekEnd = weekEnding(today()), curWeekStart = weekRange(curWeekEnd).start;
+    const driverPayroll = db.drivers.reduce((s, d) => s + driverWeek(db, d, curWeekStart, curWeekEnd).net, 0);
+    const staffPayroll = (db.staff || []).filter(s => s.active !== false && (!s.joined || s.joined <= curWeekEnd))
+      .reduce((s, x) => s + (+x.weeklyWage || 0), 0);
     return (
       <>
         <div className="vz-grid">
           <div className="vz-stat"><i>Invoiced</i><b style={{ fontSize:18 }}>{inr(stats.billed)}</b><small>confirmed orders</small></div>
-          <div className="vz-stat"><i>Received</i><b style={{ fontSize:18, color:"#178951" }}>{inr(stats.collected)}</b><small>all modes</small></div>
-          <div className="vz-stat"><i>Outstanding</i><b style={{ fontSize:18, color:"#E5484D" }}>{inr(stats.due)}</b><small>to follow up</small></div>
-          <div className="vz-stat"><i>Monthly costs</i><b style={{ fontSize:18 }}>{inr(spend + wages)}</b><small>attendance wages + workshop</small></div>
+          <div className="vz-stat"><i>Received</i><b style={{ fontSize:18, color:"#178951" }}>{inr(stats.collected)}</b><small>{tdsYtd > 0 ? "plus " + inr(tdsYtd) + " TDS this FY" : "all modes"}</small></div>
+          <div className="vz-stat"><i>Pending</i><b style={{ fontSize:18, color:"#E5484D" }}>{inr(rec.total)}</b><small>{rec.overdue > 0 ? inr(rec.overdue) + " past due" : "none past due"}</small></div>
+          <div className="vz-stat"><i>Monthly costs</i><b style={{ fontSize:18 }}>{inr(spend + wages + thisMonthSpend)}</b><small>wages, workshop &amp; running</small></div>
         </div>
+
+        {/* The morning's work, before anything else: which cards are empty and
+            who has to be called back today. */}
+        {(lowCards.length > 0 || callsDue.length > 0) && (
+          <div className="vz-card" style={{ background:"#FFF9E6", borderColor:"#F5DFA0" }}>
+            <div className="vz-eyebrow" style={{ marginTop:0 }}>Today</div>
+            {lowCards.length > 0 && (
+              <button className="vz-kv vz-tapcard" style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", width:"100%", textAlign:"left", background:"transparent", border:0, padding:"6px 0", gap:12 }}
+                onClick={() => setSheet({ type:"fuel" })}>
+                <span>{lowCards.length} petrol card{lowCards.length === 1 ? "" : "s"} need a recharge</span>
+                <b style={{ color:"#B4262A" }}>{lowCards.map(c => (vehOf(c.vehicleId) || {}).plate).filter(Boolean).slice(0, 3).join(", ")}</b>
+              </button>
+            )}
+            {callsDue.length > 0 && (
+              <button className="vz-kv vz-tapcard" style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", width:"100%", textAlign:"left", background:"transparent", border:0, padding:"6px 0", gap:12 }}
+                onClick={() => setSheet({ type:"receivables" })}>
+                <span>{callsDue.length} customer{callsDue.length === 1 ? "" : "s"} to call back</span>
+                <b style={{ color:"#8A6100" }}>follow up</b>
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="vz-eyebrow">
+          Reports
+          <button onClick={() => setSheet({ type:"reports" })}>Day, month, quarter, year</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          Profit &amp; loss, GST return, sales, collections, ageing, customer ledgers, payroll and
+          the day book — over any period, as files that open in Excel.
+        </div>
+
+        <div className="vz-eyebrow">
+          Petrol cards
+          <button onClick={() => setSheet({ type:"fuel" })}>Balances &amp; recharge</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          {(db.fuelCards || []).length === 0
+            ? "No cards yet — add one per van and the balance is checked from here every morning."
+            : (db.fuelCards || []).length + " card" + ((db.fuelCards || []).length === 1 ? "" : "s")
+              + " · " + inr((db.fuelCards || []).reduce((s, c) => s + cardBalance(c), 0)) + " on them"
+              + (lowCards.length ? " · " + lowCards.length + " running low." : " · none running low.")}
+        </div>
+
+        <div className="vz-eyebrow">
+          Day book
+          <button onClick={() => setSheet({ type:"daybook" })}>Entries for the books</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          {pendingVouchers > 0
+            ? pendingVouchers + " entr" + (pendingVouchers === 1 ? "y" : "ies") + " this month still to go into the books."
+            : "Everything this month is in the books."}
+        </div>
+
+        <div className="vz-eyebrow">
+          Pending from customers
+          <button onClick={() => setSheet({ type:"receivables" })}>Who owes what</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          {rec.rows.length === 0
+            ? "Every invoice raised has been settled."
+            : inr(rec.total) + " across " + rec.rows.length + " invoice" + (rec.rows.length === 1 ? "" : "s")
+              + (rec.overdue > 0 ? " — " + inr(rec.overdue) + " is past the agreed date." : " — none past the agreed date yet.")}
+        </div>
+
+        <div className="vz-eyebrow">
+          Forecast
+          <button onClick={() => setSheet({ type:"forecast" })}>Next four months</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          What is due in on the agreed dates, against payroll and the GST that leaves on the 20th.
+        </div>
+
+        <div className="vz-eyebrow">
+          Campaign profit
+          <button onClick={() => setSheet({ type:"pnl" })}>What each campaign made</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          Revenue against the wages of the vans that actually carried it.
+        </div>
+
+        <div className="vz-eyebrow">
+          Money out
+          <button onClick={() => setSheet({ type:"expenses" })}>Expenses</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          {thisMonthSpend > 0
+            ? inr(thisMonthSpend) + " recorded this month" + (thisMonthInputGst > 0 ? ", carrying " + inr(thisMonthInputGst) + " of input GST." : ".")
+            : "Nothing recorded this month — diesel, flex, tolls, EMIs. Without these the forecast is only half the picture."}
+        </div>
+
+        <div className="vz-eyebrow">
+          Payroll
+          <button onClick={() => setSheet({ type:"attendance" })}>Attendance &amp; payroll</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          Week ending {dmy(curWeekEnd)} (paid Saturday): {inr(driverPayroll + staffPayroll)}
+          {" "}— drivers {inr(driverPayroll)}, staff {inr(staffPayroll)}.
+        </div>
+
+        <div className="vz-eyebrow">
+          Credit notes
+          <button onClick={() => setSheet({ type:"creditnote" })}>Raise one</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          The way to undo an invoice that has already gone out — cancel it in full, or credit part of it.
+          The invoice itself stays exactly as it was sent.
+        </div>
+        {(db.creditNotes || []).slice(0, 4).map(c => {
+          const o = orderOf(c.orderId), v = o ? vendorOf(o.vendorId) : null;
+          return (
+            <div className="vz-card" key={c.id} style={{ background:"#FFF6F6", borderColor:"#F2C9C9" }}>
+              <div className="vz-row">
+                <div style={{ minWidth:0 }}>
+                  <div className="vz-title">{c.no} · {v ? v.name : "—"}</div>
+                  <div className="vz-meta">{dmy(c.date)} · against #{c.againstInv} · {c.reason}</div>
+                </div>
+                <b className="vz-money" style={{ color:"#B4262A" }}>− {inr(c.total)}</b>
+              </div>
+              <button className="vz-chip c-blue" style={{ marginTop:9 }} onClick={() => openCreditNote(c)}>Open the note</button>
+            </div>
+          );
+        })}
 
         <div className="vz-eyebrow">
           GST
@@ -4200,15 +6820,20 @@ function VibeCRM() {
           );
         })}
 
-        <div className="vz-eyebrow">Workshop spend</div>
-        {db.jobs.map(j => {
-          const v = vehOf(j.vehicleId);
-          return (
-            <div className="vz-kv" key={j.id} style={{ background:"#fff", padding:"11px 14px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
-              <span>{j.type} · {v ? v.plate : "—"}</span><b className="vz-money">{inr(j.cost)}</b>
-            </div>
-          );
-        })}
+        {/* The itemised jobs are a fleet record, not a finance one — the spend
+            still counts in monthly costs above and against each campaign's
+            margin. Only the Director, who books the work, sees the list. */}
+        {perm.fleetEdit && <>
+          <div className="vz-eyebrow">Workshop spend</div>
+          {db.jobs.map(j => {
+            const v = vehOf(j.vehicleId);
+            return (
+              <div className="vz-kv" key={j.id} style={{ background:"#fff", padding:"11px 14px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+                <span>{j.type} · {v ? v.plate : "—"}</span><b className="vz-money">{inr(j.cost)}</b>
+              </div>
+            );
+          })}
+        </>}
       </>
     );
   };
@@ -4734,31 +7359,37 @@ function VibeCRM() {
       </div>
       <button className="vz-btn" onClick={() => exportBackup(true)}>Back up everything (with photos)</button>
       <button className="vz-btn alt" onClick={() => exportBackup(false)}>Back up records only (smaller)</button>
-      <button className="vz-btn alt" onClick={() => importRef.current && importRef.current.click()}>Restore from a backup file</button>
-      <input ref={importRef} className="vz-hidden" type="file" accept="application/json,.json" onChange={importBackup} />
 
-      <div className="vz-eyebrow">Danger zone</div>
-      <button className="vz-btn alt" onClick={() => { setDb(d => ({ ...seedData(), users: d.users, userId: d.userId, role: d.role })); setPics({}); setSheet(null); setToast("Sample data loaded"); }}>Load sample data (overwrites everything)</button>
-      <button className="vz-btn warn" onClick={() => {
-        if (!window.confirm("Erase every vendor, campaign, payment, driver and photo — on this phone AND on the server? Take a backup first.")) return;
-        setDb(d => {
-          // Erasing locally is not enough now that records are backed up: without
-          // tombstones the next sync would simply pull all of it back again.
-          const now = new Date().toISOString();
-          const tomb = [...(d.tombstones || [])];
-          Object.keys(SYNC_KEYS).forEach(key => {
-            (d[key] || []).forEach(r => { if (r && r.id) tomb.push({ key, id: r.id, updatedAt: now }); });
+      {/* Taking a backup is everyone's business; replacing the books with one is
+          not. Restoring, seeding and erasing all overwrite the whole company —
+          on the server as well — so they stay with whoever owns it. */}
+      {perm.users && <>
+        <button className="vz-btn alt" onClick={() => importRef.current && importRef.current.click()}>Restore from a backup file</button>
+        <input ref={importRef} className="vz-hidden" type="file" accept="application/json,.json" onChange={importBackup} />
+
+        <div className="vz-eyebrow">Danger zone</div>
+        <button className="vz-btn alt" onClick={() => { setDb(d => ({ ...seedData(), users: d.users, userId: d.userId, role: d.role })); setPics({}); setSheet(null); setToast("Sample data loaded"); }}>Load sample data (overwrites everything)</button>
+        <button className="vz-btn warn" onClick={() => {
+          if (!window.confirm("Erase every vendor, campaign, payment, driver and photo — on this phone AND on the server? Take a backup first.")) return;
+          setDb(d => {
+            // Erasing locally is not enough now that records are backed up: without
+            // tombstones the next sync would simply pull all of it back again.
+            const now = new Date().toISOString();
+            const tomb = [...(d.tombstones || [])];
+            Object.keys(SYNC_KEYS).forEach(key => {
+              (d[key] || []).forEach(r => { if (r && r.id) tomb.push({ key, id: r.id, updatedAt: now }); });
+            });
+            return {
+              ...blankData(),
+              users: d.users, userId: d.userId, role: d.role, settings: d.settings,
+              adminToken: d.adminToken, adminName: d.adminName, adminRole: d.adminRole,   // stay signed in
+              tombstones: tomb, lastSync: d.lastSync, lastPush: d.lastPush,
+            };
           });
-          return {
-            ...blankData(),
-            users: d.users, userId: d.userId, role: d.role, settings: d.settings,
-            adminToken: d.adminToken, adminName: d.adminName, adminRole: d.adminRole,   // stay signed in
-            tombstones: tomb, lastSync: d.lastSync, lastPush: d.lastPush,
-          };
-        });
-        setPics({}); setSheet(null); setToast("Erased — syncing the deletion to the server");
-        setTimeout(() => runSync(), 400);
-      }}>Erase all records</button>
+          setPics({}); setSheet(null); setToast("Erased — syncing the deletion to the server");
+          setTimeout(() => runSync(), 400);
+        }}>Erase all records</button>
+      </>}
     </Sheet>
   );
 
@@ -4798,7 +7429,9 @@ function VibeCRM() {
             {mode === "manager" && (pics[me && me.photoId] || (me && me.photoUrl)) && (
               <img className="vz-hdrav" src={pics[me && me.photoId] || me.photoUrl} alt="" />
             )}
-            {mode === "manager" && !adminGated && (
+            {/* FC and insurance are the fleet's business. Finance was carrying a
+                red badge for 36 things she has no way to act on. */}
+            {mode === "manager" && !adminGated && perm.renewals !== false && (
               <button className="vz-gear" onClick={() => setSheet({ type:"alerts" })} aria-label="Renewal alerts">
                 <Icon d={ICONS.bell} />
                 {stats.alerts.length > 0 && <span className="vz-badge">{stats.alerts.length}</span>}
@@ -4836,6 +7469,14 @@ function VibeCRM() {
 
       {fabFor && <button className="vz-fab" onClick={fabFor[1]}>+ {fabFor[0]}</button>}
 
+      {/* On a desktop the rail carries the brand; on a phone this is hidden and
+          the brand stays in the header where it always was. */}
+      {mode === "manager" && !adminGated && (
+        <div className="vz-rail-brand">
+          <img src="icon.svg" alt="" />
+          <b>Vibe Marketing</b>
+        </div>
+      )}
       {mode === "manager" && !adminGated && (
         <nav className="vz-nav">
           {[["home","Home"],["vendors","Vendors"],["orders","Orders"],["field","Field"],["fleet","Fleet"],["money","Money"]]
@@ -4861,8 +7502,87 @@ function VibeCRM() {
       )}
       {sheet?.type === "gst" && <GstSheet db={db} vendorOf={vendorOf} onClose={() => setSheet(null)} />}
       {sheet?.type === "users" && <OfficeUsersSheet setToast={setToast} onClose={() => setSheet(null)} />}
-      {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf}
-        onPunchIn={officePunchIn} onPunchOut={officePunchOut} onClose={() => setSheet(null)} />}
+      {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf} perm={perm}
+        onPunchIn={officePunchIn} onPunchOut={officePunchOut}
+        onEditStaff={(s) => setSheet({ type:"staff", data:s })}
+        onOutstation={(a, on) => setDb(d => ({ ...d, attendance: (d.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }))}
+        onAdvance={(drv) => setSheet({ type:"advance", data:drv })}
+        onPayWeek={payWeek} onPayslip={sendPayslip}
+        onClose={() => setSheet(null)} />}
+      {sheet?.type === "expenses" && (
+        <ExpensesSheet db={db} vehOf={vehOf} onClose={() => setSheet(null)}
+          onAdd={() => setSheet({ type:"expense" })}
+          onEdit={(e) => setSheet({ type:"expense", data:e })} />
+      )}
+      {sheet?.type === "expense" && (
+        <ExpenseForm init={sheet.data} db={db} onClose={() => setSheet({ type:"expenses" })}
+          onSave={(x) => { put("expenses", x); setSheet({ type:"expenses" }); setToast("Expense saved"); }}
+          onDelete={(id) => { drop("expenses", id); setSheet({ type:"expenses" }); setToast("Expense deleted"); }} />
+      )}
+      {sheet?.type === "creditnote" && (
+        <CreditNoteForm db={db} vendorOf={vendorOf} paidOn={paidOn}
+          nextNo={"CN/" + new Date().getFullYear() + "/" + String(db.settings.nextCnNo || 1).padStart(3, "0")}
+          onClose={() => setSheet(null)}
+          onSave={(cn) => {
+            put("creditNotes", cn);
+            setSetting("nextCnNo", (db.settings.nextCnNo || 1) + 1);
+            setToast("Credit note " + cn.no + " raised");
+            openCreditNote(cn);
+          }} />
+      )}
+      {sheet?.type === "advance" && (
+        <AdvanceForm driver={sheet.data} db={db} onClose={() => setSheet({ type:"attendance" })}
+          onSave={(x) => { put("advances", x); setSheet({ type:"attendance" }); setToast("Advance recorded"); }}
+          onDelete={(id) => { drop("advances", id); setToast("Advance deleted"); }} />
+      )}
+      {sheet?.type === "receivables" && (
+        <ReceivablesSheet db={db} paidOn={paidOn} onClose={() => setSheet(null)}
+          onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }}
+          onSend={sendStatement}
+          onFollowup={(row) => setSheet({ type:"followup", data:row })} />
+      )}
+      {sheet?.type === "followup" && (
+        <FollowupForm row={sheet.data} db={db} onClose={() => setSheet({ type:"receivables" })}
+          onSave={(x) => { put("followups", x); setSheet({ type:"receivables" }); setToast("Follow-up saved"); }} />
+      )}
+      {sheet?.type === "fuel" && (
+        <FuelCardsSheet db={db} vehOf={vehOf} perm={perm} onClose={() => setSheet(null)}
+          onAddCard={() => setSheet({ type:"fuelcard" })}
+          onEditCard={(c) => setSheet({ type:"fuelcard", data:c })}
+          onRecharge={(c) => setSheet({ type:"fueltxn", data:c, kind:"recharge" })}
+          onBalance={(c) => setSheet({ type:"fueltxn", data:c, kind:"reading" })} />
+      )}
+      {sheet?.type === "fuelcard" && (
+        <FuelCardForm init={sheet.data} db={db} vehOf={vehOf} onClose={() => setSheet({ type:"fuel" })}
+          onSave={(x) => { put("fuelCards", x); setSheet({ type:"fuel" }); setToast("Card saved"); }}
+          onDelete={(id) => { drop("fuelCards", id); setSheet({ type:"fuel" }); setToast("Card removed"); }} />
+      )}
+      {sheet?.type === "fueltxn" && (
+        <FuelTxnForm card={sheet.data} vehOf={vehOf} kind={sheet.kind} onClose={() => setSheet({ type:"fuel" })}
+          onSave={(t) => { rechargeCard(sheet.data, t); setSheet({ type:"fuel" }); }} />
+      )}
+      {sheet?.type === "reports" && (
+        <ReportsSheet db={db} paidOn={paidOn} vendorOf={vendorOf} vehOf={vehOf} onClose={() => setSheet(null)} />
+      )}
+      {sheet?.type === "daybook" && (
+        <DayBookSheet db={db} onClose={() => setSheet(null)}
+          onAddVoucher={() => setSheet({ type:"voucher" })}
+          onMark={(id, on) => { if (on) put("tallyMarks", { id, at: new Date().toISOString() }); else drop("tallyMarks", id); }} />
+      )}
+      {sheet?.type === "voucher" && (
+        <VoucherForm db={db} onClose={() => setSheet({ type:"daybook" })}
+          onSave={(x) => { put("vouchers", x); setSheet({ type:"daybook" }); setToast("Entry saved"); }} />
+      )}
+      {sheet?.type === "forecast" && <ForecastSheet db={db} paidOn={paidOn} onClose={() => setSheet(null)} />}
+      {sheet?.type === "pnl" && (
+        <CampaignPnlSheet db={db} vendorOf={vendorOf} onClose={() => setSheet(null)}
+          onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }} />
+      )}
+      {sheet?.type === "staff" && (
+        <StaffForm init={sheet.data} onClose={() => setSheet(null)}
+          onSave={(x) => { put("staff", x); setSheet(null); }}
+          onDelete={(id) => { if (window.confirm("Remove this person from staff? Past weeks stay in the record.")) { drop("staff", id); setSheet(null); } }} />
+      )}
       {sheet?.type === "reminders" && (
         <RemindersSheet db={db} onSend={sendCustomerReminder} onManage={() => setSheet({ type:"occasions" })} onClose={() => setSheet(null)} />
       )}
@@ -4903,7 +7623,10 @@ function VibeCRM() {
           onSave={(x) => {
             let issued = null;
             if (!x.no) { issued = nextOrderNo(); }
-            const rec = { ...x, no: x.no || issued.no, created: x.created || today(), sends: x.sends || [], vehicleIds: x.vehicleIds || [] };
+            // Stamp the tax treatment from the customer's state now, so every
+            // later screen prints the right pair without needing the customer.
+            const rec = { ...x, no: x.no || issued.no, created: x.created || today(), sends: x.sends || [], vehicleIds: x.vehicleIds || [],
+              igst: isInterstate(vendorOf(x.vendorId), db.settings) };
             if (issued) setSetting(issued.key, issued.n);
             put("orders", rec);
             setSheet(null);
@@ -4911,7 +7634,7 @@ function VibeCRM() {
           }} />
       )}
       {sheet?.type === "vehicle" && (
-        <VehicleForm init={sheet.data} drivers={db.drivers} plates={db.vehicles} canEdit={perm.fleetEdit} canDel={perm.del} onClose={() => setSheet(null)}
+        <VehicleForm init={sheet.data} drivers={db.drivers} plates={db.vehicles} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onClose={() => setSheet(null)}
           onSave={(x) => { put("vehicles", x); setSheet(null); }}
           onDelete={(id) => {
             const veh = (db.vehicles || []).find(x => x.id === id) || {};
@@ -4925,7 +7648,7 @@ function VibeCRM() {
           }} />
       )}
       {sheet?.type === "driver" && (
-        <DriverForm init={sheet.data} pics={pics} canEdit={perm.fleetEdit} canDel={perm.del} onPhoto={savePic} onClose={() => setSheet(null)}
+        <DriverForm init={sheet.data} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
           onSave={(x) => {
             put("drivers", x); setSheet(null);
             apiPost("drivers.php", {
@@ -4991,19 +7714,49 @@ function VibeCRM() {
                 value={invAsk.km}
                 onChange={e => setInvAsk({ ...invAsk, km: e.target.value.replace(/\D/g, "").slice(0, 6) })} />
             </F>
-            <div className="vz-card" style={{ background:"#FAFBFC" }}>
-              <div className="vz-kv">
-                <span>{km ? km + " km × " + inr(rate) : "Extra running"}</span>
-                <b className="vz-money">{extra ? inr(extra) : "—"}</b>
-              </div>
-              <div className="vz-kv">
-                <span style={{ fontWeight:700, color:"#12192A" }}>Invoice total</span>
-                <b className="vz-money" style={{ fontSize:16 }}>{inr(orderMath({ ...o, outKm: km }).total)}</b>
-              </div>
-            </div>
-            <button className="vz-btn" onClick={() => raiseInvoice(o, km)}>
-              {km ? "Raise tax invoice with " + km + " km" : "Raise tax invoice — no extra running"}
-            </button>
+            {(() => {
+              const v = vendorOf(o.vendorId);
+              const monthly = billingOf(o, v) === "monthly";
+              const slice = monthly ? nextSlice({ ...o, outKm: km }, v) : null;
+              const total = monthly
+                ? (slice ? cnMath(o, slice.sub).total : 0)
+                : orderMath({ ...o, outKm: km }).total;
+              return (
+                <>
+                  <div className="vz-card" style={{ background:"#FAFBFC" }}>
+                    {monthly && slice && (
+                      <div className="vz-kv">
+                        <span>Billing period</span>
+                        <b>{dmy(slice.from)} – {dmy(slice.to)} · {slice.days} days</b>
+                      </div>
+                    )}
+                    <div className="vz-kv">
+                      <span>{km ? km + " km × " + inr(rate) : "Extra running"}</span>
+                      <b className="vz-money">{extra ? inr(extra) : "—"}</b>
+                    </div>
+                    <div className="vz-kv">
+                      <span style={{ fontWeight:700, color:"#12192A" }}>Invoice total</span>
+                      <b className="vz-money" style={{ fontSize:16 }}>{inr(total)}</b>
+                    </div>
+                  </div>
+                  {monthly && !slice && (
+                    <div className="vz-meta" style={{ color:"#8A6100" }}>
+                      Every month of this campaign has already been invoiced.
+                    </div>
+                  )}
+                  {monthly && slice && !slice.last && (
+                    <div className="vz-meta">
+                      This bills one month only. The outstation running is added to the final month's invoice.
+                    </div>
+                  )}
+                  <button className="vz-btn" disabled={monthly && !slice} onClick={() => raiseInvoice(o, km)}>
+                    {monthly
+                      ? (slice ? "Raise invoice for " + dmy(slice.from) + " – " + dmy(slice.to) : "Nothing left to invoice")
+                      : (km ? "Raise tax invoice with " + km + " km" : "Raise tax invoice — no extra running")}
+                  </button>
+                </>
+              );
+            })()}
           </Sheet>
         );
       })()}
