@@ -3774,7 +3774,7 @@ const periodFigures = (db, from, to, paidOn) => {
            gross: revenue - grossCost, net: revenue - grossCost - overhead, grossCost };
 };
 
-function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
+function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, onClose }) {
   const [mode, setMode] = useState("month");     // day | month | quarter | year | custom
   const [month, setMonth] = useState(today().slice(0, 7));
   const [day, setDay] = useState(today());
@@ -3790,6 +3790,13 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
 
   const f = periodFigures(db, range.from, range.to, paidOn);
   const stamp = range.from + "_to_" + range.to;
+
+  // Same fleet slice the on-screen card and the download both read, so the
+  // two can never disagree.
+  const fleetInP = (db.attendance || []).filter(a => { const s = String(a.date || "").slice(0, 10); return s >= range.from && s <= range.to; });
+  const fleetKm = fleetInP.reduce((s, a) => s + ((a.openKm != null && a.closeKm != null) ? Math.max(0, a.closeKm - a.openKm) : 0), 0);
+  const fleetVehicles = new Set(fleetInP.map(a => a.vehicleId)).size;
+  const fleetDrivers = new Set(fleetInP.map(a => a.driverId || a.driverName)).size;
   const months = [];
   for (let i = 0; i < 18; i++) {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
@@ -3897,6 +3904,60 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
     rows.push([]);
     rows.push(["", "", "", "", "", "", "", "", "TOTAL", f.wages]);
     downloadCsv("payroll-" + stamp + ".csv", rows);
+  };
+
+  /* Which vehicles ran, who drove them, and how far — day by day. Built
+     straight from attendance, the same record a driver punches on his own
+     phone, so this is what actually happened, not what was scheduled. For a
+     single-day report this answers "how many vehicles were active today" on
+     its own; for a month or a year the by-day table above the detail does. */
+  const repFleet = () => {
+    const inP = (d) => { const s = String(d || "").slice(0, 10); return s >= range.from && s <= range.to; };
+    const rows0 = (db.attendance || []).filter(a => inP(a.date)).sort((a, b) => (a.date < b.date ? 1 : -1));
+
+    const byDay = {};
+    rows0.forEach(a => {
+      const d = byDay[a.date] || (byDay[a.date] = { vehicles: new Set(), drivers: new Set(), km: 0 });
+      d.vehicles.add(a.vehicleId); d.drivers.add(a.driverId || a.driverName);
+      if (a.openKm != null && a.closeKm != null) d.km += Math.max(0, a.closeKm - a.openKm);
+    });
+
+    const rows = head("Fleet & driver activity");
+    rows.push(["By day — vehicles active"]);
+    rows.push(["Date", "Vehicles active", "Drivers on duty", "KM run"]);
+    Object.keys(byDay).sort((a, b) => (a < b ? 1 : -1)).forEach(d => {
+      const x = byDay[d];
+      rows.push([dmy(d), x.vehicles.size, x.drivers.size, x.km]);
+    });
+
+    rows.push([]);
+    rows.push(["Every duty, day by day"]);
+    rows.push(["Date", "Vehicle", "Driver", "In time", "Out time", "Opening KM", "Closing KM", "KM run",
+               "Outstation", "Wage for the day", "Punch-in location"]);
+    let kmTotal = 0, wageTotal = 0;
+    rows0.forEach(a => {
+      const veh = vehOf(a.vehicleId);
+      const drv = a.driverId ? drvOf(a.driverId) : null;
+      const km = (a.openKm != null && a.closeKm != null) ? Math.max(0, a.closeKm - a.openKm) : "";
+      const wage = (+((drv || {}).wage) || 0) + (a.outstation ? (+((drv || {}).batta) || 0) : 0);
+      if (typeof km === "number") kmTotal += km;
+      wageTotal += wage;
+      rows.push([
+        dmy(a.date), veh ? veh.plate : "", a.driverName || (drv ? drv.name : ""),
+        a.inAt ? clock(a.inAt) : "", a.outAt ? clock(a.outAt) : (a.date === today() ? "still on duty" : ""),
+        a.openKm != null ? a.openKm : "", a.closeKm != null ? a.closeKm : "", km,
+        a.outstation ? "yes" : "", wage,
+        (a.lat != null && a.lng != null) ? mapLink(a.lat, a.lng) : "",
+      ]);
+    });
+
+    rows.push([]);
+    rows.push(["Vehicle-days", rows0.length]);
+    rows.push(["Distinct vehicles used", new Set(rows0.map(a => a.vehicleId)).size]);
+    rows.push(["Distinct drivers on duty", new Set(rows0.map(a => a.driverId || a.driverName)).size]);
+    rows.push(["Total KM run", kmTotal]);
+    rows.push(["Total wage cost (days in this report)", wageTotal]);
+    downloadCsv("fleet-activity-" + stamp + ".csv", rows);
   };
 
   /* GSTR-1 shape: B2B invoices listed one by one, B2C summarised, then the
@@ -4037,6 +4098,7 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
     ["Customer ledger", "Every document against each customer, with a running balance.", repLedger],
     ["Expenses", "Everything paid out, by category.", repExpenses],
     ["Payroll register", "Every week paid, name by name.", repPayroll],
+    ["Fleet & driver activity", "Which vehicles ran, who drove, km and location — day by day.", repFleet],
     ["Campaign profitability", "What each campaign made after its own costs.", repCampaigns],
     ["Day book", "Every voucher, both sides, ticked or not.", repDayBook],
     ["Petrol cards", "Balances and every recharge in the period.", repFuel],
@@ -4093,6 +4155,19 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
         <div className="vz-stat"><i>Net profit</i><b style={{ fontSize:17, color: f.net >= 0 ? "#178951" : "#E5484D" }}>{inr(f.net)}</b><small>after every cost</small></div>
         <div className="vz-stat"><i>Collected</i><b style={{ fontSize:17 }}>{inr(f.collected)}</b><small>{f.tds > 0 ? "+ " + inr(f.tds) + " TDS" : "in the period"}</small></div>
         <div className="vz-stat"><i>GST payable</i><b style={{ fontSize:17 }}>{inr(f.netTax)}</b><small>output less input</small></div>
+      </div>
+
+      <div className="vz-eyebrow">Fleet &amp; drivers · {range.label}</div>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Vehicles active</i><b style={{ fontSize:17 }}>{fleetVehicles}</b><small>of {(db.vehicles || []).length} in the fleet</small></div>
+        <div className="vz-stat"><i>Drivers on duty</i><b style={{ fontSize:17 }}>{fleetDrivers}</b><small>{fleetInP.length} duty record{fleetInP.length === 1 ? "" : "s"}</small></div>
+        <div className="vz-stat"><i>KM run</i><b style={{ fontSize:17 }}>{fleetKm.toLocaleString("en-IN")}</b><small>total across the fleet</small></div>
+        <div className="vz-stat"><i>Avg km / duty</i><b style={{ fontSize:17 }}>{fleetInP.length ? Math.round(fleetKm / fleetInP.length).toLocaleString("en-IN") : 0}</b><small>per vehicle-day</small></div>
+      </div>
+      <div className="vz-meta" style={{ marginTop:-2 }}>
+        {mode === "day"
+          ? (fleetInP.length ? fleetVehicles + " vehicle" + (fleetVehicles === 1 ? " was" : "s were") + " active on " + range.label + "." : "No vehicle was on duty on " + range.label + ".")
+          : "\"Fleet & driver activity\" below breaks this down day by day — vehicles active, drivers, and km run for each date, plus every duty with its driver, km and punch-in location."}
       </div>
 
       <div className="vz-eyebrow">Profit &amp; loss · {range.label}</div>
@@ -7836,7 +7911,7 @@ function VibeCRM() {
           onSave={(t) => { rechargeCard(sheet.data, t); setSheet({ type:"fuel" }); }} />
       )}
       {sheet?.type === "reports" && (
-        <ReportsSheet db={db} paidOn={paidOn} vendorOf={vendorOf} vehOf={vehOf} onClose={() => setSheet(null)} />
+        <ReportsSheet db={db} paidOn={paidOn} vendorOf={vendorOf} vehOf={vehOf} drvOf={drvOf} onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "daybook" && (
         <DayBookSheet db={db} onClose={() => setSheet(null)}
