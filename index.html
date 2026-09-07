@@ -8010,7 +8010,11 @@ function VibeCRM() {
             if (issued) setSetting(issued.key, issued.n);
             put("orders", rec);
             setSheet(null);
-            if (!x.id || !(x.sends || []).length) { if (db.settings.autoSendProforma) setTimeout(() => sendProforma(rec, true), 250); }
+            // The proper document, not a text message: this used to fire the
+            // plain-text version automatically while the actual formatted PDF
+            // sat one tap away on the order screen — so the one send that
+            // happens without anyone asking for it was the weaker one.
+            if (!x.id || !(x.sends || []).length) { if (db.settings.autoSendProforma) setTimeout(() => openDoc(rec, "QUOTATION"), 250); }
           }} />
       )}
       {sheet?.type === "vehicle" && (
