@@ -560,14 +560,16 @@ const DOCS = [
 const LEVEL_CHIP = { overdue:"c-red", final:"c-yellow", early:"c-blue" };
 const ROLES = {
   "Director":      { tabs:["home","vendors","orders","field","fleet","money"], money:true, settings:true, users:true,  fleetEdit:true,  del:true,  invoice:true,  campaign:true, renewals:true },
-  /* Finance is a three-screen app and opens on Money — the first tab listed is
-     where she lands. The control room, the fleet and the field proof feed were
-     all things she could look at and do nothing about; what she opens the app
-     for is invoices, collections, payroll and GST. Customers and Campaigns stay
-     because a tax invoice cannot be raised without them: the GSTIN and state
-     decide the tax, and the invoice itself is raised on the campaign.
+  /* Finance opens on Money — the first tab listed is where she lands. The
+     control room and the field proof feed stay off; what she opens the app
+     for is invoices, collections, payroll and GST. Customers and Campaigns
+     stay because a tax invoice cannot be raised without them: the GSTIN and
+     state decide the tax, and the invoice itself is raised on the campaign.
+     Fleet is on, view-only — she needs to see which vehicle is out and who
+     is driving it, for payroll and for a customer call, without being able
+     to add, edit or delete a vehicle, driver or workshop job.
      fleetEdit is off and stays off. */
-  "Finance":       { tabs:["money","vendors","orders"],                        money:true, settings:true, users:false, fleetEdit:false, del:true,  invoice:true,  campaign:true, renewals:false },
+  "Finance":       { tabs:["money","vendors","orders","fleet"],                money:true, settings:true, users:false, fleetEdit:false, del:true,  invoice:true,  campaign:true, renewals:false },
   "Field manager": { tabs:["home","orders","field","fleet"],                   money:false, settings:false, users:false, fleetEdit:true, del:true,  invoice:false, campaign:true, renewals:true },
 };
 // office roles a Director can assign to office users
