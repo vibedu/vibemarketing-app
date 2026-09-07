@@ -716,6 +716,25 @@ const orderMath = (o) => {
            advance: Math.round((total * pct) / 100) };
 };
 
+/* A day-wise campaign ("quote for a number of days, no fixed dates") has no
+   start or end field to bind anything to — and several places in the app
+   need one anyway: when the advance is due, which attendance and expense
+   records actually belong to this campaign, whether it overlaps another
+   campaign on the same van on a given day. Leaving those checks unguarded
+   against a blank start/end used to mean "the whole vehicle's history",
+   not "no window" — a day-wise job silently absorbed every duty and every
+   un-tagged expense that vehicle ever had, and, going the other way,
+   silently diluted a genuinely-dated campaign's own wage share on every
+   date it happened to also run on. This gives every campaign a real
+   window: its own dates if it has them, otherwise from when it was raised
+   for exactly the number of days it was quoted for. */
+const effectiveWindow = (o) => {
+  const start = (o && o.start) || (o && o.created) || today();
+  if (o && o.end) return { start, end: o.end };
+  const days = Math.max(1, (o && o.dayWise ? +o.days : 0) || 0) || 1;
+  return { start, end: addDays(start, days - 1) };
+};
+
 /* photo capture: shrink + burn a GPS/time stamp into the image */
 const processShot = (file, lines) =>
   new Promise((resolve, reject) => {
@@ -2763,14 +2782,17 @@ const billingOf = (o, v) => (o && o.billing) || (v && v.billing) || "end";
    billed period to the end of that calendar month, clipped to the campaign. */
 const nextSlice = (o, v) => {
   const bills = billsOf(o, v);
-  const start = bills.length ? addDays(bills[bills.length - 1].to, 1) : (o.start || today());
-  if (o.end && start > o.end) return null;                       // fully billed
+  // effectiveWindow gives a day-wise campaign a real end too, so monthly
+  // billing on one actually reaches a last slice instead of asking forever.
+  const win = effectiveWindow(o);
+  const start = bills.length ? addDays(bills[bills.length - 1].to, 1) : win.start;
+  if (start > win.end) return null;                               // fully billed
   const d = new Date(start + "T12:00:00Z");
   const monthEnd = localDay(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 12)));
-  const to = o.end && o.end < monthEnd ? o.end : monthEnd;
+  const to = win.end < monthEnd ? win.end : monthEnd;
   const days = spanDays(start, to) || 0;
   const first = bills.length === 0;
-  const last = !!(o.end && to >= o.end);
+  const last = to >= win.end;
   const m = orderMath(o);
   // The vans and the rate are the campaign's; the days are this slice's. Flex
   // and fabrication are a one-off, so they ride on the first bill only, and the
@@ -2832,20 +2854,29 @@ const advanceOwed = (db, driverId, uptoWeekEnd) => {
 /* Which campaigns a vehicle was carrying on a given day. A van can carry two
    brands at once, so the day's wage is split between them rather than charged
    twice — the total across all campaigns always equals the wage actually paid. */
-const ordersOnDay = (orders, vehicleId, date) => (orders || []).filter(o =>
-  (o.vehicleIds || []).includes(vehicleId) &&
-  (!o.start || o.start <= date) && (!o.end || o.end >= date));
+const ordersOnDay = (orders, vehicleId, date) => (orders || []).filter(o => {
+  if (!(o.vehicleIds || []).includes(vehicleId)) return false;
+  // A day-wise order has no real start/end, so unguarded it matched every
+  // date going — a day-wise campaign on a van would wrongly claim a share of
+  // every OTHER campaign's wage on that same van, on any day at all.
+  const { start, end } = effectiveWindow(o);
+  return start <= date && end >= date;
+});
 
 /* Everything one campaign cost and earned. Driver wages come from the days its
    vehicles actually ran, not from a guess at the number of days quoted. */
 const campaignPnl = (db, order) => {
   const m = orderMath(order);
   const ids = order.vehicleIds || [];
+  // A day-wise campaign has no start/end to bound this to — effectiveWindow
+  // gives it one anyway, so its costs stop leaking in every duty and every
+  // un-tagged expense that vehicle has ever had, at any other time.
+  const { start: winStart, end: winEnd } = effectiveWindow(order);
   let wages = 0, battas = 0, dutyDays = 0;
   (db.attendance || []).forEach(a => {
     if (!ids.includes(a.vehicleId)) return;
     const date = String(a.date || "");
-    if ((order.start && date < order.start) || (order.end && date > order.end)) return;
+    if (date < winStart || date > winEnd) return;
     const drv = (db.drivers || []).find(d => d.id === a.driverId);
     if (!drv) return;
     const share = Math.max(1, ordersOnDay(db.orders, a.vehicleId, date).length);
@@ -2856,8 +2887,7 @@ const campaignPnl = (db, order) => {
   wages = Math.round(wages); battas = Math.round(battas);
   // Workshop jobs on those vans while the campaign was running.
   const workshop = (db.jobs || []).filter(j => ids.includes(j.vehicleId)
-    && (!order.start || String(j.date || "") >= order.start)
-    && (!order.end || String(j.date || "") <= order.end))
+    && String(j.date || "") >= winStart && String(j.date || "") <= winEnd)
     .reduce((s, j) => s + (+j.cost || 0), 0);
   const production = (+order.fabrication || 0) + (+order.flex || 0);
   /* Money out that belongs to this campaign: anything booked directly against
@@ -2869,7 +2899,7 @@ const campaignPnl = (db, order) => {
     if (e.orderId === order.id) { running += +e.amount || 0; return; }
     if (e.orderId) return;                                   // belongs to a different campaign
     if (!e.vehicleId || !ids.includes(e.vehicleId)) return;
-    if ((order.start && date < order.start) || (order.end && date > order.end)) return;
+    if (date < winStart || date > winEnd) return;
     const share = Math.max(1, ordersOnDay(db.orders, e.vehicleId, date).length);
     running += (+e.amount || 0) / share;
   });
@@ -2894,13 +2924,14 @@ const campaignPnl = (db, order) => {
    written at a different split (rare, but the field exists) never disagrees
    with what this screen demands. */
 const paymentMilestones = (o, v) => {
-  if (!o || !o.start) return null;
+  if (!o) return null;
   const m = orderMath(o);
-  const days = m.days || spanDays(o.start, o.end) || 0;
+  const { start, end } = effectiveWindow(o);
+  const days = m.days || spanDays(start, end) || 0;
   if (days <= 0) return null;
-  const mid = addDays(o.start, Math.floor(days / 2));
+  const mid = addDays(start, Math.floor(days / 2));
   return [
-    { key:"advance", label:"Advance before the vans go out", dueOn: o.start, cum: m.advance || 0 },
+    { key:"advance", label:"Advance before the vans go out", dueOn: start, cum: m.advance || 0 },
     { key:"mid", label:"Balance by the campaign's midpoint", dueOn: mid, cum: m.total },
   ];
 };
