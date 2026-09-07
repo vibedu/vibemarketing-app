@@ -645,6 +645,31 @@ const digestText = (list) =>
       (a.days < 0 ? "OVERDUE by " + Math.abs(a.days) + " days" : "in " + a.days + " days") + " (" + dmy(a.due) + ")"))
     .concat(["", "Please book the workshop and RTO slot in advance.", "\u2014 Vibe Marketing"]).join("\n");
 
+/* A two-tone chime for the payment rule \u2014 the one alert in the app that is
+   meant to be heard, not just seen, because a badge nobody looks at is not
+   how "we do not run on credit" gets enforced. Plain Web Audio, no asset to
+   load. Browsers block audio before the page has had any click/tap; that
+   failure is silent and harmless \u2014 the red card on screen still says it. */
+const playAlertChime = () => {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const t0 = ctx.currentTime;
+    [880, 660, 880].forEach((freq, i) => {
+      const start = t0 + i * 0.16;
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine"; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.32, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.14);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(start); osc.stop(start + 0.15);
+    });
+    setTimeout(() => { try { ctx.close(); } catch (e) {} }, 900);
+  } catch (e) {}
+};
+
 /* Advance is only what was actually asked for. `+o.advancePct || 50` treated 0 as
    missing, because zero is falsy in JS, so a customer quoted no advance was still
    billed for half the job up front. Blank means no advance too — a new campaign
@@ -1568,6 +1593,7 @@ const blankData = () => ({
     autoSendProforma: true, remindDays: 3, autoReceipt: true,
     autoProofToVendor: true, dailyProofRequired: true,
     leadEarly: 30, leadFinal: 7, browserAlerts: false, weeklyDigest: true, driverLang: "en",
+    paymentLead: 2, paymentAlertSound: true,
     managerPhone: "", managerEmail: "", company: "Vibe Marketing", gstin: "", invPrefix: "VM/PI",
     serviceReminderDays: 90,
   },
@@ -1708,6 +1734,7 @@ const seedData = () => {
       autoSendProforma: true, remindDays: 3, autoReceipt: true,
       autoProofToVendor: true, dailyProofRequired: true,
       leadEarly: 30, leadFinal: 7, browserAlerts: false, weeklyDigest: true, driverLang: "en",
+      paymentLead: 2, paymentAlertSound: true,
       company: "Vibe Marketing", gstin: "33AAAAA0000A1Z5", invPrefix: "VM/PI",
       managerPhone: "9843012345", managerEmail: "ops@vibemarketing.in",
     },
@@ -2183,8 +2210,8 @@ function StaffForm({ init, onSave, onDelete, onClose }) {
   );
 }
 
-function PaymentForm({ orders, vendors, paidOn, onSave, onClose }) {
-  const [f, set] = useState({ orderId: orders[0]?.id || "", date: today(), amount:"", mode:"UPI", kind:"Advance", ref:"", tds:"" });
+function PaymentForm({ orders, vendors, paidOn, initOrderId, initKind, onSave, onClose }) {
+  const [f, set] = useState({ orderId: initOrderId || orders[0]?.id || "", date: today(), amount:"", mode:"UPI", kind: initKind || "Advance", ref:"", tds:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const ord = orders.find(o => o.id === f.orderId);
   const due = ord ? Math.max(0, orderMath(ord).total - (paidOn ? paidOn(ord.id) : 0)) : 0;
@@ -2852,6 +2879,60 @@ const campaignPnl = (db, order) => {
   // government, and counting it as revenue flattered every campaign by 18%.
   return { m, revenue: m.sub, wages, battas, workshop, production, running, cost,
            margin: m.sub - cost, dutyDays: Math.round(dutyDays * 10) / 10 };
+};
+
+/* ---------------------------- payment discipline ----------------------------
+   The business runs on a strict rule: 50% advance before a campaign's vehicles
+   go out, the remaining 50% collected at the campaign's own midpoint — never
+   at completion, because by completion nothing should be left to collect. A
+   10-day booking at ₹2,500/day (₹25,000 + GST) is ₹12,500 + GST before day 1,
+   the balance by around day 5. This is not the invoice's credit-period due
+   date (that is about the tax invoice raised afterwards) — it is the cash
+   discipline that decides whether the vans go out and stay out at all.
+
+   The milestones follow the campaign's own advance %, so a quote deliberately
+   written at a different split (rare, but the field exists) never disagrees
+   with what this screen demands. */
+const paymentMilestones = (o, v) => {
+  if (!o || !o.start) return null;
+  const m = orderMath(o);
+  const days = m.days || spanDays(o.start, o.end) || 0;
+  if (days <= 0) return null;
+  const mid = addDays(o.start, Math.floor(days / 2));
+  return [
+    { key:"advance", label:"Advance before the vans go out", dueOn: o.start, cum: m.advance || 0 },
+    { key:"mid", label:"Balance by the campaign's midpoint", dueOn: mid, cum: m.total },
+  ];
+};
+
+/* One alert per campaign — whichever milestone is first still unmet. A
+   campaign that has cleared its advance but not yet reached its midpoint
+   raises nothing; one where the midpoint has passed with money still owed
+   raises the strict, red kind. `lead` is how many days ahead of a due date
+   counts as a heads-up rather than silence. */
+const paymentAlertsFor = (db, paidOn, lead) => {
+  const out = [];
+  (db.orders || []).forEach(o => {
+    // Only while the campaign is actually running: a proforma has nothing to
+    // collect yet, and a completed one is the receivables screen's job.
+    if (!["Confirmed", "Advance paid", "Running"].includes(o.stage)) return;
+    const v = (db.vendors || []).find(x => x.id === o.vendorId);
+    const ms = paymentMilestones(o, v);
+    if (!ms) return;
+    const collected = paidOn(o.id);
+    for (const ms1 of ms) {
+      if (collected >= ms1.cum - 1) continue;        // this checkpoint is met; try the next
+      const days = daysTo(ms1.dueOn);
+      if (days === null || days > lead) break;        // too far out to say anything yet
+      out.push({
+        orderId: o.id, o, v, milestone: ms1.key, label: ms1.label, dueOn: ms1.dueOn,
+        expected: ms1.cum, collected, short: Math.round(ms1.cum - collected), days,
+        level: days > 0 ? "upcoming" : "overdue",       // due today counts as overdue: the rule is strict
+      });
+      break;                                            // one alert per campaign — the nearest unmet milestone
+    }
+  });
+  return out.sort((a, b) => a.days - b.days);
 };
 
 /* Receivables: one row per invoice still owed, aged from its own due date. */
@@ -4062,6 +4143,58 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, onClose }) {
    Who owes us, how long it has been owed, and the message that asks for it.
    The single "Outstanding" figure on the money screen was true but useless:
    it never said which customer to ring this morning. */
+/* ---------------------------- payment discipline (screen) ----------------------------
+   Every campaign that has not met its advance or its midpoint balance, in
+   full — customer, campaign, vehicles, days, what was expected by when, what
+   has actually come in, and how short. This is the "we do not run on credit"
+   screen: nothing here is a suggestion. */
+function PaymentAlertsSheet({ list, onOpenOrder, onRecordPayment, onSend, onClose }) {
+  const overdue = list.filter(a => a.level === "overdue");
+  const upcoming = list.filter(a => a.level === "upcoming");
+  const Row = (a) => {
+    return (
+      <div className="vz-card" key={a.orderId}
+        style={a.level === "overdue" ? { background:"#FFF6F6", borderColor:"#F2C9C9" } : { background:"#FFFBEA", borderColor:"#F5DFA0" }}>
+        <div className="vz-row">
+          <button className="vz-tapcard" style={{ flex:1 }} onClick={() => onOpenOrder(a.orderId)}>
+            <div className="vz-title">{a.v ? a.v.name : "—"}</div>
+            <div className="vz-meta">{a.o.title || a.o.no} · {(a.o.vehicleIds || []).length} van(s)
+              {a.o.start && a.o.end ? " · " + dmy(a.o.start) + "–" + dmy(a.o.end) : ""}</div>
+          </button>
+          <Chip c={a.level === "overdue" ? "c-red" : "c-yellow"}>
+            {a.level === "overdue" ? (a.days === 0 ? "Due today" : -a.days + "d over") : "in " + a.days + "d"}
+          </Chip>
+        </div>
+        <div className="vz-kv"><span>{a.label}</span><b>{dmy(a.dueOn)}</b></div>
+        <div className="vz-kv"><span>Expected by then</span><b className="vz-money">{inr(a.expected)}</b></div>
+        <div className="vz-kv"><span>Received so far</span><b className="vz-money">{inr(a.collected)}</b></div>
+        <div className="vz-kv"><span style={{ fontWeight:700, color:"var(--ink)" }}>Short</span>
+          <b className="vz-money" style={{ fontSize:15, color:"#B4262A" }}>{inr(a.short)}</b></div>
+        <div className="vz-inline" style={{ marginTop:9, flexWrap:"wrap" }}>
+          <button className="vz-chip c-green" onClick={() => onRecordPayment(a.orderId, a.milestone === "advance" ? "Advance" : "Part payment")}>Record payment</button>
+          {a.v && (a.v.phone || a.v.email) && <button className="vz-chip c-blue" onClick={() => onSend(a)}>Remind vendor</button>}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <Sheet title="Payment collection" onClose={onClose}>
+      <div className="vz-card" style={{ background:"var(--ink)", borderColor:"var(--ink)", color:"#fff" }}>
+        <div className="vz-title" style={{ color:"#fff" }}>We do not run on credit</div>
+        <div className="vz-meta" style={{ color:"#9AA6BE" }}>
+          50% advance before the vehicles go out, the balance by the campaign's own midpoint —
+          never at completion.
+        </div>
+      </div>
+      {list.length === 0 && <div className="vz-card"><div className="vz-meta">Every running campaign is paid up to where it should be.</div></div>}
+      {overdue.length > 0 && <div className="vz-eyebrow" style={{ marginTop:14 }}>Overdue — {overdue.length}</div>}
+      {overdue.map(Row)}
+      {upcoming.length > 0 && <div className="vz-eyebrow" style={{ marginTop:14 }}>Due soon</div>}
+      {upcoming.map(Row)}
+    </Sheet>
+  );
+}
+
 function ReceivablesSheet({ db, paidOn, onOpenOrder, onSend, onFollowup, onClose }) {
   const [view, setView] = useState("customer");     // customer | invoice
   const r = receivables(db, paidOn);
@@ -5423,7 +5556,8 @@ function VibeCRM() {
     const todays = db.proofs.filter(p => localDay(p.at) === today());
     const runningVeh = db.orders.filter(o => o.stage === "Running").flatMap(o => o.vehicleIds || []);
     const missingToday = runningVeh.filter(vid => !todays.some(p => p.vehicleId === vid));
-    return { onRoad, workshop, alerts, live, billed, collected, due: billed - collected, kycGaps, chase, todays, missingToday };
+    const paymentAlerts = paymentAlertsFor(db, paidOn, db.settings.paymentLead ?? 2);
+    return { onRoad, workshop, alerts, live, billed, collected, due: billed - collected, kycGaps, chase, todays, missingToday, paymentAlerts };
   }, [db]);
 
   useEffect(() => {
@@ -5460,6 +5594,35 @@ function VibeCRM() {
       }
     } catch (e) {}
   }, [loaded, db.settings.browserAlerts, stats.alerts]);
+
+  /* The payment rule is strict, so it gets the one alert in the app meant to
+     be heard: a chime the moment a campaign becomes due or overdue on its
+     advance or its midpoint balance, for whoever can actually chase the
+     money — a Field manager has no money permission and never sees this.
+     The chime fires once per distinct set of urgent campaigns, not once per
+     poll tick, so it does not nag on every 15-second sync; it fires again
+     the moment the set changes, whether that is a new campaign falling
+     overdue or one being cleared and another taking its place. */
+  useEffect(() => {
+    // Same "signed in, not locked" gate as adminGated below — computed here
+    // by hand because adminGated itself is declared later in the component.
+    if (!loaded || mode !== "manager" || !db.adminToken || locked || !perm.money) return;
+    if (db.settings.paymentAlertSound === false) return;
+    const urgent = stats.paymentAlerts.filter(a => a.level === "overdue");
+    const sig = urgent.map(a => a.orderId + ":" + a.milestone).sort().join(",");
+    if (window.__vibePaySig === sig) return;
+    window.__vibePaySig = sig;
+    if (!urgent.length) return;                        // cleared — stay quiet, don't chime on relief
+    playAlertChime();
+    try {
+      if (db.settings.browserAlerts && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("Vibe Marketing — payment not collected", {
+          body: urgent.slice(0, 4).map(a =>
+            (a.v ? a.v.name : "—") + " · " + (a.o.title || a.o.no) + " · " + inr(a.short) + " short").join("\n"),
+        });
+      }
+    } catch (e) {}
+  }, [loaded, mode, db.adminToken, locked, perm.money, stats.paymentAlerts, db.settings.paymentAlertSound, db.settings.browserAlerts]);
 
   /* ---------- send helpers ---------- */
   const logSend = (order, kind, channel) => put("orders", { ...order, sends: [{ id: uid(), kind, channel, at: new Date().toISOString() }, ...(order.sends || [])] });
@@ -5844,6 +6007,33 @@ function VibeCRM() {
     });
   };
 
+  /* The one message that exists because the rule is strict: the vehicles do
+     not run on an unpaid advance, and do not stay out past the midpoint on an
+     unpaid balance. Sent straight from the payment-alert card. */
+  const sendPaymentReminder = (a) => {
+    const v = a.v;
+    const isAdvance = a.milestone === "advance";
+    const text = ["*VIBE MARKETING*", "",
+      "Dear " + (v ? (v.person || v.name) : "customer") + ",", "",
+      isAdvance
+        ? (a.days < 0
+            ? "Your campaign “" + (a.o.title || a.o.no) + "” began on " + dmy(a.dueOn) + ", and the advance is still pending."
+            : "Your campaign “" + (a.o.title || a.o.no) + "” is scheduled to begin on " + dmy(a.dueOn) + ".")
+        : "Your campaign “" + (a.o.title || a.o.no) + "” has reached its midpoint, and the balance is due.",
+      "As agreed, " + inr(a.expected) + " is payable " + (isAdvance ? "before the vehicles go out" : "by this point") + ".",
+      a.collected > 0 ? "We have received " + inr(a.collected) + " so far." : "",
+      "*Amount pending: " + inr(a.short) + "*", "",
+      "Please share the payment so the campaign can " + (isAdvance ? "begin as scheduled" : "continue without interruption") + ".",
+      "", "Thank you.", "— " + (db.settings.company || "Vibe Marketing")].filter(l => l !== "").join("\n");
+    setSend({
+      title: "Payment reminder — " + (v ? v.name : "customer"), to: v ? v.name : "customer",
+      phone: v && v.phone, email: v && v.email,
+      subject: "Payment pending — " + (a.o.title || a.o.no) + " — " + inr(a.short),
+      text,
+      onSent: (ch) => setToast("Reminder sent · " + ch),
+    });
+  };
+
   /* Putting money on a card is money leaving the business, so a recharge is two
      things at once: the card's balance goes up, and diesel spend goes on the
      books against that van. Correcting a balance moves neither — it only tells
@@ -5959,6 +6149,56 @@ function VibeCRM() {
           </div>
         </div>
       )}
+
+      {/* We do not run on credit. This sits above everything else on Home,
+          in full — customer, campaign, vehicles, dates, what is short — so
+          it cannot be scrolled past the way a badge can be ignored. Only
+          whoever can act on money sees it; a Field manager has none. */}
+      {perm.money && stats.paymentAlerts.some(a => a.level === "overdue") && (
+        <div className="vz-card" style={{ background:"#FFF6F6", borderColor:"#E5484D", borderWidth:2 }}>
+          <div className="vz-row" style={{ marginBottom:2 }}>
+            <div className="vz-title" style={{ color:"#B4262A" }}>
+              🔴 {stats.paymentAlerts.filter(a => a.level === "overdue").length} campaign{stats.paymentAlerts.filter(a => a.level === "overdue").length === 1 ? "" : "s"} not paid on schedule
+            </div>
+          </div>
+          {stats.paymentAlerts.filter(a => a.level === "overdue").slice(0, 3).map(a => (
+            <div key={a.orderId} style={{ padding:"10px 0", borderTop:"1px solid #F2C9C9" }}>
+              <div className="vz-row">
+                <button className="vz-tapcard" style={{ flex:1 }} onClick={() => setOpenOrder(a.orderId)}>
+                  <div className="vz-title" style={{ fontSize:14.5 }}>{a.v ? a.v.name : "—"} · {a.o.title || a.o.no}</div>
+                  <div className="vz-meta">
+                    {(a.o.vehicleIds || []).length} van(s){a.o.start && a.o.end ? " · " + dmy(a.o.start) + "–" + dmy(a.o.end) : ""}
+                    {" · "}{a.label.toLowerCase()}
+                  </div>
+                  <div className="vz-meta">
+                    Expected {inr(a.expected)} by {dmy(a.dueOn)} · received {inr(a.collected)}
+                    {a.days < 0 ? " · " + -a.days + "d over" : " · due today"}
+                  </div>
+                </button>
+                <b className="vz-money" style={{ color:"#B4262A", fontSize:15 }}>{inr(a.short)}<br /><small style={{ fontWeight:400, color:"var(--muted)" }}>short</small></b>
+              </div>
+              <div className="vz-inline" style={{ marginTop:7, flexWrap:"wrap" }}>
+                <button className="vz-chip c-green" onClick={() => setSheet({ type:"payment", data:{ orderId:a.orderId, kind: a.milestone === "advance" ? "Advance" : "Part payment" } })}>Record payment</button>
+                {a.v && (a.v.phone || a.v.email) && <button className="vz-chip c-blue" onClick={() => sendPaymentReminder(a)}>Remind vendor</button>}
+              </div>
+            </div>
+          ))}
+          <button className="vz-chip c-red" style={{ marginTop:10 }} onClick={() => setSheet({ type:"paymentalerts" })}>
+            See all {stats.paymentAlerts.length}
+          </button>
+        </div>
+      )}
+      {perm.money && stats.paymentAlerts.length > 0 && !stats.paymentAlerts.some(a => a.level === "overdue") && (
+        <button className="vz-card vz-tapcard" style={{ background:"#FFFBEA", borderColor:"#F5DFA0" }}
+          onClick={() => setSheet({ type:"paymentalerts" })}>
+          <div className="vz-row">
+            <div><div className="vz-title">💰 {stats.paymentAlerts.length} payment{stats.paymentAlerts.length === 1 ? "" : "s"} due soon</div>
+              <div className="vz-meta">Advance or midpoint balance — the next 2 days</div></div>
+            <Chip c="c-yellow">Open</Chip>
+          </div>
+        </button>
+      )}
+
       <div className="vz-grid">
         <div className="vz-stat"><i>On road today</i><b>{stats.onRoad}<small style={{ fontSize:13 }}> / {db.vehicles.length}</small></b><small>{stats.workshop} in workshop</small></div>
         <div className="vz-stat"><i>Proofs today</i><b>{stats.todays.length}</b><small>{stats.missingToday.length} vehicles pending</small></div>
@@ -7209,6 +7449,20 @@ function VibeCRM() {
         <Toggle on={db.settings.dailyProofRequired} onChange={v => setSetting("dailyProofRequired", v)} />
       </div>
 
+      <div className="vz-eyebrow">Payment discipline</div>
+      <div className="vz-meta" style={{ marginTop:0 }}>
+        50% advance before a campaign's vehicles go out, the remaining 50% by its own midpoint —
+        never at completion. Whoever handles money is warned this many days ahead, and gets a sound
+        the moment a campaign becomes overdue.
+      </div>
+      <F label="Warn this many days before each due date">
+        <input type="number" value={db.settings.paymentLead ?? 2} onChange={e => setSetting("paymentLead", +e.target.value)} inputMode="numeric" min="0" max="10" />
+      </F>
+      <div className="vz-tog">
+        <p>Sound when a campaign becomes overdue<small>Plays in the browser for whoever is signed in with money access</small></p>
+        <Toggle on={db.settings.paymentAlertSound !== false} onChange={v => setSetting("paymentAlertSound", v)} />
+      </div>
+
       <div className="vz-eyebrow">Renewal alerts</div>
       <div className="vz-2">
         <F label="First warning (days)"><input type="number" value={db.settings.leadEarly} onChange={e => setSetting("leadEarly", +e.target.value)} inputMode="numeric" /></F>
@@ -7429,6 +7683,20 @@ function VibeCRM() {
             {mode === "manager" && (pics[me && me.photoId] || (me && me.photoUrl)) && (
               <img className="vz-hdrav" src={pics[me && me.photoId] || me.photoUrl} alt="" />
             )}
+            {/* We do not run on credit: a campaign whose advance or midpoint
+                balance is unmet gets its own bell, separate from renewals, so
+                it is never lost among 36 unrelated FC/insurance badges. Only
+                whoever can actually chase money sees it. */}
+            {mode === "manager" && !adminGated && perm.money && (
+              <button className="vz-gear" onClick={() => setSheet({ type:"paymentalerts" })} aria-label="Payment collection alerts">
+                <Icon d={ICONS.money} />
+                {stats.paymentAlerts.length > 0 && (
+                  <span className="vz-badge" style={{ background: stats.paymentAlerts.some(a => a.level === "overdue") ? "var(--red)" : "var(--yellow)" }}>
+                    {stats.paymentAlerts.length}
+                  </span>
+                )}
+              </button>
+            )}
             {/* FC and insurance are the fleet's business. Finance was carrying a
                 red badge for 36 things she has no way to act on. */}
             {mode === "manager" && !adminGated && perm.renewals !== false && (
@@ -7529,6 +7797,12 @@ function VibeCRM() {
             setToast("Credit note " + cn.no + " raised");
             openCreditNote(cn);
           }} />
+      )}
+      {sheet?.type === "paymentalerts" && (
+        <PaymentAlertsSheet list={stats.paymentAlerts} onClose={() => setSheet(null)}
+          onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }}
+          onRecordPayment={(orderId, kind) => setSheet({ type:"payment", data:{ orderId, kind } })}
+          onSend={sendPaymentReminder} />
       )}
       {sheet?.type === "advance" && (
         <AdvanceForm driver={sheet.data} db={db} onClose={() => setSheet({ type:"attendance" })}
@@ -7689,7 +7963,9 @@ function VibeCRM() {
           onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "payment" && (
-        <PaymentForm orders={db.orders} vendors={db.vendors} paidOn={paidOn} onClose={() => setSheet(null)}
+        <PaymentForm orders={db.orders} vendors={db.vendors} paidOn={paidOn}
+          initOrderId={sheet.data && sheet.data.orderId} initKind={sheet.data && sheet.data.kind}
+          onClose={() => setSheet(null)}
           onSave={(x) => {
             put("payments", x); setSheet(null);
             const o = orderOf(x.orderId);
