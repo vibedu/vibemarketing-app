@@ -7234,13 +7234,32 @@ function VibeCRM() {
     if (!res || !res.ok) { setToast("Admin created — now log in"); return; }
     finishAdminLogin(res, pin, name || res.name);
   };
+  /* Recovering a forgotten admin password needs the server's own setup key —
+     the same secret that protects creating the first admin, kept in
+     api/config.php, off the phone. Whoever has that already has real access
+     to the server; this just spares them a trip into phpMyAdmin. */
+  const adminResetPassword = async () => {
+    const email = (gate.email || "").trim(), code = (gate.setupCode || "").trim();
+    const pw = gate.pw || "", pw2 = gate.pw2 || "";
+    if (!email || !code || !pw) return;
+    if (pw !== pw2) { setToast("Those two passwords don't match"); return; }
+    if (pw.length < 8) { setToast("Password must be at least 8 characters"); return; }
+    const res = await apiPost("admin_reset_password.php", { email, setup_key: code, password: pw });
+    if (!res) { setToast("Could not reach the server — check your connection"); return; }
+    if (!res.ok) { setToast(res.error || "Could not reset the password"); return; }
+    setToast("Password changed — log in with it");
+    setGate({ step:"office", userId:"", name:"", pin:"", pin2:"", email, pw:"", pw2:"", setupCode:"", resetting:false });
+  };
 
-  // The Admin login / first-time setup screen (server-verified).
+  // The Admin login / first-time setup / forgot-password screen (server-verified).
   const AdminAuthScreen = () => {
     const cfg = adminCfg;
     const setup = !!(cfg && !cfg.configured);
+    const resetting = !setup && !!gate.resetting;
     const requireCode = !!(cfg && cfg.setup_enabled); // a setup code is only needed if the server has one
-    const ready = (gate.email || "").trim() && (gate.pw || "") && (!setup || !requireCode || (gate.setupCode || "").trim());
+    const ready = resetting
+      ? (gate.email || "").trim() && (gate.setupCode || "").trim() && (gate.pw || "") && (gate.pw2 || "")
+      : (gate.email || "").trim() && (gate.pw || "") && (!setup || !requireCode || (gate.setupCode || "").trim());
     return (
       <div className="vz-gate">
         <div className="vz-loginhero">
@@ -7249,18 +7268,37 @@ function VibeCRM() {
           <div className="vz-logintag">Admin</div>
         </div>
         <div className="vz-logincard">
-          <h2>{setup ? "Set up admin" : "Admin login"}</h2>
-          <p>{setup ? "Create the one admin account for your business." : "Log in with your admin email and password."}</p>
+          <h2>{resetting ? "Reset admin password" : setup ? "Set up admin" : "Admin login"}</h2>
+          <p>
+            {resetting ? "Needs the setup key from api/config.php on the server — not the old password."
+              : setup ? "Create the one admin account for your business."
+              : "Log in with your admin email and password."}
+          </p>
           {!cfg && <div className="vz-meta" style={{ marginTop:0 }}>Checking with the server…</div>}
-          {setup && (
+          {setup && !resetting && (
             <>
               {requireCode && <F label="Setup code"><input value={gate.setupCode || ""} onChange={e => setGate({ ...gate, setupCode: e.target.value })} autoComplete="off" placeholder="from api/config.php" /></F>}
               <F label="Your name"><input value={gate.name || ""} onChange={e => setGate({ ...gate, name: e.target.value })} placeholder="Raj Mohan" /></F>
             </>
           )}
           <F label="Email"><input type="email" value={gate.email || ""} onChange={e => setGate({ ...gate, email: e.target.value })} inputMode="email" autoComplete="username" placeholder="you@vibemarketing.in" /></F>
-          <F label="Password"><input type="password" value={gate.pw || ""} onChange={e => setGate({ ...gate, pw: e.target.value })} autoComplete="current-password" placeholder={setup ? "choose a strong password" : "your password"} /></F>
-          <button className="vz-btn" disabled={!ready} onClick={setup ? adminSetup : adminLogin}>{setup ? "Create admin & open" : "Log in"}</button>
+          {resetting ? (
+            <>
+              <F label="Setup key"><input value={gate.setupCode || ""} onChange={e => setGate({ ...gate, setupCode: e.target.value })} autoComplete="off" placeholder="from api/config.php" /></F>
+              <F label="New password"><input type="password" value={gate.pw || ""} onChange={e => setGate({ ...gate, pw: e.target.value })} autoComplete="new-password" placeholder="at least 8 characters" /></F>
+              <F label="Confirm new password"><input type="password" value={gate.pw2 || ""} onChange={e => setGate({ ...gate, pw2: e.target.value })} autoComplete="new-password" placeholder="type it again" /></F>
+            </>
+          ) : (
+            <F label="Password"><input type="password" value={gate.pw || ""} onChange={e => setGate({ ...gate, pw: e.target.value })} autoComplete="current-password" placeholder={setup ? "choose a strong password" : "your password"} /></F>
+          )}
+          <button className="vz-btn" disabled={!ready} onClick={resetting ? adminResetPassword : setup ? adminSetup : adminLogin}>
+            {resetting ? "Reset password" : setup ? "Create admin & open" : "Log in"}
+          </button>
+          {!setup && (
+            <button className="vz-link" onClick={() => setGate({ ...gate, resetting: !resetting, pw:"", pw2:"", setupCode:"" })}>
+              {resetting ? "Back to login" : "Forgot password?"}
+            </button>
+          )}
           <button className="vz-link" onClick={() => { if (mode) signOut(); else setGate({ step:"choose", userId:"", name:"", pin:"", pin2:"", email:"", pw:"", setupCode:"" }); }}>{mode ? "Log out" : tr(lang, "back")}</button>
         </div>
       </div>
