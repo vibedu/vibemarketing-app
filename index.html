@@ -2406,33 +2406,6 @@ function JobForm({ vehicles, onSave, onClose }) {
   );
 }
 
-/* ---------------------------- users ---------------------------- */
-function UserForm({ init, isSelf, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { name:"", role:"Field manager", pin:"" });
-  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
-  return (
-    <Sheet title={init ? "Edit user" : "Add office user"} onClose={onClose}>
-      <F label="Name"><input value={f.name} onChange={u("name")} /></F>
-      <F label="Role">
-        <select value={f.role} onChange={u("role")} disabled={isSelf}>
-          {ROLE_NAMES.map(r => <option key={r}>{r}</option>)}
-        </select>
-      </F>
-      {isSelf && <div className="vz-meta" style={{ marginTop:-6, marginBottom:8 }}>You cannot change your own role.</div>}
-      <F label="PIN (4–6 digits)">
-        <input value={f.pin} inputMode="numeric" onChange={e => set({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-          style={{ fontFamily:"var(--mono)", letterSpacing:6 }} />
-      </F>
-      <div className="vz-meta" style={{ marginTop:-4, marginBottom:8 }}>
-        {ROLES[f.role] ? "Sees: " + ROLES[f.role].tabs.join(", ") : ""}
-      </div>
-      <button className="vz-btn" disabled={!f.name.trim() || f.pin.length < 4}
-        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim() })}>Save user</button>
-      {init && !isSelf && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Remove this user</button>}
-    </Sheet>
-  );
-}
-
 /* Office logins, managed by a Director. The password is set here and never
    comes back from the server, so it has to be handed over at the time — the
    sheet keeps it on screen until it is dismissed for exactly that reason. */
@@ -7636,30 +7609,6 @@ function VibeCRM() {
         <F label="Invoice prefix"><input value={db.settings.invPrefix || ""} onChange={e => setSetting("invPrefix", e.target.value)} /></F>
       </div>
 
-      {perm.users && (
-        <>
-          <div className="vz-eyebrow">
-            Office users
-            <button onClick={() => setSheet({ type:"user" })}>Add user</button>
-          </div>
-          {(db.users || []).map(u => (
-            <div className="vz-card" key={u.id}>
-              <div className="vz-row">
-                <div>
-                  <div className="vz-title">{u.name}{u.id === db.userId ? " (you)" : ""}</div>
-                  <div className="vz-meta">{u.role} · PIN {String(u.pin).replace(/./g, "•")}</div>
-                </div>
-                <button className="vz-chip c-blue" onClick={() => setSheet({ type:"user", data:u })}>Edit</button>
-              </div>
-            </div>
-          ))}
-          <div className="vz-meta" style={{ marginBottom:6 }}>
-            Director sees everything. Finance sees vendors, invoices and payments. Field manager sees
-            campaigns, fleet and photos but no money.
-          </div>
-        </>
-      )}
-
       <div className="vz-eyebrow">Backup to server</div>
       <div className="vz-card">
         <div className="vz-row">
@@ -7908,12 +7857,6 @@ function VibeCRM() {
       {openProof && ProofDetail()}
 
       {sheet?.type === "settings" && Settings()}
-      {sheet?.type === "user" && (
-        <UserForm init={sheet.data} isSelf={sheet.data && sheet.data.id === db.userId}
-          onClose={() => setSheet(null)}
-          onSave={(x) => { put("users", x); setSheet(null); setToast("User saved"); }}
-          onDelete={(id) => { drop("users", id); setSheet(null); setToast("User removed"); }} />
-      )}
       {sheet?.type === "gst" && <GstSheet db={db} vendorOf={vendorOf} onClose={() => setSheet(null)} />}
       {sheet?.type === "users" && <OfficeUsersSheet setToast={setToast} onClose={() => setSheet(null)} />}
       {sheet?.type === "attendance" && <AttendanceSheet db={db} vehOf={vehOf} drvOf={drvOf} perm={perm}
