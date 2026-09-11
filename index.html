@@ -875,13 +875,20 @@ const termsForOrder = (s, o) => {
   });
 };
 
+/* The pre-sale document has three flavours — same layout, different heading
+   and number prefix — chosen per campaign (OrderForm's "Document type").
+   A tax invoice is never one of these; it has its own fixed heading below. */
+const DOC_KIND_LABEL  = { po: "PURCHASE ORDER", proforma: "PROFORMA INVOICE", quotation: "QUOTATION" };
+const DOC_KIND_PREFIX = { po: "PO# ", proforma: "Proforma# ", quotation: "Quotation# " };
+
 const docPages = async ({ title, s, v, o, m }) => {
   const M = 64, RIGHT = PAGE_W - M;
   const isInvoice = title === "TAX INVOICE";
+  const docKind = DOC_KIND_LABEL[o.docType] ? o.docType : "quotation";
   const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const logo = await inkLogo();
   const docNo = o.invNo || o.no || "";
-  const docNoLabel = (isInvoice ? "Invoice# " : "Quotation# ") + docNo;
+  const docNoLabel = (isInvoice ? "Invoice# " : DOC_KIND_PREFIX[docKind]) + docNo;
 
   const footer = (g, n) => {
     g.fillStyle = DOC_ORANGE; g.fillRect(0, PAGE_H - 9, PAGE_W, 9);
@@ -915,7 +922,7 @@ const docPages = async ({ title, s, v, o, m }) => {
 
   g.textAlign = "right";
   g.fillStyle = DOC_ORANGE; F("800", 54);
-  g.fillText(isInvoice ? "TAX INVOICE" : "QUOTATION", RIGHT, 132);
+  g.fillText(isInvoice ? "TAX INVOICE" : DOC_KIND_LABEL[docKind], RIGHT, 132);
   g.fillStyle = DOC_INK; F("600", 23);
   g.fillText(docNoLabel, RIGHT, 176);
 
@@ -974,43 +981,61 @@ const docPages = async ({ title, s, v, o, m }) => {
   });
   y += 92 + 36;
 
-  /* ---- what is being charged ---- */
-  /* Vehicles and days get a column each rather than one "1 × 10" cell — the
-     customer is buying so many vans for so many days, and each number is
-     worth reading on its own. */
-  /* Vehicle and Days hold small counts, so they are kept narrow; the money
-     columns get the room instead — a six-figure rate has to fit. */
-  const cx = [M, M + 52, 606, 734, 820, 898, 1024, RIGHT];
+  /* ---- what is being charged ----
+     Columns: S.No | Particulars | HSN | Qty | Taxable | GST | Total. Rate
+     isn't its own column in this layout — it rides as a note under the item
+     name instead, so a reader isn't left doing Qty×Rate math to see where
+     Taxable came from. Vehicle count and days, previously two columns of
+     their own, fold into one Qty cell ("2 × 10") for the same reason: this
+     is a GST return's shape, not an internal work-order. */
+  const cx = [M, M + 50, M + 480, M + 590, M + 680, M + 830, M + 950, RIGHT];
   const TH = 50;
   g.fillStyle = "#3A3A3A"; g.fillRect(M, y, RIGHT - M, TH);
   g.fillStyle = "#fff"; F("700", 19);
-  g.textAlign = "left";   g.fillText("#", cx[0] + 18, y + 32); g.fillText("Item & Description", cx[1] + 14, y + 32);
-  g.textAlign = "center"; g.fillText("HSN/SAC", (cx[2] + cx[3]) / 2, y + 32);
-                          g.fillText("Vehicle", (cx[3] + cx[4]) / 2, y + 32);
-                          g.fillText("Days",    (cx[4] + cx[5]) / 2, y + 32);
-  g.textAlign = "right";  g.fillText("Rate",   cx[6] - 14, y + 32);
-                          g.fillText("Amount", cx[7] - 14, y + 32);
+  g.textAlign = "left";   g.fillText("S.No", cx[0] + 14, y + 32); g.fillText("Particulars", cx[1] + 14, y + 32);
+  g.textAlign = "center"; g.fillText("HSN",     (cx[2] + cx[3]) / 2, y + 32);
+                          g.fillText("Qty",     (cx[3] + cx[4]) / 2, y + 32);
+  g.textAlign = "right";  g.fillText("Taxable", cx[5] - 14, y + 32);
+                          g.fillText("GST",     cx[6] - 14, y + 32);
+                          g.fillText("Total",   cx[7] - 14, y + 32);
   y += TH;
 
   const area = (o.route || "").split("→")[0].split("-")[0].trim() || "Coimbatore";
   const items = [{
     name: "Mobile Van Advertising",
-    sub: [o.route ? "Route: " + o.route : "Area: " + area],
+    sub: [(o.route ? "Route: " + o.route : "Area: " + area) + " · " + inr(o.rate) + "/vehicle/day"],
     sac: s.sac || "998365",
-    veh: String(o.vehicles || 0), days: String(m.days),
-    rate: money(o.rate), amt: money(m.base),
+    qty: (o.vehicles || 0) + " × " + m.days, amt: m.base,
   }];
   if (m.extras > 0) items.push({
     name: "Flex printing & fabrication", sub: [], sac: s.sacFlex || "998912",
-    veh: String(o.vehicles || 1), days: "—", rate: money(m.extras), amt: money(m.extras),
+    qty: "1", amt: m.extras,
   });
   /* The kilometres are only known after the campaign, so this line appears on
      the final invoice and never on the quotation. */
   if (m.outstation > 0) items.push({
     name: "Extra kilometres run — outstation",
-    sub: ["Total " + m.outKm + " km × " + inr(m.outRate) + " per kilometre"],
-    sac: s.sac || "998365", veh: "—", days: "—",
-    rate: money(m.outRate), amt: money(m.outstation),
+    sub: [m.outKm + " km × " + inr(m.outRate) + " per kilometre"],
+    sac: s.sac || "998365", qty: "1", amt: m.outstation,
+  });
+  /* One GST figure decides the total (m.gst / cgst+sgst / igst) — the same
+     rounding-disagreement bug fixed once already in this app (splitting tax
+     independently per line and re-adding could land a rupee off the number
+     already printed in the totals block). So each line's tax is a share of
+     that one figure, not its own 18% rounded separately, and the last
+     taxable line silently absorbs whatever paisa the rounding leaves over —
+     the standard way a multi-line GST invoice keeps its columns exactly
+     summing to the total already shown below. */
+  const totalGst = o.gst ? (m.inter ? m.igst : m.gst) : 0;
+  let gstLeft = totalGst;
+  const taxableLines = items.filter(it => it.amt > 0);
+  items.forEach((it, i) => {
+    const isLastTaxable = it === taxableLines[taxableLines.length - 1];
+    it.gst = !o.gst || it.amt <= 0 ? 0
+      : isLastTaxable ? gstLeft
+      : Math.round((it.amt / m.sub) * totalGst);
+    if (o.gst && it.amt > 0 && !isLastTaxable) gstLeft -= it.gst;
+    it.total = it.amt + it.gst;
   });
 
   items.forEach((it, idx) => {
@@ -1021,17 +1046,17 @@ const docPages = async ({ title, s, v, o, m }) => {
     g.strokeRect(M, y, RIGHT - M, h);
     for (let i = 1; i < 7; i++) { g.beginPath(); g.moveTo(cx[i], y); g.lineTo(cx[i], y + h); g.stroke(); }
     g.fillStyle = DOC_INK; F("600", 21); g.textAlign = "left";
-    g.fillText(String(idx + 1), cx[0] + 18, y + 36);
+    g.fillText(String(idx + 1), cx[0] + 14, y + 36);
     g.fillText(it.name, cx[1] + 14, y + 36);
     g.fillStyle = DOC_MUTE; F("500", 18);
     subLines.forEach((l, i) => g.fillText(l, cx[1] + 14, y + 36 + 26 + i * 24));
     g.fillStyle = DOC_INK; F("500", 20);
-    g.textAlign = "center"; g.fillText(it.sac,  (cx[2] + cx[3]) / 2, y + 36);
-                            g.fillText(it.veh,  (cx[3] + cx[4]) / 2, y + 36);
-                            g.fillText(it.days, (cx[4] + cx[5]) / 2, y + 36);
+    g.textAlign = "center"; g.fillText(it.sac, (cx[2] + cx[3]) / 2, y + 36);
+                            g.fillText(it.qty, (cx[3] + cx[4]) / 2, y + 36);
     g.textAlign = "right";
-    g.fillText(it.rate, cx[6] - 14, y + 36);
-    F("600", 20); g.fillText(it.amt, cx[7] - 14, y + 36);
+    g.fillText(money(it.amt), cx[5] - 14, y + 36);
+    g.fillText(money(it.gst), cx[6] - 14, y + 36);
+    F("600", 20); g.fillText(money(it.total), cx[7] - 14, y + 36);
     y += h;
   });
   y += 30;
@@ -2012,6 +2037,7 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
   const [f, set] = useState(init || {
     title:"", vendorId: vendors[0]?.id || "", vehicles:1, rate:1900, months:0,
     fabrication:0, flex:0, gst:true, advancePct:50, start:today(), end:"", route:"", stage:"Proforma", vehicleIds:[], sends:[],
+    docType:"proforma",
     // Left blank on purpose: every quotation states the standing rate anyway,
     // so this is only filled in to quote one customer something different.
     outRate: "",
@@ -2031,6 +2057,13 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
     <Sheet title={init ? "Edit campaign" : "New campaign"} onClose={onClose}>
       <F label="Campaign name"><input value={f.title} onChange={u("title")} placeholder="Aadi offer 25%" /></F>
       <F label="Vendor"><select value={f.vendorId} onChange={u("vendorId")}>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></F>
+      <F label="Document type">
+        <select value={f.docType || "proforma"} onChange={u("docType")}>
+          <option value="po">Purchase order</option>
+          <option value="proforma">Proforma invoice</option>
+          <option value="quotation">Quotation</option>
+        </select>
+      </F>
       <div className="vz-2">
         <F label="Vehicles"><input type="number" value={f.vehicles} onChange={num("vehicles")} inputMode="numeric" min="0" /></F>
         <F label="Rate / vehicle / day"><input type="number" value={f.rate} onChange={num("rate")} inputMode="numeric" min="0" /></F>
@@ -5944,13 +5977,14 @@ function VibeCRM() {
       const pages = await docPages({ title, s, v, o, m });
       const blob = pdfFromPages(pages);
       setOpenOrder(null); setSheet(null);
+      const kindLabel = title === "TAX INVOICE" ? "Invoice" : (DOC_KIND_LABEL[o.docType] || "QUOTATION").replace(/(^\w)(.*)/, (_, a, b) => a + b.toLowerCase());
       setDoc({
         pages, blob, title, order: o, vendor: v,
-        file: (title === "TAX INVOICE" ? "Invoice-" : "Quotation-")
+        file: kindLabel.replace(/\s+/g, "") + "-"
               + String(o.invNo || o.no || "").replace(/\W+/g, "-")
               + (v && v.name ? "-" + v.name.replace(/\W+/g, "-") : "") + ".pdf",
         text: proformaText(o, v, m),
-        subject: (title === "TAX INVOICE" ? "Tax invoice " : "Quotation ") + (o.invNo || o.no) + " — Vibe Marketing",
+        subject: (title === "TAX INVOICE" ? "Tax invoice " : kindLabel + " ") + (o.invNo || o.no) + " — Vibe Marketing",
       });
     } catch (e) { setToast("Could not build the document"); }
     setDocBusy(false);
@@ -6661,10 +6695,12 @@ function VibeCRM() {
         </div>}
 
         {perm.money && <button className="vz-btn pop" disabled={docBusy} onClick={() => openDoc(o, "QUOTATION")}>
-          {docBusy ? "Preparing…" : "Quotation / proforma (PDF)"}
+          {docBusy ? "Preparing…" : (DOC_KIND_LABEL[o.docType] || "QUOTATION").replace(/(^\w)(.*)/, (_, a, b) => a + b.toLowerCase()) + " (PDF)"}
         </button>}
         {perm.money && <button className="vz-btn alt" onClick={() => sendProforma(o, false)}>Send as text instead</button>}
-        {perm.invoice && <button className="vz-btn alt" onClick={() => { setOpenOrder(null); openInvoice(o); }}>Tax invoice</button>}
+        {perm.invoice && <button className="vz-btn alt" disabled={idx < 1}
+          onClick={() => { setOpenOrder(null); openInvoice(o); }}>Tax invoice</button>}
+        {perm.invoice && idx < 1 && <div className="vz-meta">Confirm the campaign with the vendor first — move its stage past Proforma to raise a tax invoice.</div>}
         {perm.money && <button className="vz-btn" onClick={() => { setOpenOrder(null); setSheet({ type:"paylink", data:o }); }}>Payment link</button>}
 
         <div className="vz-eyebrow">Sent history</div>
