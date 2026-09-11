@@ -63,7 +63,13 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 /* ------------------------------------------------------------------ */
 /*  VIBE MARKETING — Mobile Van Advertising CRM                               */
-/*  Manager: vendors · campaigns · fleet · KYC · finance · proof feed   */
+/*  Manager: customers · campaigns · fleet · KYC · finance · proof feed   */
+/*  "Vendor" as a UI word now means who WE buy from (the new Suppliers
+    module). Internally the ad-space customer still lives in db.vendors /
+    vendorId / vendorOf() / sync kind "vendor" — renaming those would mean
+    migrating live synced data for a purely cosmetic win, so only the
+    user-visible text changed to "Customer". Don't be misled by the
+    variable names below; the screens say Customer throughout. */
 /*  Driver:  geo-stamped campaign camera                               */
 /* ------------------------------------------------------------------ */
 
@@ -536,7 +542,7 @@ const TX = {
   retryGps:     ["Retry GPS", "மீண்டும் முயற்சி"],
   landmark:     ["Landmark (type it instead)", "அடையாள இடம் (தட்டச்சு செய்யவும்)"],
   noteOpt:      ["Note (optional)", "குறிப்பு (விருப்பம்)"],
-  submitSend:   ["Submit — sends to vendor and manager", "அனுப்பு — வாடிக்கையாளருக்கும் மேலாளருக்கும் செல்லும்"],
+  submitSend:   ["Submit — sends to customer and manager", "அனுப்பு — வாடிக்கையாளருக்கும் மேலாளருக்கும் செல்லும்"],
   needBoth:     ["Photo and location needed", "புகைப்படமும் இடமும் தேவை"],
   kCampaignStart:["Campaign start", "தொடக்கம்"],
   kDailyRun:    ["Daily run", "தினசரி ஓட்டம்"],
@@ -1906,7 +1912,7 @@ function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const inter = isInterstate(f, {});
   return (
-    <Sheet title={init ? "Edit vendor" : "New vendor"} onClose={onClose}>
+    <Sheet title={init ? "Edit customer" : "New customer"} onClose={onClose}>
       <F label="Shop name"><input value={f.name} onChange={u("name")} placeholder="Vasan Thanga Maligai" /></F>
       <div className="vz-2">
         <F label="Category"><select value={f.cat} onChange={u("cat")}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></F>
@@ -1948,8 +1954,8 @@ function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
           : ""}
       </div>
       <F label="Notes"><textarea rows={2} value={f.note} onChange={u("note")} /></F>
-      <button className="vz-btn" disabled={!f.name.trim()} onClick={() => onSave({ ...f, id: f.id || uid(), creditDays: +f.creditDays || 0, state: f.state || HOME_STATE })}>Save vendor</button>
-      {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete vendor</button>}
+      <button className="vz-btn" disabled={!f.name.trim()} onClick={() => onSave({ ...f, id: f.id || uid(), creditDays: +f.creditDays || 0, state: f.state || HOME_STATE })}>Save customer</button>
+      {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete customer</button>}
     </Sheet>
   );
 }
@@ -4253,7 +4259,7 @@ function PaymentAlertsSheet({ list, onOpenOrder, onRecordPayment, onSend, onClos
           <b className="vz-money" style={{ fontSize:15, color:"#B4262A" }}>{inr(a.short)}</b></div>
         <div className="vz-inline" style={{ marginTop:9, flexWrap:"wrap" }}>
           <button className="vz-chip c-green" onClick={() => onRecordPayment(a.orderId, a.milestone === "advance" ? "Advance" : "Part payment")}>Record payment</button>
-          {a.v && (a.v.phone || a.v.email) && <button className="vz-chip c-blue" onClick={() => onSend(a)}>Remind vendor</button>}
+          {a.v && (a.v.phone || a.v.email) && <button className="vz-chip c-blue" onClick={() => onSend(a)}>Remind customer</button>}
         </div>
       </div>
     );
@@ -4985,7 +4991,7 @@ function RemindersSheet({ db, onSend, onManage, onClose }) {
 
       {total === 0 && (
         <div className="vz-card"><div className="vz-meta" style={{ marginTop:0 }}>
-          Nothing due today. 🎉 Add customers under <b>Vendors</b>, or set festival dates via <b>Manage occasions</b>.
+          Nothing due today. 🎉 Add customers under <b>Customers</b>, or set festival dates via <b>Manage occasions</b>.
         </div></div>
       )}
 
@@ -6023,7 +6029,7 @@ function VibeCRM() {
     const veh = vehOf(pr.vehicleId), drv = drvOf(pr.driverId);
     const toVendor = who === "vendor";
     setSend({
-      title: toVendor ? "Send proof to vendor" : "Send proof to manager", auto: !!pr.auto,
+      title: toVendor ? "Send proof to customer" : "Send proof to manager", auto: !!pr.auto,
       to: toVendor ? (v ? v.name : "vendor") : "Manager",
       phone: toVendor ? v?.phone : db.settings.managerPhone,
       email: toVendor ? v?.email : db.settings.managerEmail,
@@ -6222,11 +6228,11 @@ function VibeCRM() {
           <div className="vz-meta" style={{ color:"#9AA6BE" }}>
             1. Add your vehicles with their FC and insurance dates<br />
             2. Add your drivers with their phone numbers<br />
-            3. Add a vendor and raise the first proforma
+            3. Add a customer and raise the first proforma
           </div>
           <div className="vz-inline" style={{ marginTop:11 }}>
             <button className="vz-btn pop" style={{ margin:0 }} onClick={() => { setTab("fleet"); setFleetView("vehicles"); setSheet({ type:"vehicle" }); }}>Add vehicle</button>
-            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => { setTab("vendors"); setSheet({ type:"vendor" }); }}>Add vendor</button>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => { setTab("vendors"); setSheet({ type:"vendor" }); }}>Add customer</button>
           </div>
         </div>
       )}
@@ -6260,7 +6266,7 @@ function VibeCRM() {
               </div>
               <div className="vz-inline" style={{ marginTop:7, flexWrap:"wrap" }}>
                 <button className="vz-chip c-green" onClick={() => setSheet({ type:"payment", data:{ orderId:a.orderId, kind: a.milestone === "advance" ? "Advance" : "Part payment" } })}>Record payment</button>
-                {a.v && (a.v.phone || a.v.email) && <button className="vz-chip c-blue" onClick={() => sendPaymentReminder(a)}>Remind vendor</button>}
+                {a.v && (a.v.phone || a.v.email) && <button className="vz-chip c-blue" onClick={() => sendPaymentReminder(a)}>Remind customer</button>}
               </div>
             </div>
           ))}
@@ -6382,8 +6388,8 @@ function VibeCRM() {
     const list = db.vendors.filter(v => (v.name + v.cat + v.area).toLowerCase().includes(q.toLowerCase()));
     return (
       <>
-        <input className="vz-search" placeholder="Search vendors" value={q} onChange={e => setQ(e.target.value)} />
-        {list.length === 0 && <Empty head="No vendors yet" sub="Add the shops you run campaigns for." />}
+        <input className="vz-search" placeholder="Search customers" value={q} onChange={e => setQ(e.target.value)} />
+        {list.length === 0 && <Empty head="No customers yet" sub="Add the shops you run campaigns for." />}
         {list.map(v => {
           const orders = db.orders.filter(o => o.vendorId === v.id);
           const value = orders.reduce((s, o) => s + orderMath(o).total, 0);
@@ -6574,7 +6580,7 @@ function VibeCRM() {
       <>
         <div className="vz-grid">
           <div className="vz-stat"><i>Shots today</i><b>{stats.todays.length}</b><small>{stats.missingToday.length} vehicles yet to send</small></div>
-          <div className="vz-stat"><i>Not shared</i><b style={{ color: list.filter(p => !p.sentVendor).length ? "#E5484D" : "#178951" }}>{list.filter(p => !p.sentVendor).length}</b><small>pending to vendor</small></div>
+          <div className="vz-stat"><i>Not shared</i><b style={{ color: list.filter(p => !p.sentVendor).length ? "#E5484D" : "#178951" }}>{list.filter(p => !p.sentVendor).length}</b><small>pending to customer</small></div>
         </div>
 
         {stats.missingToday.length > 0 && (
@@ -6631,11 +6637,11 @@ function VibeCRM() {
                     </div>
                     <div className="vz-row" style={{ marginTop:9, alignItems:"center" }}>
                       <div style={{ display:"flex", gap:5 }}>
-                        <Chip c={p.sentVendor ? "c-green" : "c-grey"}>{p.sentVendor ? "Vendor ✓" : "Vendor –"}</Chip>
+                        <Chip c={p.sentVendor ? "c-green" : "c-grey"}>{p.sentVendor ? "Customer ✓" : "Customer –"}</Chip>
                         <Chip c={p.sentManager ? "c-green" : "c-grey"}>{p.sentManager ? "Manager ✓" : "Manager –"}</Chip>
                       </div>
                       <div className="vz-inline">
-                        {!p.sentVendor && <button className="vz-chip c-blue" onClick={() => sendProof(p, "vendor")}>Send vendor</button>}
+                        {!p.sentVendor && <button className="vz-chip c-blue" onClick={() => sendProof(p, "vendor")}>Send customer</button>}
                         {!p.sentManager && <button className="vz-chip c-yellow" onClick={() => sendProof(p, "manager")}>Manager</button>}
                       </div>
                     </div>
@@ -6659,7 +6665,7 @@ function VibeCRM() {
         {(pics[p.photoId] || p.photoUrl) && <img className="vz-thumb" src={pics[p.photoId] || p.photoUrl} alt="" style={{ marginBottom:12, cursor:"zoom-in" }}
           onClick={() => viewImage(pics[p.photoId] || p.photoUrl, p.kind + " proof")} />}
         <div className="vz-card">
-          <div className="vz-kv"><span>Vendor</span><b>{v ? v.name : "—"}</b></div>
+          <div className="vz-kv"><span>Customer</span><b>{v ? v.name : "—"}</b></div>
           <div className="vz-kv"><span>Campaign</span><b>{o ? o.title : "—"}</b></div>
           <div className="vz-kv"><span>Vehicle</span><b style={{ fontFamily:"var(--mono)" }}>{veh ? veh.plate : "—"}</b></div>
           <div className="vz-kv"><span>Driver</span><b>{p.driverName || (drv ? drv.name : "—")}</b></div>
@@ -6668,7 +6674,7 @@ function VibeCRM() {
           {p.note && <div className="vz-kv"><span>Note</span><b>{p.note}</b></div>}
         </div>
         {p.lat && <a className="vz-btn alt" style={{ display:"block", textAlign:"center", textDecoration:"none" }} href={mapLink(p.lat, p.lng)} target="_blank" rel="noreferrer">Open location in Maps</a>}
-        <button className="vz-btn pop" onClick={() => { setOpenProof(null); sendProof(p, "vendor"); }}>Share with vendor</button>
+        <button className="vz-btn pop" onClick={() => { setOpenProof(null); sendProof(p, "vendor"); }}>Share with customer</button>
         <button className="vz-btn alt" onClick={() => { setOpenProof(null); sendProof(p, "manager"); }}>Share with manager</button>
         {perm.del && <button className="vz-btn warn" onClick={() => { drop("proofs", p.id); setOpenProof(null); }}>Delete</button>}
       </Sheet>
@@ -7550,17 +7556,17 @@ function VibeCRM() {
         <Toggle on={db.settings.autoSendProforma} onChange={v => setSetting("autoSendProforma", v)} />
       </div>
       <div className="vz-tog">
-        <p>Auto receipt on payment<small>Confirmation to vendor when you record money in</small></p>
+        <p>Auto receipt on payment<small>Confirmation to customer when you record money in</small></p>
         <Toggle on={db.settings.autoReceipt} onChange={v => setSetting("autoReceipt", v)} />
       </div>
       <div className="vz-f" style={{ marginTop:12 }}>
-        <label>Remind vendor after (days unconfirmed)</label>
+        <label>Remind customer after (days unconfirmed)</label>
         <input type="number" value={db.settings.remindDays} onChange={e => setSetting("remindDays", +e.target.value)} inputMode="numeric" />
       </div>
 
       <div className="vz-eyebrow">Field photos</div>
       <div className="vz-tog">
-        <p>Send proof to vendor<small>Every driver photo goes to the vendor automatically</small></p>
+        <p>Send proof to customer<small>Every driver photo goes to the customer automatically</small></p>
         <Toggle on={db.settings.autoProofToVendor} onChange={v => setSetting("autoProofToVendor", v)} />
       </div>
       <div className="vz-tog">
@@ -7719,7 +7725,7 @@ function VibeCRM() {
         <div className="vz-eyebrow">Danger zone</div>
         <button className="vz-btn alt" onClick={() => { setDb(d => ({ ...seedData(), users: d.users, userId: d.userId, role: d.role })); setPics({}); setSheet(null); setToast("Sample data loaded"); }}>Load sample data (overwrites everything)</button>
         <button className="vz-btn warn" onClick={() => {
-          if (!window.confirm("Erase every vendor, campaign, payment, driver and photo — on this phone AND on the server? Take a backup first.")) return;
+          if (!window.confirm("Erase every customer, campaign, payment, driver and photo — on this phone AND on the server? Take a backup first.")) return;
           setDb(d => {
             // Erasing locally is not enough now that records are backed up: without
             // tombstones the next sync would simply pull all of it back again.
@@ -7743,12 +7749,12 @@ function VibeCRM() {
   );
 
   /* ------------------------- chrome ------------------------- */
-  const TITLES = { home:"Control room", vendors:"Vendors", orders:"Campaigns", field:"Field proof", fleet:"Fleet & drivers", money:"Finance" };
+  const TITLES = { home:"Control room", vendors:"Customers", orders:"Campaigns", field:"Field proof", fleet:"Fleet & drivers", money:"Finance" };
   const needServerAuth = mode === "manager" && !db.adminToken;   // must log in on the server before the app opens
   const adminLocked = mode === "manager" && locked && !!db.adminToken;
   const adminGated = needServerAuth || adminLocked;
   const fabFor = (mode === "driver" || adminGated) ? null : {
-    vendors: perm.campaign ? ["Add vendor", () => setSheet({ type:"vendor" })] : null,
+    vendors: perm.campaign ? ["Add customer", () => setSheet({ type:"vendor" })] : null,
     orders: perm.campaign ? ["New campaign", () => setSheet({ type:"order" })] : null,
     fleet: fleetView === "drivers" ? (perm.fleetEdit ? ["Add driver", () => setSheet({ type:"driver" })] : null)
       : fleetView === "jobs" ? (perm.fleetEdit ? ["Log job", () => setSheet({ type:"job" })] : null)
@@ -7842,7 +7848,7 @@ function VibeCRM() {
       )}
       {mode === "manager" && !adminGated && (
         <nav className="vz-nav">
-          {[["home","Home"],["vendors","Vendors"],["orders","Orders"],["field","Field"],["fleet","Fleet"],["money","Money"]]
+          {[["home","Home"],["vendors","Customers"],["orders","Orders"],["field","Field"],["fleet","Fleet"],["money","Money"]]
             .filter(([k]) => perm.tabs.includes(k)).map(([k, l]) => (
             <button key={k} data-on={tab === k ? "1" : "0"} onClick={() => { setTab(k); setQ(""); }}>
               <Icon d={ICONS[k === "vendors" ? "vendor" : k === "orders" ? "order" : k]} />{l}
@@ -7978,7 +7984,7 @@ function VibeCRM() {
             if (db.orders.some(o => o.vendorId === id)) { setToast("This vendor has campaigns — delete those first"); return; }
             const vn = (db.vendors.find(x => x.id === id) || {}).name || "this customer";
             if (!window.confirm("Delete " + vn + "? This cannot be undone.")) return;
-            drop("vendors", id); setSheet(null); setToast("Vendor deleted");
+            drop("vendors", id); setSheet(null); setToast("Customer deleted");
           }} />
       )}
       {sheet?.type === "order" && (
