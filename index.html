@@ -1624,7 +1624,7 @@ const blankData = () => ({
     managerPhone: "", managerEmail: "", company: "Vibe Marketing", gstin: "", invPrefix: "VM/PI",
     serviceReminderDays: 90,
   },
-  users: [], vendors: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
+  users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
   advances: [], creditNotes: [], expenses: [], payruns: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
@@ -1635,10 +1635,10 @@ const blankData = () => ({
 /* Which local collections are mirrored to the server, and the name the server
    knows them by. Everything else (settings, occasions, proofs, attendance) is
    either device-local by design or already synced by its own endpoint. */
-const SYNC_KEYS = { vendors:"vendor", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
+const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher" };
-const SYNC_KEY_OF = { vendor:"vendors", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
+const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers" };
 
@@ -1956,6 +1956,48 @@ function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
       <F label="Notes"><textarea rows={2} value={f.note} onChange={u("note")} /></F>
       <button className="vz-btn" disabled={!f.name.trim()} onClick={() => onSave({ ...f, id: f.id || uid(), creditDays: +f.creditDays || 0, state: f.state || HOME_STATE })}>Save customer</button>
       {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete customer</button>}
+    </Sheet>
+  );
+}
+
+/* The buy side: who Vibe Marketing pays, not who pays Vibe Marketing.
+   Named "suppliers"/"SupplierForm" internally so nothing here collides with
+   the existing db.vendors (which is the ad-space customer, kept as-is to
+   avoid migrating live synced data — see the note near the top of the file).
+   Kept deliberately small — name, address, GSTIN — matching what was asked;
+   grows later if a real purchase-order flow needs more. */
+function SupplierForm({ init, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { name:"", address:"", gst:"" });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  return (
+    <Sheet title={init ? "Edit vendor" : "New vendor"} onClose={onClose}>
+      <F label="Vendor name"><input value={f.name} onChange={u("name")} placeholder="Sakthi Auto Paints" /></F>
+      <F label="Address"><textarea rows={2} value={f.address} onChange={u("address")} /></F>
+      <F label="GST number"><input value={f.gst} onChange={u("gst")} placeholder="33AAICH2636Q1Z7" style={{ textTransform:"uppercase" }} /></F>
+      <button className="vz-btn" disabled={!f.name.trim()} onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim() })}>Save vendor</button>
+      {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete vendor</button>}
+    </Sheet>
+  );
+}
+
+function SuppliersSheet({ suppliers, onAdd, onEdit, onClose }) {
+  const [q, setQ] = useState("");
+  const list = (suppliers || []).filter(s => !q.trim() || s.name.toLowerCase().includes(q.trim().toLowerCase()));
+  return (
+    <Sheet title="Vendors" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0, marginBottom:10 }}>
+        Who Vibe Marketing pays — flex printers, fabricators, fuel stations, landlords and the like.
+        Pick one when recording an expense so the amount and GST land against the right party.
+      </div>
+      <button className="vz-btn go" onClick={onAdd}>+ Add vendor</button>
+      <input className="vz-search" placeholder="Search vendors" value={q} onChange={e => setQ(e.target.value)} />
+      {list.length === 0 && <Empty head="No vendors yet" sub="Add who you buy fuel, flex, fabrication or office supplies from." />}
+      {list.map(s => (
+        <button className="vz-card vz-tapcard" key={s.id} onClick={() => onEdit(s)}>
+          <div className="vz-title">{s.name}</div>
+          {(s.address || s.gst) && <div className="vz-meta">{[s.address, s.gst].filter(Boolean).join(" · ")}</div>}
+        </button>
+      ))}
     </Sheet>
   );
 }
@@ -3388,7 +3430,7 @@ function FollowupForm({ row, db, onSave, onClose }) {
    app knew every rupee coming in and almost none going out, so the forecast
    read as if the vans ran on air. */
 function ExpenseForm({ init, db, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { date: today(), cat:"Diesel", amount:"", gstPaid:"", vehicleId:"", orderId:"", mode:"Cash", note:"" });
+  const [f, set] = useState(init || { date: today(), cat:"Diesel", amount:"", gstPaid:"", vehicleId:"", orderId:"", supplierId:"", mode:"Cash", note:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   return (
     <Sheet title={init ? "Edit expense" : "Record an expense"} onClose={onClose}>
@@ -3407,6 +3449,12 @@ function ExpenseForm({ init, db, onSave, onDelete, onClose }) {
         Fill the GST only if you have a tax invoice for it — it comes off what we pay on the 20th.
         Diesel carries no GST credit.
       </div>
+      <F label="Vendor (optional)">
+        <select value={f.supplierId} onChange={u("supplierId")}>
+          <option value="">— not on file —</option>
+          {(db.suppliers || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </F>
       <F label="Which vehicle (optional)">
         <select value={f.vehicleId} onChange={u("vehicleId")}>
           <option value="">— not vehicle-specific —</option>
@@ -3444,11 +3492,14 @@ function ExpensesSheet({ db, vehOf, onAdd, onEdit, onClose }) {
   list.forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + (+e.amount || 0); });
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
 
+  const supplierOf = (id) => (db.suppliers || []).find(s => s.id === id);
+
   const exportCsv = () => {
-    const rows = [["Date", "Category", "Amount", "GST paid", "Paid by", "Vehicle", "Campaign", "Note"]];
+    const rows = [["Date", "Category", "Amount", "GST paid", "Paid by", "Vendor", "Vehicle", "Campaign", "Note"]];
     list.forEach(e => {
       const o = (db.orders || []).find(x => x.id === e.orderId);
       rows.push([dmy(e.date), e.cat, +e.amount || 0, +e.gstPaid || 0, e.mode || "",
+                 (supplierOf(e.supplierId) || {}).name || "",
                  (vehOf(e.vehicleId) || {}).plate || "", o ? o.title : "", e.note || ""]);
     });
     rows.push([]);
@@ -3485,11 +3536,12 @@ function ExpensesSheet({ db, vehOf, onAdd, onEdit, onClose }) {
       {list.map(e => {
         const o = (db.orders || []).find(x => x.id === e.orderId);
         const veh = vehOf(e.vehicleId);
+        const sup = supplierOf(e.supplierId);
         return (
           <button className="vz-card vz-tapcard" key={e.id} onClick={() => onEdit(e)}>
             <div className="vz-row">
               <div style={{ minWidth:0 }}>
-                <div className="vz-title">{e.cat}</div>
+                <div className="vz-title">{e.cat}{sup ? " · " + sup.name : ""}</div>
                 <div className="vz-meta">{dmy(e.date)} · {e.mode || "—"}{veh ? " · " + veh.plate : ""}{o ? " · " + o.title : ""}</div>
                 {e.note && <div className="vz-meta">{e.note}</div>}
               </div>
@@ -7044,6 +7096,16 @@ function VibeCRM() {
         </div>
 
         <div className="vz-eyebrow">
+          Vendors
+          <button onClick={() => setSheet({ type:"suppliers" })}>Who we buy from</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          {(db.suppliers || []).length > 0
+            ? (db.suppliers || []).length + " vendor" + ((db.suppliers || []).length === 1 ? "" : "s") + " on file."
+            : "Flex printers, fabricators, fuel stations, landlords — add them here to pick from when recording an expense."}
+        </div>
+
+        <div className="vz-eyebrow">
           Payroll
           <button onClick={() => setSheet({ type:"attendance" })}>Attendance &amp; payroll</button>
         </div>
@@ -7951,6 +8013,16 @@ function VibeCRM() {
         <StaffForm init={sheet.data} onClose={() => setSheet(null)}
           onSave={(x) => { put("staff", x); setSheet(null); }}
           onDelete={(id) => { if (window.confirm("Remove this person from staff? Past weeks stay in the record.")) { drop("staff", id); setSheet(null); } }} />
+      )}
+      {sheet?.type === "suppliers" && (
+        <SuppliersSheet suppliers={db.suppliers} onClose={() => setSheet(null)}
+          onAdd={() => setSheet({ type:"supplier" })}
+          onEdit={(s) => setSheet({ type:"supplier", data:s })} />
+      )}
+      {sheet?.type === "supplier" && (
+        <SupplierForm init={sheet.data} onClose={() => setSheet({ type:"suppliers" })}
+          onSave={(x) => { put("suppliers", x); setSheet({ type:"suppliers" }); }}
+          onDelete={(id) => { if (window.confirm("Delete this vendor?")) { drop("suppliers", id); setSheet({ type:"suppliers" }); } }} />
       )}
       {sheet?.type === "reminders" && (
         <RemindersSheet db={db} onSend={sendCustomerReminder} onManage={() => setSheet({ type:"occasions" })} onClose={() => setSheet(null)} />
