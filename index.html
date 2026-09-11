@@ -1623,6 +1623,9 @@ const blankData = () => ({
     paymentLead: 2, paymentAlertSound: true,
     managerPhone: "", managerEmail: "", company: "Vibe Marketing", gstin: "", invPrefix: "VM/PI",
     serviceReminderDays: 90,
+    // The Finance Dashboard's running balance starts counting from here —
+    // whatever was actually in the bank/cash on this date, typed in once.
+    openingBalance: 0, openingBalanceDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
   advances: [], creditNotes: [], expenses: [], payruns: [],
@@ -2932,6 +2935,46 @@ const campaignPnl = (db, order) => {
   // government, and counting it as revenue flattered every campaign by 18%.
   return { m, revenue: m.sub, wages, battas, workshop, production, running, cost,
            margin: m.sub - cost, dutyDays: Math.round(dutyDays * 10) / 10 };
+};
+
+/* A running bank/cash position, for the Finance Dashboard's period picker.
+   There is no bank feed, so it starts from one figure the Director types in
+   once (settings.openingBalance, as of settings.openingBalanceDate — "base"
+   below) and carries it forward: balance on any day = that starting figure,
+   plus every payment received and minus every expense and paid wage between
+   the baseline date and that day.
+
+   The one wrinkle: a period can start before the baseline (pick "This Year"
+   the week after first setting an opening balance in August — the financial
+   year began in April). There is no honest way to know the balance back
+   then, so the walk-forward starts at whichever is later, base or the
+   period's own start, and openingAsOf says which date "Opening balance"
+   actually describes — it will not always equal the period's nominal start,
+   and the UI shows the real date rather than silently mislabelling it.
+
+   Income/Expenses in the two stat cards are NOT clamped to the baseline —
+   they show everything genuinely recorded in the nominal period, matching
+   every other report in the app. Only the balance walk itself is limited to
+   what came after the baseline, since that is the only part that actually
+   requires knowing where the count started. */
+const cashFlow = (db, fromISO, toISO) => {
+  const base = String(db.settings.openingBalanceDate || "1970-01-01");
+  const inRange = (d, lo, hi) => d >= lo && d <= hi;
+  const sumPayments = (lo, hi) => (db.payments || []).filter(p => inRange(String(p.date || ""), lo, hi)).reduce((s, p) => s + (+p.amount || 0), 0);
+  const sumExpenses = (lo, hi) => (db.expenses || []).filter(e => inRange(String(e.date || ""), lo, hi)).reduce((s, e) => s + (+e.amount || 0), 0);
+  const sumPayroll  = (lo, hi) => (db.payruns  || []).filter(p => p.status === "paid" && inRange(String(p.paidOn || ""), lo, hi)).reduce((s, p) => s + (+p.total || 0), 0);
+
+  const openingAsOf = fromISO > base ? fromISO : base;
+  const opening = (+db.settings.openingBalance || 0)
+    + sumPayments(base, addDays(openingAsOf, -1)) - sumExpenses(base, addDays(openingAsOf, -1)) - sumPayroll(base, addDays(openingAsOf, -1));
+
+  const income = sumPayments(fromISO, toISO);
+  const expenses = sumExpenses(fromISO, toISO) + sumPayroll(fromISO, toISO);
+  // The walk that actually reaches "closing" only counts from openingAsOf —
+  // may be narrower than the income/expenses cards above in the edge case.
+  const closing = opening + sumPayments(openingAsOf, toISO) - sumExpenses(openingAsOf, toISO) - sumPayroll(openingAsOf, toISO);
+
+  return { openingAsOf, opening, income, expenses, closing };
 };
 
 /* ---------------------------- payment discipline ----------------------------
@@ -5322,6 +5365,11 @@ function VibeCRM() {
   const [send, setSend] = useState(null);
   const [capture, setCapture] = useState(null);
   const [fleetView, setFleetView] = useState("vehicles");
+  // Finance Dashboard's period picker. Money() is called as a plain function,
+  // not mounted as its own component, so this has to live up here rather
+  // than as local state inside it.
+  const [dashPeriod, setDashPeriod] = useState("today");
+  const [dashCustom, setDashCustom] = useState({ from: today(), to: today() });
   const [pickVeh, setPickVeh] = useState("");
   const [fieldVeh, setFieldVeh] = useState("");
   const [q, setQ] = useState("");
@@ -6996,8 +7044,62 @@ function VibeCRM() {
     const driverPayroll = db.drivers.reduce((s, d) => s + driverWeek(db, d, curWeekStart, curWeekEnd).net, 0);
     const staffPayroll = (db.staff || []).filter(s => s.active !== false && (!s.joined || s.joined <= curWeekEnd))
       .reduce((s, x) => s + (+x.weeklyWage || 0), 0);
+
+    // The Finance Dashboard's period window. "This Year" is the current
+    // financial year (April–March) to date, matching the TDS figure above —
+    // one calendar convention for the whole screen, not two.
+    const dashRange = (() => {
+      const t = today();
+      if (dashPeriod === "week") return weekRange(weekEnding(t));
+      if (dashPeriod === "month") {
+        const d = new Date(t + "T12:00:00Z");
+        const end = localDay(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 12)));
+        return { start: t.slice(0, 7) + "-01", end: end < t ? end : t };
+      }
+      if (dashPeriod === "year") return { start: fyStart, end: t };
+      if (dashPeriod === "custom") return { start: dashCustom.from, end: dashCustom.to };
+      return { start: t, end: t };
+    })();
+    const cash = cashFlow(db, dashRange.start, dashRange.end);
+    const runningNow = db.vehicles.map(v => ({
+      v, a: (db.attendance || []).find(a => a.vehicleId === v.id && a.date === today() && !a.outAt),
+    })).filter(x => x.a);
+
     return (
       <>
+        <div className="vz-eyebrow" style={{ marginTop:0 }}>Finance Dashboard</div>
+        <F label="Period">
+          <select value={dashPeriod} onChange={e => setDashPeriod(e.target.value)}>
+            <option value="today">Today</option>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+            <option value="year">This year</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </F>
+        {dashPeriod === "custom" && (
+          <div className="vz-2">
+            <F label="From"><input type="date" value={dashCustom.from} onChange={e => setDashCustom({ ...dashCustom, from: e.target.value })} /></F>
+            <F label="To"><input type="date" value={dashCustom.to} min={dashCustom.from} onChange={e => setDashCustom({ ...dashCustom, to: e.target.value })} /></F>
+          </div>
+        )}
+        <div className="vz-grid" style={{ marginBottom:6 }}>
+          <div className="vz-stat"><i>Opening balance</i><b style={{ fontSize:17 }}>{inr(cash.opening)}</b><small>as of {dmy(cash.openingAsOf)}</small></div>
+          <div className="vz-stat"><i>Closing balance</i><b style={{ fontSize:17, color: cash.closing >= 0 ? "#178951" : "#E5484D" }}>{inr(cash.closing)}</b><small>{dmy(dashRange.end)}</small></div>
+          <div className="vz-stat"><i>Income</i><b style={{ fontSize:17, color:"#178951" }}>{inr(cash.income)}</b><small>received in period</small></div>
+          <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(cash.expenses)}</b><small>paid out, incl. payroll</small></div>
+        </div>
+
+        <div className="vz-eyebrow">Vehicles running now</div>
+        {runningNow.length === 0 && <div className="vz-card"><div className="vz-meta">Nothing on the road right now.</div></div>}
+        {runningNow.map(({ v, a }) => (
+          <div className="vz-kv" key={v.id} style={{ background:"#fff", padding:"10px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+            <span style={{ color:"var(--ink)", fontWeight:600 }}>{v.plate}<br />
+              <small style={{ color:"var(--muted)", fontWeight:400 }}>{a.driverName || "—"} · since {clock(a.inAt).split(", ").pop()}</small></span>
+            <b className="vz-money">{a.openKm != null ? a.openKm + " km" : "—"}</b>
+          </div>
+        ))}
+
         <div className="vz-grid">
           <div className="vz-stat"><i>Invoiced</i><b style={{ fontSize:18 }}>{inr(stats.billed)}</b><small>confirmed orders</small></div>
           <div className="vz-stat"><i>Received</i><b style={{ fontSize:18, color:"#178951" }}>{inr(stats.collected)}</b><small>{tdsYtd > 0 ? "plus " + inr(tdsYtd) + " TDS this FY" : "all modes"}</small></div>
@@ -7676,6 +7778,21 @@ function VibeCRM() {
         <F label="Your GSTIN"><input value={db.settings.gstin || ""} onChange={e => setSetting("gstin", e.target.value)} /></F>
         <F label="Invoice prefix"><input value={db.settings.invPrefix || ""} onChange={e => setSetting("invPrefix", e.target.value)} /></F>
       </div>
+
+      {perm.money && (
+        <>
+          <div className="vz-eyebrow">Opening balance</div>
+          <div className="vz-meta" style={{ marginTop:0, marginBottom:8 }}>
+            There's no bank feed, so the Finance Dashboard counts forward from one figure
+            you type in — whatever was actually in the bank/cash on a given date.
+            Set it once; every payment received and expense paid after that date moves it automatically.
+          </div>
+          <div className="vz-2">
+            <F label="Balance ₹"><input type="number" value={db.settings.openingBalance ?? 0} onChange={e => setSetting("openingBalance", +e.target.value || 0)} inputMode="numeric" /></F>
+            <F label="As of"><input type="date" value={db.settings.openingBalanceDate || today()} onChange={e => setSetting("openingBalanceDate", e.target.value)} /></F>
+          </div>
+        </>
+      )}
 
       <div className="vz-eyebrow">Backup to server</div>
       <div className="vz-card">
