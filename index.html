@@ -1626,9 +1626,12 @@ const blankData = () => ({
     // The Finance Dashboard's running balance starts counting from here —
     // whatever was actually in the bank/cash on this date, typed in once.
     openingBalance: 0, openingBalanceDate: today(),
+    // Petty cash is tracked separately from the bank/overall balance above —
+    // its own tin, topped up from the bank now and then. Same idea, own baseline.
+    pettyBalance: 0, pettyBalanceDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -1639,10 +1642,10 @@ const blankData = () => ({
    knows them by. Everything else (settings, occasions, proofs, attendance) is
    either device-local by design or already synced by its own endpoint. */
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
-                    advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun",
+                    advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
-                      advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns",
+                      advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
@@ -2977,6 +2980,24 @@ const cashFlow = (db, fromISO, toISO) => {
   return { openingAsOf, opening, income, expenses, closing };
 };
 
+/* Petty cash: a separate small float, topped up from the bank now and then
+   rather than tracked bank-transaction by bank-transaction. An imprest
+   system — cashPaid is the "Petty cash" mode on the existing expense form,
+   so petty spending keeps its category/vendor/vehicle tagging for free;
+   only the top-ups themselves are a new kind of record, since moving money
+   from the bank into the tin isn't an expense. Never double-counted against
+   the overall cashFlow() above: top-ups are a transfer between two pots the
+   business already holds, not new income or a new cost. */
+const pettyCashBalance = (db, uptoISO) => {
+  const base = String(db.settings.pettyBalanceDate || "1970-01-01");
+  const upto = uptoISO || today();
+  const topups = (db.pettyTopups || []).filter(t => String(t.date || "") >= base && String(t.date || "") <= upto)
+    .reduce((s, t) => s + (+t.amount || 0), 0);
+  const spent = (db.expenses || []).filter(e => e.mode === "Petty cash" && String(e.date || "") >= base && String(e.date || "") <= upto)
+    .reduce((s, e) => s + (+e.amount || 0), 0);
+  return (+db.settings.pettyBalance || 0) + topups - spent;
+};
+
 /* ---------------------------- payment discipline ----------------------------
    The business runs on a strict rule: 50% advance before a campaign's vehicles
    go out, the remaining 50% collected at the campaign's own midpoint — never
@@ -3472,8 +3493,8 @@ function FollowupForm({ row, db, onSave, onClose }) {
    Everything the business pays for other than wages. Until this existed the
    app knew every rupee coming in and almost none going out, so the forecast
    read as if the vans ran on air. */
-function ExpenseForm({ init, db, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { date: today(), cat:"Diesel", amount:"", gstPaid:"", vehicleId:"", orderId:"", supplierId:"", mode:"Cash", note:"" });
+function ExpenseForm({ init, db, defaultMode, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { date: today(), cat:"Diesel", amount:"", gstPaid:"", vehicleId:"", orderId:"", supplierId:"", mode: defaultMode || "Cash", note:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   return (
     <Sheet title={init ? "Edit expense" : "Record an expense"} onClose={onClose}>
@@ -3483,7 +3504,7 @@ function ExpenseForm({ init, db, onSave, onDelete, onClose }) {
       </div>
       <F label="What for"><select value={f.cat} onChange={u("cat")}>{EXPENSE_CATS.map(c => <option key={c}>{c}</option>)}</select></F>
       <div className="vz-2">
-        <F label="Paid by"><select value={f.mode} onChange={u("mode")}>{["Cash","UPI","Bank transfer","Card","Cheque"].map(k => <option key={k}>{k}</option>)}</select></F>
+        <F label="Paid by"><select value={f.mode} onChange={u("mode")}>{["Cash","Petty cash","UPI","Bank transfer","Card","Cheque"].map(k => <option key={k}>{k}</option>)}</select></F>
         <F label="GST paid on it ₹">
           <input type="number" value={f.gstPaid} onChange={u("gstPaid")} inputMode="numeric" placeholder="0" />
         </F>
@@ -3596,6 +3617,82 @@ function ExpensesSheet({ db, vehOf, onAdd, onEdit, onClose }) {
           </button>
         );
       })}
+    </Sheet>
+  );
+}
+
+function TopupForm({ onSave, onClose }) {
+  const [f, set] = useState({ date: today(), amount:"", note:"" });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  return (
+    <Sheet title="Top up petty cash" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0 }}>Money moved from the bank into the petty cash tin.</div>
+      <div className="vz-2">
+        <F label="Amount ₹"><input type="number" value={f.amount} onChange={u("amount")} inputMode="numeric" /></F>
+        <F label="Date"><input type="date" value={f.date} onChange={u("date")} /></F>
+      </div>
+      <F label="Note (optional)"><input value={f.note} onChange={u("note")} placeholder="withdrawn from bank" /></F>
+      <button className="vz-btn" disabled={!(+f.amount > 0)}
+        onClick={() => onSave({ ...f, id: uid(), amount: +f.amount })}>
+        Save top-up
+      </button>
+    </Sheet>
+  );
+}
+
+function PettyCashSheet({ db, onAdd, onTopup, onDeleteTopup, onEditExpense, onClose }) {
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+  const balance = pettyCashBalance(db);
+  const spentThisMonth = (db.expenses || []).filter(e => e.mode === "Petty cash" && String(e.date || "").slice(0, 7) === month)
+    .reduce((s, e) => s + (+e.amount || 0), 0);
+  const toppedUpThisMonth = (db.pettyTopups || []).filter(t => String(t.date || "").slice(0, 7) === month)
+    .reduce((s, t) => s + (+t.amount || 0), 0);
+
+  const entries = [
+    ...(db.pettyTopups || []).filter(t => String(t.date || "").slice(0, 7) === month)
+      .map(t => ({ kind:"topup", date:t.date, amount:t.amount, note:t.note, rec:t })),
+    ...(db.expenses || []).filter(e => e.mode === "Petty cash" && String(e.date || "").slice(0, 7) === month)
+      .map(e => ({ kind:"spend", date:e.date, amount:e.amount, note:e.cat, rec:e })),
+  ].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  return (
+    <Sheet title="Petty cash" onClose={onClose}>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>In the tin now</i><b style={{ fontSize:18 }}>{inr(balance)}</b><small>as of today</small></div>
+        <div className="vz-stat"><i>This month</i><b style={{ fontSize:18 }}>+{inr(toppedUpThisMonth)}<span style={{ fontSize:13, fontWeight:500 }}> / −{inr(spentThisMonth)}</span></b><small>topped up / spent</small></div>
+      </div>
+      <div className="vz-2">
+        <button className="vz-btn go" style={{ margin:0 }} onClick={onTopup}>+ Top up</button>
+        <button className="vz-btn alt" style={{ margin:0 }} onClick={() => onAdd()}>+ Spend from it</button>
+      </div>
+
+      <F label="Month">
+        <select value={month} onChange={e => setMonth(e.target.value)}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </F>
+
+      <div className="vz-eyebrow">Every entry</div>
+      {entries.length === 0 && <div className="vz-card"><div className="vz-meta">Nothing in or out this month.</div></div>}
+      {entries.map(x => (
+        <button className="vz-card vz-tapcard" key={x.kind + x.rec.id}
+          onClick={() => x.kind === "topup" ? (window.confirm("Delete this top-up?") && onDeleteTopup(x.rec.id)) : onEditExpense(x.rec)}>
+          <div className="vz-row">
+            <div style={{ minWidth:0 }}>
+              <div className="vz-title">{x.kind === "topup" ? "Top-up" : x.note}</div>
+              <div className="vz-meta">{dmy(x.date)}{x.kind === "topup" && x.note ? " · " + x.note : ""}</div>
+            </div>
+            <div className="vz-money" style={{ color: x.kind === "topup" ? "#178951" : "#E5484D" }}>
+              {x.kind === "topup" ? "+" : "−"}{inr(x.amount)}
+            </div>
+          </div>
+        </button>
+      ))}
     </Sheet>
   );
 }
@@ -7208,6 +7305,14 @@ function VibeCRM() {
         </div>
 
         <div className="vz-eyebrow">
+          Petty cash
+          <button onClick={() => setSheet({ type:"pettycash" })}>{inr(pettyCashBalance(db))} in the tin</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          A small cash float, topped up from the bank now and then — kept separate from the running balance above.
+        </div>
+
+        <div className="vz-eyebrow">
           Payroll
           <button onClick={() => setSheet({ type:"attendance" })}>Attendance &amp; payroll</button>
         </div>
@@ -7791,6 +7896,15 @@ function VibeCRM() {
             <F label="Balance ₹"><input type="number" value={db.settings.openingBalance ?? 0} onChange={e => setSetting("openingBalance", +e.target.value || 0)} inputMode="numeric" /></F>
             <F label="As of"><input type="date" value={db.settings.openingBalanceDate || today()} onChange={e => setSetting("openingBalanceDate", e.target.value)} /></F>
           </div>
+
+          <div className="vz-eyebrow">Petty cash balance</div>
+          <div className="vz-meta" style={{ marginTop:0, marginBottom:8 }}>
+            Separate from the balance above — whatever was actually sitting in the petty cash tin on a given date.
+          </div>
+          <div className="vz-2">
+            <F label="Balance ₹"><input type="number" value={db.settings.pettyBalance ?? 0} onChange={e => setSetting("pettyBalance", +e.target.value || 0)} inputMode="numeric" /></F>
+            <F label="As of"><input type="date" value={db.settings.pettyBalanceDate || today()} onChange={e => setSetting("pettyBalanceDate", e.target.value)} /></F>
+          </div>
         </>
       )}
 
@@ -8056,10 +8170,24 @@ function VibeCRM() {
           onAdd={() => setSheet({ type:"expense" })}
           onEdit={(e) => setSheet({ type:"expense", data:e })} />
       )}
-      {sheet?.type === "expense" && (
-        <ExpenseForm init={sheet.data} db={db} onClose={() => setSheet({ type:"expenses" })}
-          onSave={(x) => { put("expenses", x); setSheet({ type:"expenses" }); setToast("Expense saved"); }}
-          onDelete={(id) => { drop("expenses", id); setSheet({ type:"expenses" }); setToast("Expense deleted"); }} />
+      {sheet?.type === "expense" && (() => {
+        const back = sheet.returnTo || "expenses";
+        return (
+          <ExpenseForm init={sheet.data} db={db} defaultMode={sheet.defaultMode} onClose={() => setSheet({ type:back })}
+            onSave={(x) => { put("expenses", x); setSheet({ type:back }); setToast("Expense saved"); }}
+            onDelete={(id) => { drop("expenses", id); setSheet({ type:back }); setToast("Expense deleted"); }} />
+        );
+      })()}
+      {sheet?.type === "pettycash" && (
+        <PettyCashSheet db={db} onClose={() => setSheet(null)}
+          onAdd={() => setSheet({ type:"expense", defaultMode:"Petty cash", returnTo:"pettycash" })}
+          onEditExpense={(e) => setSheet({ type:"expense", data:e, returnTo:"pettycash" })}
+          onTopup={() => setSheet({ type:"pettytopup" })}
+          onDeleteTopup={(id) => { drop("pettyTopups", id); setToast("Top-up removed"); }} />
+      )}
+      {sheet?.type === "pettytopup" && (
+        <TopupForm onClose={() => setSheet({ type:"pettycash" })}
+          onSave={(x) => { put("pettyTopups", x); setSheet({ type:"pettycash" }); setToast("Top-up recorded"); }} />
       )}
       {sheet?.type === "creditnote" && (
         <CreditNoteForm db={db} vendorOf={vendorOf} paidOn={paidOn}
