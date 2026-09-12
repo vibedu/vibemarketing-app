@@ -1679,7 +1679,7 @@ const blankData = () => ({
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
   advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [],
-  fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [],
+  fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
   tombstones: [], lastSync: "", lastPush: "",
@@ -1690,10 +1690,10 @@ const blankData = () => ({
    either device-local by design or already synced by its own endpoint. */
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
-                    fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher" };
+                    fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
-                      fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers" };
+                      fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -4033,7 +4033,7 @@ const periodFigures = (db, from, to, paidOn) => {
            gross: revenue - grossCost, net: revenue - grossCost - overhead, grossCost };
 };
 
-function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, onClose }) {
+function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, put, drop, who, onClose }) {
   const [mode, setMode] = useState("month");     // day | month | quarter | year | custom
   const [month, setMonth] = useState(today().slice(0, 7));
   const [day, setDay] = useState(today());
@@ -4219,12 +4219,17 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, onClose }) {
     downloadCsv("fleet-activity-" + stamp + ".csv", rows);
   };
 
-  /* GSTR-1 shape: B2B invoices listed one by one, B2C summarised, then the
-     3B summary the return actually asks for. */
-  const repGst = () => {
+  /* GSTR-1 (sales — every invoice raised with GST) and GSTR-3B (the summary
+     return: output tax on those sales, netted against input tax credit from
+     GST paid on purchases/expenses) used to be one combined download. Suresh
+     asked for them as the two separate returns they actually are — one filed
+     off outward invoices, the other off what nets against them — each with
+     its own "mark as filed" so a return, once filed, is on record as filed
+     and isn't quietly re-downloaded with different numbers later. */
+  const repGstr1 = () => {
     const b2b = f.bills.filter(x => x.v && String(x.v.gst || "").trim());
     const b2c = f.bills.filter(x => !x.v || !String(x.v.gst || "").trim());
-    const rows = head("GST return");
+    const rows = head("GSTR-1 — outward supplies");
     rows.push(["B2B — invoices to registered customers"]);
     rows.push(["GSTIN", "Customer", "Invoice No", "Date", "Invoice value", "Place of supply", "Rate", "Taxable", "CGST", "SGST", "IGST"]);
     b2b.forEach(({ o, v, b }) => rows.push([
@@ -4244,14 +4249,43 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, onClose }) {
       rows.push([c.no, dmy(c.date), (vendorOf(o.vendorId) || {}).name || "", c.againstInv, c.reason, -c.sub, -c.gst, -c.total]);
     });
     rows.push([]);
-    rows.push(["Summary for GSTR-3B"]);
-    rows.push(["Taxable value of supplies", f.revenue]);
-    rows.push(["Output tax", f.outTax]);
-    rows.push(["Input tax credit on expenses", f.inTax]);
-    rows.push(["Net GST payable", f.netTax]);
+    rows.push(["Total taxable value", f.revenue]);
+    rows.push(["Total output tax", f.outTax]);
     rows.push(["HSN / SAC", (db.settings || {}).sac || "998365"]);
-    downloadCsv("gst-return-" + stamp + ".csv", rows);
+    downloadCsv("gstr1-" + stamp + ".csv", rows);
   };
+
+  const repGstr3b = () => {
+    const rows = head("GSTR-3B — summary return");
+    rows.push(["3.1 Outward taxable supplies"]);
+    rows.push(["Taxable value", f.revenue]);
+    rows.push(["Output tax (CGST + SGST + IGST)", f.outTax]);
+    rows.push([]);
+    rows.push(["4. Eligible input tax credit — GST paid on purchases/expenses"]);
+    rows.push(["Date", "Category", "Vendor", "Taxable", "GST paid"]);
+    f.spend.filter(e => +e.gstPaid > 0).forEach(e => {
+      const sup = (db.suppliers || []).find(s => s.id === e.supplierId);
+      rows.push([dmy(e.date), e.cat, sup ? sup.name : "", +e.amount || 0, +e.gstPaid || 0]);
+    });
+    rows.push([]);
+    rows.push(["Total input tax credit", f.inTax]);
+    rows.push([]);
+    rows.push(["5. Net GST payable (output less input, floored at zero)", f.netTax]);
+    downloadCsv("gstr3b-" + stamp + ".csv", rows);
+  };
+
+  /* "Once we confirm filed" — a return that has actually been filed with the
+     department is a fact, not a draft, so it gets a permanent record rather
+     than living only in "was this month's CSV downloaded yet?" memory. Keyed
+     by the exact period shown on screen (so a month, quarter or custom range
+     each track their own filed status) and by which return, since GSTR-1 and
+     GSTR-3B are filed separately and don't always land on the same day. */
+  const filingOf = (type) => (db.filings || []).find(x => x.period === stamp && x.type === type);
+  const markFiled = (type) => put("filings", {
+    id: stamp + "_" + type, period: stamp, periodLabel: range.label, type,
+    filedOn: today(), filedBy: who,
+  });
+  const unmarkFiled = (type) => drop("filings", stamp + "_" + type);
 
   const repPnl = () => {
     const rows = head("Profit & loss");
@@ -4350,7 +4384,8 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, onClose }) {
 
   const REPORTS = [
     ["Profit & loss", "Income against every cost, down to the net.", repPnl],
-    ["GST return", "B2B, B2C and credit notes, with the GSTR-3B summary.", repGst],
+    ["GSTR-1", "Outward invoices — B2B, B2C and credit notes.", repGstr1],
+    ["GSTR-3B", "Output tax netted against input tax credit from expenses.", repGstr3b],
     ["Sales register", "Every invoice raised, with its tax split out.", repSales],
     ["Collections", "Money received, and the TDS kept back with it.", repCollections],
     ["Outstanding & ageing", "Who owes what, aged, as at the end date.", repOutstanding],
@@ -4452,6 +4487,27 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, onClose }) {
         Revenue is what was invoiced in this period excluding GST, less credit notes. Wages are the weeks
         actually paid. GST is not income and is not counted here.
       </div>
+
+      <div className="vz-eyebrow">Statutory filings · {range.label}</div>
+      {[["gstr1", "GSTR-1", repGstr1], ["gstr3b", "GSTR-3B", repGstr3b]].map(([type, label, fn]) => {
+        const filed = filingOf(type);
+        return (
+          <div className="vz-card" key={type} style={filed ? { background:"#F3FBF6", borderColor:"#BEE6CC" } : null}>
+            <div className="vz-row" style={{ alignItems:"center" }}>
+              <div>
+                <div className="vz-title">{label}</div>
+                <div className="vz-meta">
+                  {filed ? "Filed on " + dmy(filed.filedOn) + " by " + filed.filedBy : "Not filed yet for this period."}
+                </div>
+              </div>
+              {filed
+                ? <button className="vz-link" style={{ color:"#B4262A" }} onClick={() => unmarkFiled(type)}>Undo</button>
+                : <button className="vz-btn" style={{ width:"auto", padding:"9px 16px" }} onClick={() => markFiled(type)}>Mark filed</button>}
+            </div>
+            <button className="vz-link" style={{ marginTop:6 }} onClick={fn}>Download {label} again</button>
+          </div>
+        );
+      })}
 
       <div className="vz-eyebrow">Download</div>
       {REPORTS.map(([name, blurb, fn]) => (
@@ -8296,7 +8352,7 @@ function VibeCRM() {
           onSave={(t) => { rechargeCard(sheet.data, t); setSheet({ type:"fuel" }); }} />
       )}
       {sheet?.type === "reports" && (
-        <ReportsSheet db={db} paidOn={paidOn} vendorOf={vendorOf} vehOf={vehOf} drvOf={drvOf} onClose={() => setSheet(null)} />
+        <ReportsSheet db={db} paidOn={paidOn} vendorOf={vendorOf} vehOf={vehOf} drvOf={drvOf} put={put} drop={drop} who={db.adminName || "office"} onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "daybook" && (
         <DayBookSheet db={db} onClose={() => setSheet(null)}
