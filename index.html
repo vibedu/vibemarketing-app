@@ -4187,6 +4187,25 @@ const periodFigures = (db, from, to, paidOn) => {
            gross: revenue - grossCost, net: revenue - grossCost - overhead, grossCost };
 };
 
+/* Once a GST return is marked filed (Reports > Statutory filings), the
+   figures it was filed on shouldn't move under it — so anything that would
+   change GSTR-1 (a sales invoice, a credit note) or GSTR-3B (an expense with
+   GST) for a date already inside a filed period is refused, with a message
+   telling whoever hit it to unmark the filing first if a genuine correction
+   is needed. Falls back to splitting the old "YYYY-MM-DD_to_YYYY-MM-DD" id
+   for filings recorded before `from`/`to` were saved on the record itself. */
+const filingCovering = (db, type, dateISO) => {
+  const d = String(dateISO || "");
+  return (db.filings || []).find(f => {
+    if (f.type !== type) return false;
+    const from = f.from || String(f.period || "").split("_to_")[0] || "";
+    const to = f.to || String(f.period || "").split("_to_")[1] || "";
+    return from && to && d >= from && d <= to;
+  }) || null;
+};
+const filedLockMsg = (f) => "That date falls in " + (f.periodLabel || "a period") + ", already filed as "
+  + (f.type === "gstr1" ? "GSTR-1" : "GSTR-3B") + " on " + dmy(f.filedOn) + ". Unmark it as filed first if this needs a real correction.";
+
 function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, put, drop, who, onClose }) {
   const [mode, setMode] = useState("month");     // day | month | quarter | year | custom
   const [month, setMonth] = useState(today().slice(0, 7));
@@ -4437,7 +4456,7 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, put, drop, who, onCl
   const filingOf = (type) => (db.filings || []).find(x => x.period === stamp && x.type === type);
   const markFiled = (type) => put("filings", {
     id: stamp + "_" + type, period: stamp, periodLabel: range.label, type,
-    filedOn: today(), filedBy: who,
+    from: range.from, to: range.to, filedOn: today(), filedBy: who,
   });
   const unmarkFiled = (type) => drop("filings", stamp + "_" + type);
 
@@ -6615,6 +6634,10 @@ function VibeCRM() {
      books against that van. Correcting a balance moves neither — it only tells
      us what the pump already knows. */
   const rechargeCard = (card, t) => {
+    if (t.type === "recharge" && t.amount > 0) {
+      const locked = filingCovering(db, "gstr3b", t.date);
+      if (locked) { setToast(filedLockMsg(locked)); return; }
+    }
     put("fuelTxns", t);
     put("fuelCards", { ...card, balance: t.balance, balanceAt: t.date });
     if (t.type === "recharge" && t.amount > 0) {
@@ -7007,6 +7030,8 @@ function VibeCRM() {
           {perm.del && <button className="vz-btn warn" onClick={() => {
             const got = db.payments.filter(p => p.orderId === o.id);
             if (got.length) { setToast("Delete the " + got.length + " payment(s) on this campaign first"); return; }
+            const lockedBill = billsOf(o, vendorOf(o.vendorId)).map(b => filingCovering(db, "gstr1", b.date)).find(Boolean);
+            if (lockedBill) { setToast(filedLockMsg(lockedBill)); return; }
             if (!window.confirm("Delete campaign " + o.no + " (" + o.title + ")? This cannot be undone.")) return;
             drop("orders", o.id); setOpenOrder(null); setToast("Campaign deleted");
           }}>Delete</button>}
@@ -7023,6 +7048,8 @@ function VibeCRM() {
   /* Number the invoice only now, so backing out of the question above doesn't
      burn an invoice number, then build the same two-page PDF as the quotation. */
   const raiseInvoice = (o, km) => {
+    const locked = filingCovering(db, "gstr1", today());
+    if (locked) { setToast(filedLockMsg(locked)); setInvAsk(null); return; }
     const v = vendorOf(o.vendorId);
     // Re-read the customer at the moment of invoicing: their state and credit
     // terms may have been corrected since the campaign was first raised.
@@ -8499,8 +8526,17 @@ function VibeCRM() {
         const back = sheet.returnTo || "expenses";
         return (
           <ExpenseForm init={sheet.data} db={db} defaultMode={sheet.defaultMode} onClose={() => setSheet({ type:back })}
-            onSave={(x) => { put("expenses", x); setSheet({ type:back }); setToast("Expense saved"); }}
-            onDelete={(id) => { drop("expenses", id); setSheet({ type:back }); setToast("Expense deleted"); }} />
+            onSave={(x) => {
+              const locked = filingCovering(db, "gstr3b", x.date);
+              if (locked) { setToast(filedLockMsg(locked)); return; }
+              put("expenses", x); setSheet({ type:back }); setToast("Expense saved");
+            }}
+            onDelete={(id) => {
+              const e = (db.expenses || []).find(x => x.id === id);
+              const locked = e && filingCovering(db, "gstr3b", e.date);
+              if (locked) { setToast(filedLockMsg(locked)); return; }
+              drop("expenses", id); setSheet({ type:back }); setToast("Expense deleted");
+            }} />
         );
       })()}
       {sheet?.type === "pettycash" && (
@@ -8522,6 +8558,8 @@ function VibeCRM() {
           nextNo={"CN/" + new Date().getFullYear() + "/" + String(db.settings.nextCnNo || 1).padStart(3, "0")}
           onClose={() => setSheet(null)}
           onSave={(cn) => {
+            const locked = filingCovering(db, "gstr1", cn.date);
+            if (locked) { setToast(filedLockMsg(locked)); return; }
             put("creditNotes", cn);
             setSetting("nextCnNo", (db.settings.nextCnNo || 1) + 1);
             setToast("Credit note " + cn.no + " raised");
@@ -8635,6 +8673,21 @@ function VibeCRM() {
       {sheet?.type === "order" && (
         <OrderForm init={sheet.data} vendors={db.vendors} settings={db.settings} onClose={() => setSheet(null)}
           onSave={(x) => {
+            // Editing a campaign that already has an invoice can move the very
+            // figures a filed GSTR-1 was built from (rate, GST toggle, vehicles,
+            // customer) — the invoice date itself never changes here, only what
+            // it adds up to. Only block when the edit actually touches those
+            // numbers; a typo fix in the title or route shouldn't need reopening
+            // a return that has nothing to do with it.
+            if (x.id) {
+              const orig = sheet.data;
+              const lockedBill = billsOf(orig, vendorOf(orig.vendorId)).map(b => filingCovering(db, "gstr1", b.date)).find(Boolean);
+              if (lockedBill) {
+                const m0 = orderMath(orig), m1 = orderMath(x);
+                const financialChange = x.vendorId !== orig.vendorId || m0.sub !== m1.sub || m0.gst !== m1.gst || m0.total !== m1.total;
+                if (financialChange) { setToast(filedLockMsg(lockedBill)); return; }
+              }
+            }
             let issued = null;
             if (!x.no) { issued = nextOrderNo(); }
             // Stamp the tax treatment from the customer's state now, so every
