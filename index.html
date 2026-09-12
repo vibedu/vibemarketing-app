@@ -421,6 +421,28 @@ const CSS = `
 }
 .vz-rail-brand { display:none; }
 
+/* ------------------- desktop sign-in: a real split screen -------------------
+   Below 1000px this is the same single centred card as the phone. Above it,
+   nobody is signed in yet so there is no rail to reserve the 236px for —
+   reclaim it, and turn the login/lock/admin screens into an actual two-panel
+   look (brand on the left, the form on the right) instead of one small card
+   floating in an otherwise empty page. Every gated screen (RoleGate,
+   AdminAuthScreen, LockScreen) shares this same .vz-gate > .vz-loginhero
+   shape, so one rule covers all three. */
+@media (min-width:1000px){
+  .vz:has(> .vz-gate) { padding-left:0; }
+  .vz-gate {
+    position:relative; padding:0 40px 0 420px; min-height:calc(100vh - 74px);
+  }
+  .vz-gate .vz-loginhero {
+    position:absolute; top:0; left:0; bottom:0; width:420px; margin:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:var(--ink);
+  }
+  .vz-gate .vz-loginhero .vz-loginname { color:#fff; }
+  .vz-gate .vz-logincard { box-shadow:0 6px 20px rgba(18,25,42,.07); }
+}
+
 /* Wide tables inside sheets scroll on their own rather than pushing the page. */
 .vz-tablewrap { overflow-x:auto; margin-bottom:10px; }
 .vz-table { border-collapse:collapse; width:100%; font-size:12.5px; }
