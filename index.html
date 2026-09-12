@@ -2237,7 +2237,7 @@ function VehicleForm({ init, drivers, plates, canEdit = true, canDel = true, onS
 function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave, onDelete, onClose }) {
   const [f, set] = useState(init || {
     name:"", phone:"", wage:700, batta:"", joined:today(), aadhaar:"", pan:"", dl:"", dlExpiry:"",
-    photoId:"", dlFrontId:"", dlBackId:"", bank:false, address:"", refPhone:"", pin:"",
+    photoId:"", dlFrontId:"", dlBackId:"", bankAccount:"", ifsc:"", bankName:"", address:"", refPhone:"", pin:"",
   });
   const faceRef = useRef(null), frontRef = useRef(null), backRef = useRef(null);
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
@@ -2310,7 +2310,17 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
       <div className="vz-eyebrow" style={{ marginTop:14 }}>Other KYC (optional)</div>
       <F label="Aadhaar number"><input value={f.aadhaar} onChange={u("aadhaar")} placeholder="XXXX XXXX 1234" /></F>
       <F label="PAN"><input value={f.pan} onChange={u("pan")} /></F>
-      <label className="vz-check"><input type="checkbox" checked={!!f.bank} onChange={(e) => set({ ...f, bank: e.target.checked })} />Bank passbook / UPI ID collected</label>
+
+      <div className="vz-eyebrow" style={{ marginTop:14 }}>Bank details — for the weekly salary transfer</div>
+      <F label="Bank account number"><input value={f.bankAccount || ""} onChange={u("bankAccount")} inputMode="numeric" /></F>
+      <div className="vz-2">
+        <F label="IFSC code"><input value={f.ifsc || ""} onChange={e => set({ ...f, ifsc: e.target.value.toUpperCase() })} style={{ textTransform:"uppercase" }} placeholder="SBIN0001234" /></F>
+        <F label="Bank name (optional)"><input value={f.bankName || ""} onChange={u("bankName")} /></F>
+      </div>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        Needed for the bank transfer file on the payroll screen — without it, this driver is left out
+        of that download and paid separately.
+      </div>
 
       <div className="vz-eyebrow">App sign in</div>
       <F label="Login PIN (leave blank to use the last 4 digits of his phone)">
@@ -2331,7 +2341,7 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
    anything to sign in for. Kept separate from drivers, whose pay depends on
    which days they actually worked. */
 function StaffForm({ init, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", joined:today(), active:true });
+  const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", joined:today(), active:true, bankAccount:"", ifsc:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const ready = f.name.trim() && +f.weeklyWage > 0;
   return (
@@ -2344,6 +2354,10 @@ function StaffForm({ init, onSave, onDelete, onClose }) {
       <div className="vz-2">
         <F label="Weekly wage ₹"><input type="number" value={f.weeklyWage} onChange={u("weeklyWage")} inputMode="numeric" min="0" /></F>
         <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
+      </div>
+      <div className="vz-2">
+        <F label="Bank account number"><input value={f.bankAccount || ""} onChange={u("bankAccount")} inputMode="numeric" /></F>
+        <F label="IFSC code"><input value={f.ifsc || ""} onChange={e => set({ ...f, ifsc: e.target.value.toUpperCase() })} style={{ textTransform:"uppercase" }} /></F>
       </div>
       <label className="vz-check">
         <input type="checkbox" checked={f.active !== false} onChange={e => set({ ...f, active: e.target.checked })} />
@@ -5401,6 +5415,28 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", bill]);
         downloadCsv("payroll-week-ending-" + weekEnd + ".csv", out);
       }}>Export this week's payroll</button>
+
+      {perm.money && (() => {
+        const payable = rows.filter(r => r.pay > 0);
+        const ready = payable.filter(r => r.rec.bankAccount && r.rec.ifsc);
+        const missing = payable.filter(r => !(r.rec.bankAccount && r.rec.ifsc));
+        return (
+          <>
+            <button className="vz-btn alt" disabled={!ready.length} onClick={() => {
+              const out = [["Beneficiary name", "Account number", "IFSC", "Amount", "Narration"]];
+              ready.forEach(r => out.push([r.name, r.rec.bankAccount, r.rec.ifsc, r.pay, "Salary week ending " + dmy(weekEnd)]));
+              downloadCsv("bank-transfer-week-ending-" + weekEnd + ".csv", out);
+            }}>Bank transfer file — {ready.length} of {payable.length} ready</button>
+            {missing.length > 0 && (
+              <div className="vz-meta" style={{ color:"#B4262A" }}>
+                Missing bank details, left out of the file: {missing.map(r => r.name).join(", ")}.
+                Add them from the driver's profile.
+              </div>
+            )}
+          </>
+        );
+      })()}
+
       <div className="vz-meta">
         Drivers are paid for each day they signed in this week, plus batta for any day ticked
         outstation, less any advance still to recover. Staff are paid the same amount every
@@ -5955,7 +5991,9 @@ function VibeCRM() {
           const have = new Set((next.drivers || []).map(x => x.id));
           const add = dr.filter(r => !have.has(r.id)).map(r => ({
             id: r.id, name: r.name, phone: r.phone, refPhone: r.emergency || "", dl: r.dl || "", dlExpiry: r.dl_expiry || "",
-            wage: 0, joined: "", aadhaar: "", pan: "", photoId: "", dlFrontId: "", dlBackId: "", pin: "", bank: false, address: "",
+            wage: +r.wage || 0, batta: +r.batta || 0, joined: r.joined || "", aadhaar: r.aadhaar || "", pan: r.pan || "",
+            photoId: "", dlFrontId: "", dlBackId: "", pin: "", address: r.address || "",
+            bankAccount: r.bank_account || "", ifsc: r.ifsc || "", bankName: r.bank_name || "",
             photoUrl: r.photo_url || "", dlFrontUrl: r.dl_front_url || "", dlBackUrl: r.dl_back_url || "", fromServer: true,
           }));
           if (add.length) next = { ...next, drivers: [...add, ...(next.drivers || [])] };
@@ -6020,7 +6058,9 @@ function VibeCRM() {
   useEffect(() => {
     if (!loaded || mode !== "manager" || !db.adminToken) return; // only the authenticated admin pushes the roster
     (db.drivers || []).filter(d => !d.fromServer).forEach(d => apiPost("drivers.php", { id: d.id, name: d.name, phone: d.phone, pin: d.pin || "", active: 1,
-      emergency: d.refPhone || "", dl: d.dl || "", dl_expiry: d.dlExpiry || "" }));
+      emergency: d.refPhone || "", dl: d.dl || "", dl_expiry: d.dlExpiry || "",
+      wage: d.wage || 0, batta: d.batta || 0, joined: d.joined || "", aadhaar: d.aadhaar || "",
+      pan: d.pan || "", address: d.address || "", bank_account: d.bankAccount || "", ifsc: d.ifsc || "", bank_name: d.bankName || "" }));
   }, [loaded, mode, db.adminToken]);
 
   /* Drivers stay signed in all day; the app auto-signs them out at night.
@@ -7185,6 +7225,19 @@ function VibeCRM() {
                 {v.permitDue && <KV label="Permit" val={dmy(v.permitDue)} color={col(v.permitDue)} />}
                 <KV label="Tax valid" val={v.taxValid} />
                 <KV label="Board size" val={v.boardSize} />
+                {(() => {
+                  const card = (db.fuelCards || []).find(c => c.vehicleId === v.id);
+                  return (
+                    <div className="vz-kv">
+                      <span>Petrol card</span>
+                      {card
+                        ? <button className="vz-link" style={{ display:"inline", padding:0, width:"auto" }} onClick={() => setSheet({ type:"fuel" })}>
+                            {(card.label ? card.label + " · " : "") + inr(cardBalance(card))}
+                          </button>
+                        : <b style={{ color:"#B4262A" }}>None on file</b>}
+                    </div>
+                  );
+                })()}
                 <button className="vz-btn alt" style={{ marginTop:10 }} onClick={() => setSheet({ type:"vehicle", data:v })}>{perm.fleetEdit ? "Edit this vehicle" : "View full details"}</button>
 
                 <div className="vz-eyebrow" style={{ marginTop:14 }}>Daily kilometres</div>
@@ -7254,7 +7307,7 @@ function VibeCRM() {
         </div>
       )}
       {fleetView === "drivers" && db.drivers.map(d => {
-        const kyc = [["Photo", d.photoId], ["Aadhaar", d.aadhaar], ["PAN", d.pan], ["Licence", d.dl], ["Bank", d.bank]];
+        const kyc = [["Photo", d.photoId], ["Aadhaar", d.aadhaar], ["PAN", d.pan], ["Licence", d.dl], ["Bank", d.bankAccount && d.ifsc]];
         const have = kyc.filter(k => k[1]).length;
         const veh = db.vehicles.find(v => v.driverId === d.id);
         const att = (db.attendance || []).find(a => a.driverId === d.id && a.date === today());
@@ -8620,6 +8673,8 @@ function VibeCRM() {
               id: x.id, name: x.name, phone: x.phone, pin: x.pin || "", active: 1,
               emergency: x.refPhone || "", dl: x.dl || "", dl_expiry: x.dlExpiry || "",
               photo_data: pics[x.photoId] || "", dl_front_data: pics[x.dlFrontId] || "", dl_back_data: pics[x.dlBackId] || "",
+              wage: x.wage || 0, batta: x.batta || 0, joined: x.joined || "", aadhaar: x.aadhaar || "",
+              pan: x.pan || "", address: x.address || "", bank_account: x.bankAccount || "", ifsc: x.ifsc || "", bank_name: x.bankName || "",
             }).then(res => {
               if (res && (res.photo_url || res.dl_front_url || res.dl_back_url)) {
                 put("drivers", { ...x, photoUrl: res.photo_url || x.photoUrl, dlFrontUrl: res.dl_front_url || x.dlFrontUrl, dlBackUrl: res.dl_back_url || x.dlBackUrl });

@@ -19,8 +19,19 @@ function dr_save($dataUrl) {
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+/* Say plainly when the wage/bank columns haven't been added yet, rather than
+   dying with an empty 500 that reaches the app as "could not save driver". */
+try { db()->query('SELECT wage, bank_account FROM drivers LIMIT 1'); }
+catch (Throwable $e) {
+  http_response_code(503);
+  echo json_encode(['error' => 'Run db/db-drivers-financials.sql in phpMyAdmin first.']);
+  exit;
+}
+
 if ($method === 'GET') {
-  $stmt = db()->query('SELECT id, name, phone, emergency, dl, dl_expiry, active, photo_url, dl_front_url, dl_back_url FROM drivers WHERE active = 1 ORDER BY name');
+  $stmt = db()->query('SELECT id, name, phone, emergency, dl, dl_expiry, active, photo_url, dl_front_url, dl_back_url,
+                               wage, batta, joined, aadhaar, pan, address, bank_account, ifsc, bank_name
+                        FROM drivers WHERE active = 1 ORDER BY name');
   echo json_encode($stmt->fetchAll());
   exit;
 }
@@ -40,11 +51,14 @@ if ($method === 'POST') {
   $dl_back   = dr_save($d['dl_back_data']  ?? '') ?: ($cur['dl_back_url']  ?? '');
 
   $stmt = db()->prepare(
-    'INSERT INTO drivers (id, name, phone, pin, emergency, dl, dl_expiry, active, photo_url, dl_front_url, dl_back_url)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    'INSERT INTO drivers (id, name, phone, pin, emergency, dl, dl_expiry, active, photo_url, dl_front_url, dl_back_url,
+                           wage, batta, joined, aadhaar, pan, address, bank_account, ifsc, bank_name)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone), pin=VALUES(pin),
        emergency=VALUES(emergency), dl=VALUES(dl), dl_expiry=VALUES(dl_expiry), active=VALUES(active),
-       photo_url=VALUES(photo_url), dl_front_url=VALUES(dl_front_url), dl_back_url=VALUES(dl_back_url)'
+       photo_url=VALUES(photo_url), dl_front_url=VALUES(dl_front_url), dl_back_url=VALUES(dl_back_url),
+       wage=VALUES(wage), batta=VALUES(batta), joined=VALUES(joined), aadhaar=VALUES(aadhaar),
+       pan=VALUES(pan), address=VALUES(address), bank_account=VALUES(bank_account), ifsc=VALUES(ifsc), bank_name=VALUES(bank_name)'
   );
   $stmt->execute([
     $id,
@@ -56,6 +70,15 @@ if ($method === 'POST') {
     (isset($d['dl_expiry']) && $d['dl_expiry'] !== '') ? $d['dl_expiry'] : null,
     isset($d['active']) ? (int)!!$d['active'] : 1,
     $photo_url, $dl_front, $dl_back,
+    (int)($d['wage'] ?? 0),
+    (int)($d['batta'] ?? 0),
+    (isset($d['joined']) && $d['joined'] !== '') ? $d['joined'] : null,
+    (string)($d['aadhaar'] ?? ''),
+    (string)($d['pan'] ?? ''),
+    (string)($d['address'] ?? ''),
+    (string)($d['bank_account'] ?? ''),
+    (string)($d['ifsc'] ?? ''),
+    (string)($d['bank_name'] ?? ''),
   ]);
   echo json_encode(['ok' => true, 'photo_url' => $photo_url, 'dl_front_url' => $dl_front, 'dl_back_url' => $dl_back]);
   exit;
