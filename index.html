@@ -1676,9 +1676,14 @@ const blankData = () => ({
     // Petty cash is tracked separately from the bank/overall balance above —
     // its own tin, topped up from the bank now and then. Same idea, own baseline.
     pettyBalance: 0, pettyBalanceDate: today(),
+    // The bank reconciliation walks only what actually passes through the
+    // bank (mode isn't "Cash"/"Petty cash") — a different, narrower slice
+    // than the blended balance above, so it gets its own baseline: the
+    // balance the passbook actually showed on some date, typed in once.
+    bankOpeningBalance: 0, bankOpeningDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -1690,10 +1695,12 @@ const blankData = () => ({
    either device-local by design or already synced by its own endpoint. */
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
-                    fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing" };
+                    fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing",
+                    bankClears:"bankclear" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
-                      fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings" };
+                      fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings",
+                      bankclear:"bankClears" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -3053,6 +3060,40 @@ const pettyCashBalance = (db, uptoISO) => {
   return (+db.settings.pettyBalance || 0) + topups - spent;
 };
 
+/* ---------------------------- bank reconciliation ----------------------------
+   A manual register, not a bank-statement import: Suresh reads the closing
+   balance off the actual passbook/statement and types it in; the app works
+   out what its own books say the bank balance should be, and the difference
+   is exactly whatever hasn't shown up on a statement yet — ticked off below
+   as each one clears. Only entries whose mode isn't "Cash"/"Petty cash" ever
+   reach the bank, so the book balance walks those alone (same modeLedger()
+   test the day book already uses) — counting a cash payment here would
+   leave a gap no amount of ticking could ever close. */
+const bankEntries = (db, fromISO, toISO) => {
+  const inP = (d) => { const s = String(d || "").slice(0, 10); return s >= fromISO && s <= toISO; };
+  const out = [];
+  (db.payments || []).forEach(p => {
+    if (!inP(p.date) || modeLedger(p.mode) !== LEDGERS.bank) return;
+    const o = (db.orders || []).find(x => x.id === p.orderId) || {};
+    const v = (db.vendors || []).find(x => x.id === o.vendorId);
+    out.push({ id: "rcp_" + p.id, date: p.date, what: "Receipt · " + (v ? v.name : "—") + (p.ref ? " · " + p.ref : ""), mode: p.mode, amount: +p.amount || 0 });
+  });
+  (db.expenses || []).forEach(e => {
+    if (!inP(e.date) || modeLedger(e.mode) !== LEDGERS.bank) return;
+    out.push({ id: "exp_" + e.id, date: e.date, what: "Payment · " + (e.cat || "Expense") + (e.note ? " · " + e.note : ""), mode: e.mode, amount: -(+e.amount || 0) });
+  });
+  (db.payruns || []).forEach(p => {
+    if (!p.paidOn || !inP(p.paidOn) || modeLedger(p.mode) !== LEDGERS.bank) return;
+    out.push({ id: "pay_" + p.id, date: p.paidOn, what: "Payroll · week ending " + dmy(p.weekEnd), mode: p.mode, amount: -(+p.total || 0) });
+  });
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+};
+const bankBookBalance = (db, uptoISO) => {
+  const base = String(db.settings.bankOpeningDate || "1970-01-01");
+  const net = bankEntries(db, base, uptoISO || today()).reduce((s, e) => s + e.amount, 0);
+  return (+db.settings.bankOpeningBalance || 0) + net;
+};
+
 /* ---------------------------- payment discipline ----------------------------
    The business runs on a strict rule: 50% advance before a campaign's vehicles
    go out, the remaining 50% collected at the campaign's own midpoint — never
@@ -3748,6 +3789,93 @@ function PettyCashSheet({ db, onAdd, onTopup, onDeleteTopup, onEditExpense, onCl
           </div>
         </button>
       ))}
+    </Sheet>
+  );
+}
+
+/* ---------------------------- bank reconciliation ----------------------------
+   Not a statement import — Suresh reads the bank's own closing balance for
+   the month off the passbook and types it in here. The app already knows
+   what its books say the balance should be (bankBookBalance, walking only
+   the non-cash-mode entries); the gap between the two is exactly whichever
+   entries below haven't hit the bank yet, ticked off one by one as the real
+   statement catches up. */
+function BankReconSheet({ db, put, drop, onClose }) {
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const [stated, setStated] = useState("");
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+  const { from, to, label } = monthRange(month);
+  const cleared = new Set((db.bankClears || []).map(x => x.id));
+  const entries = bankEntries(db, from, to);
+  const book = bankBookBalance(db, to);
+  const statedNum = stated === "" ? null : +stated || 0;
+  const diff = statedNum == null ? null : statedNum - book;
+  const uncleared = entries.filter(e => !cleared.has(e.id));
+  const unclearedNet = uncleared.reduce((s, e) => s + e.amount, 0);
+  // The classic reconciliation check: statement balance should equal the
+  // book balance plus whatever hasn't shown up on the statement yet.
+  const explained = statedNum != null && Math.abs(diff - (-unclearedNet)) < 1;
+
+  return (
+    <Sheet title="Bank reconciliation" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0 }}>
+        Type in the closing balance from the bank statement for the month, then tick off every
+        entry below as it actually shows up there.
+      </div>
+      <F label="Month">
+        <select value={month} onChange={e => { setMonth(e.target.value); setStated(""); }}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </F>
+      <F label={"Bank statement closing balance — " + label}>
+        <input type="number" inputMode="numeric" value={stated} onChange={e => setStated(e.target.value)} placeholder="from the passbook / statement" />
+      </F>
+
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Book balance</i><b style={{ fontSize:17 }}>{inr(book)}</b><small>per the app, as of {dmy(to)}</small></div>
+        <div className="vz-stat">
+          <i>Difference</i>
+          <b style={{ fontSize:17, color: diff == null ? undefined : Math.abs(diff) < 1 ? "#178951" : "#E5484D" }}>
+            {diff == null ? "—" : inr(Math.abs(diff)) + (diff > 0 ? " over" : diff < 0 ? " short" : "")}
+          </b>
+          <small>statement less book</small>
+        </div>
+      </div>
+      {statedNum != null && Math.abs(diff) >= 1 && (
+        <div className="vz-meta" style={{ marginTop:-2 }}>
+          {explained
+            ? "Fully explained by the " + uncleared.length + " entr" + (uncleared.length === 1 ? "y" : "ies") + " below still not ticked."
+            : "Doesn't fully match the entries still unticked below — worth a second look before closing the month."}
+        </div>
+      )}
+
+      <div className="vz-eyebrow">Bank-mode entries · {label}</div>
+      {entries.length === 0 && <div className="vz-card"><div className="vz-meta">No bank-mode receipts or payments this month.</div></div>}
+      {entries.map(e => {
+        const on = cleared.has(e.id);
+        return (
+          <button className="vz-card vz-tapcard" key={e.id}
+            onClick={() => on ? drop("bankClears", e.id) : put("bankClears", { id: e.id, at: new Date().toISOString() })}
+            style={on ? { background:"#F3FBF6", borderColor:"#BEE6CC" } : null}>
+            <div className="vz-row" style={{ alignItems:"center" }}>
+              <span className="vz-check" style={{ margin:0 }}>
+                <input type="checkbox" checked={on} readOnly />
+              </span>
+              <div style={{ minWidth:0, flex:1, marginLeft:10 }}>
+                <div className="vz-title">{e.what}</div>
+                <div className="vz-meta">{dmy(e.date)} · {e.mode}</div>
+              </div>
+              <div className="vz-money" style={{ color: e.amount >= 0 ? "#178951" : "#E5484D" }}>
+                {e.amount >= 0 ? "+" : "−"}{inr(Math.abs(e.amount))}
+              </div>
+            </div>
+          </button>
+        );
+      })}
     </Sheet>
   );
 }
@@ -7427,6 +7555,14 @@ function VibeCRM() {
         </div>
 
         <div className="vz-eyebrow">
+          Bank reconciliation
+          <button onClick={() => setSheet({ type:"bankrecon" })}>{inr(bankBookBalance(db))} per the books</button>
+        </div>
+        <div className="vz-meta" style={{ marginTop:-4, marginBottom:10 }}>
+          Type in the bank statement's closing balance for a month and tick off what's actually cleared.
+        </div>
+
+        <div className="vz-eyebrow">
           Payroll
           <button onClick={() => setSheet({ type:"attendance" })}>Attendance &amp; payroll</button>
         </div>
@@ -8019,6 +8155,16 @@ function VibeCRM() {
             <F label="Balance ₹"><input type="number" value={db.settings.pettyBalance ?? 0} onChange={e => setSetting("pettyBalance", +e.target.value || 0)} inputMode="numeric" /></F>
             <F label="As of"><input type="date" value={db.settings.pettyBalanceDate || today()} onChange={e => setSetting("pettyBalanceDate", e.target.value)} /></F>
           </div>
+
+          <div className="vz-eyebrow">Bank balance for reconciliation</div>
+          <div className="vz-meta" style={{ marginTop:0, marginBottom:8 }}>
+            What the bank passbook itself showed on a given date — used only for Bank reconciliation,
+            since that has to match a real statement rather than the blended figure above.
+          </div>
+          <div className="vz-2">
+            <F label="Balance ₹"><input type="number" value={db.settings.bankOpeningBalance ?? 0} onChange={e => setSetting("bankOpeningBalance", +e.target.value || 0)} inputMode="numeric" /></F>
+            <F label="As of"><input type="date" value={db.settings.bankOpeningDate || today()} onChange={e => setSetting("bankOpeningDate", e.target.value)} /></F>
+          </div>
         </>
       )}
 
@@ -8302,6 +8448,9 @@ function VibeCRM() {
       {sheet?.type === "pettytopup" && (
         <TopupForm onClose={() => setSheet({ type:"pettycash" })}
           onSave={(x) => { put("pettyTopups", x); setSheet({ type:"pettycash" }); setToast("Top-up recorded"); }} />
+      )}
+      {sheet?.type === "bankrecon" && (
+        <BankReconSheet db={db} put={put} drop={drop} onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "creditnote" && (
         <CreditNoteForm db={db} vendorOf={vendorOf} paidOn={paidOn}

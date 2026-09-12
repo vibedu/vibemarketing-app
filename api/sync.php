@@ -8,7 +8,7 @@
 require __DIR__ . '/db.php';
 require_admin();
 
-const SYNC_KINDS = ['vendor', 'supplier', 'order', 'payment', 'vehicle', 'staff', 'advance', 'creditnote', 'expense', 'payrun', 'pettytopup', 'fuelcard', 'fueltxn', 'followup', 'tallymark', 'voucher', 'filing'];
+const SYNC_KINDS = ['vendor', 'supplier', 'order', 'payment', 'vehicle', 'staff', 'advance', 'creditnote', 'expense', 'payrun', 'pettytopup', 'fuelcard', 'fueltxn', 'followup', 'tallymark', 'voucher', 'filing', 'bankclear'];
 
 /* Say plainly when the table hasn't been created yet, rather than dying with an
    empty 500 that reaches the app as "could not send changes". */
