@@ -440,7 +440,19 @@ const CSS = `
     background:var(--ink);
   }
   .vz-gate .vz-loginhero .vz-loginname { color:#fff; }
-  .vz-gate .vz-logincard { box-shadow:0 6px 20px rgba(18,25,42,.07); }
+  /* The card itself was sized for a phone screen — 16px of padding and an
+     11px gap between the two option rows reads as cramped once it's sitting
+     in acres of empty space instead of against a screen edge. Give it the
+     room a desktop login deserves. */
+  .vz-gate .vz-logincard {
+    max-width:420px; padding:32px; border-radius:20px;
+    box-shadow:0 10px 30px rgba(18,25,42,.09);
+  }
+  .vz-gate .vz-logincard .vz-pick { padding:20px; margin-bottom:14px; border-radius:14px; }
+  .vz-gate .vz-logincard .vz-pick:last-child { margin-bottom:0; }
+  .vz-gate .vz-logincard h2 { font-size:21px; margin-bottom:6px; }
+  .vz-gate .vz-logincard p { font-size:13px; margin-bottom:20px; }
+  .vz-gate .vz-logincard .vz-f { margin-bottom:16px; }
 }
 
 /* Wide tables inside sheets scroll on their own rather than pushing the page. */
