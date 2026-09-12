@@ -19,20 +19,30 @@ function dr_save($dataUrl) {
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-/* Say plainly when the wage/bank columns haven't been added yet, rather than
-   dying with an empty 500 that reaches the app as "could not save driver". */
+/* Say plainly when a column hasn't been added yet, rather than dying with an
+   empty 500 that reaches the app as "could not save driver". */
 try { db()->query('SELECT wage, bank_account FROM drivers LIMIT 1'); }
 catch (Throwable $e) {
   http_response_code(503);
   echo json_encode(['error' => 'Run db/db-drivers-financials.sql in phpMyAdmin first.']);
   exit;
 }
+try { db()->query('SELECT updated_at FROM drivers LIMIT 1'); }
+catch (Throwable $e) {
+  http_response_code(503);
+  echo json_encode(['error' => 'Run db/db-drivers-updated-at.sql in phpMyAdmin first.']);
+  exit;
+}
 
 if ($method === 'GET') {
   $stmt = db()->query('SELECT id, name, phone, emergency, dl, dl_expiry, active, photo_url, dl_front_url, dl_back_url,
-                               wage, batta, joined, aadhaar, pan, address, bank_account, ifsc, bank_name
+                               wage, batta, joined, aadhaar, pan, address, bank_account, ifsc, bank_name, updated_at
                         FROM drivers WHERE active = 1 ORDER BY name');
-  echo json_encode($stmt->fetchAll());
+  $rows = $stmt->fetchAll();
+  // Same shape sync.php already hands the client for everything else, so one
+  // "is the server's copy newer than mine" comparison works everywhere.
+  foreach ($rows as &$r) { $r['updated_at'] = $r['updated_at'] ? str_replace(' ', 'T', $r['updated_at']) . 'Z' : null; }
+  echo json_encode($rows);
   exit;
 }
 
@@ -52,13 +62,14 @@ if ($method === 'POST') {
 
   $stmt = db()->prepare(
     'INSERT INTO drivers (id, name, phone, pin, emergency, dl, dl_expiry, active, photo_url, dl_front_url, dl_back_url,
-                           wage, batta, joined, aadhaar, pan, address, bank_account, ifsc, bank_name)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           wage, batta, joined, aadhaar, pan, address, bank_account, ifsc, bank_name, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP())
      ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone), pin=VALUES(pin),
        emergency=VALUES(emergency), dl=VALUES(dl), dl_expiry=VALUES(dl_expiry), active=VALUES(active),
        photo_url=VALUES(photo_url), dl_front_url=VALUES(dl_front_url), dl_back_url=VALUES(dl_back_url),
        wage=VALUES(wage), batta=VALUES(batta), joined=VALUES(joined), aadhaar=VALUES(aadhaar),
-       pan=VALUES(pan), address=VALUES(address), bank_account=VALUES(bank_account), ifsc=VALUES(ifsc), bank_name=VALUES(bank_name)'
+       pan=VALUES(pan), address=VALUES(address), bank_account=VALUES(bank_account), ifsc=VALUES(ifsc), bank_name=VALUES(bank_name),
+       updated_at=UTC_TIMESTAMP()'
   );
   $stmt->execute([
     $id,

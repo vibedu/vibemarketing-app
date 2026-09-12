@@ -6007,15 +6007,33 @@ function VibeCRM() {
       setDb(d => {
         let next = d;
         if (Array.isArray(dr)) {
-          const have = new Set((next.drivers || []).map(x => x.id));
-          const add = dr.filter(r => !have.has(r.id)).map(r => ({
+          // A driver not yet known here is simply added, same as before. One
+          // already known here is now actually refreshed too — but only when
+          // the server's copy is newer, so a pull landing mid-edit on THIS
+          // device can never stomp on what's still being typed. A local
+          // record with no updatedAt of its own (never genuinely re-saved
+          // since this fix shipped) always defers to the server.
+          const byId = {}; (next.drivers || []).forEach(x => { byId[x.id] = x; });
+          const fromServer = (r) => ({
             id: r.id, name: r.name, phone: r.phone, refPhone: r.emergency || "", dl: r.dl || "", dlExpiry: r.dl_expiry || "",
             wage: +r.wage || 0, batta: +r.batta || 0, joined: r.joined || "", aadhaar: r.aadhaar || "", pan: r.pan || "",
-            photoId: "", dlFrontId: "", dlBackId: "", pin: "", address: r.address || "",
-            bankAccount: r.bank_account || "", ifsc: r.ifsc || "", bankName: r.bank_name || "",
-            photoUrl: r.photo_url || "", dlFrontUrl: r.dl_front_url || "", dlBackUrl: r.dl_back_url || "", fromServer: true,
-          }));
-          if (add.length) next = { ...next, drivers: [...add, ...(next.drivers || [])] };
+            address: r.address || "", bankAccount: r.bank_account || "", ifsc: r.ifsc || "", bankName: r.bank_name || "",
+            photoUrl: r.photo_url || "", dlFrontUrl: r.dl_front_url || "", dlBackUrl: r.dl_back_url || "",
+            updatedAt: r.updated_at || "", fromServer: true,
+          });
+          dr.forEach(r => {
+            const local = byId[r.id];
+            if (!local) { byId[r.id] = { ...fromServer(r), photoId:"", dlFrontId:"", dlBackId:"", pin:"" }; return; }
+            // Compared as real instants, not raw strings — the client stamps
+            // milliseconds and the server doesn't, so string comparison alone
+            // could call an identical instant "newer" on a formatting quirk.
+            const serverNewer = !local.updatedAt || (r.updated_at && new Date(r.updated_at).getTime() > new Date(local.updatedAt).getTime());
+            if (serverNewer) {
+              byId[r.id] = { ...local, ...fromServer(r),
+                photoUrl: r.photo_url || local.photoUrl, dlFrontUrl: r.dl_front_url || local.dlFrontUrl, dlBackUrl: r.dl_back_url || local.dlBackUrl };
+            }
+          });
+          next = { ...next, drivers: Object.values(byId) };
         }
         if (Array.isArray(pay)) {
           // Paid Razorpay links become payment entries; pending links are kept so the
@@ -8721,6 +8739,7 @@ function VibeCRM() {
       {sheet?.type === "driver" && (
         <DriverForm init={sheet.data} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
           onSave={(x) => {
+            x = { ...x, updatedAt: new Date().toISOString() };
             put("drivers", x); setSheet(null);
             apiPost("drivers.php", {
               id: x.id, name: x.name, phone: x.phone, pin: x.pin || "", active: 1,
