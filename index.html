@@ -3506,7 +3506,7 @@ function GstSheet({ db, vendorOf, onClose }) {
 /* ---------------------------- petrol cards ----------------------------
    The first job of the morning: which van's card is empty. Sorted lowest
    first, because that is the order she works down. */
-function FuelCardsSheet({ db, vehOf, perm, onAddCard, onEditCard, onRecharge, onBalance, onClose }) {
+function FuelCardsSheet({ db, vehOf, perm, onAddCard, onEditCard, onRecharge, onBalance, onSetThreshold, onClose }) {
   const cards = cardsToWatch(db);
   const low = cards.filter(c => cardLow(c, db.settings));
   const threshold = +((db.settings || {}).fuelLow) || LOW_FUEL_DEFAULT;
@@ -3514,13 +3514,30 @@ function FuelCardsSheet({ db, vehOf, perm, onAddCard, onEditCard, onRecharge, on
   const rechargedThisMonth = (db.fuelTxns || [])
     .filter(t => t.type === "recharge" && String(t.date || "").slice(0, 7) === mth)
     .reduce((s, t) => s + (+t.amount || 0), 0);
+  const [editingThreshold, setEditingThreshold] = useState(false);
+  const [thresholdVal, setThresholdVal] = useState(String(threshold));
 
   return (
     <Sheet title="Petrol cards" onClose={onClose}>
       <div className="vz-grid" style={{ marginBottom:6 }}>
         <div className="vz-stat"><i>Need a recharge</i>
           <b style={{ fontSize:18, color: low.length ? "#E5484D" : "#178951" }}>{low.length}</b>
-          <small>of {cards.length} card{cards.length === 1 ? "" : "s"} · under {inr(threshold)}</small></div>
+          <small>of {cards.length} card{cards.length === 1 ? "" : "s"} · under {inr(threshold)}</small>
+          {perm.money && !editingThreshold && (
+            <button className="vz-link" style={{ padding:"4px 0 0", textAlign:"left" }} onClick={() => { setThresholdVal(String(threshold)); setEditingThreshold(true); }}>Edit</button>
+          )}
+          {editingThreshold && (
+            <div style={{ marginTop:6 }}>
+              <input type="number" inputMode="numeric" value={thresholdVal} onChange={e => setThresholdVal(e.target.value)}
+                style={{ width:"100%", boxSizing:"border-box", padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, font:"inherit" }} autoFocus />
+              <div style={{ display:"flex", gap:6, marginTop:6 }}>
+                <button className="vz-btn" style={{ margin:0, padding:"7px 12px" }} disabled={!(+thresholdVal > 0)}
+                  onClick={() => { onSetThreshold(+thresholdVal); setEditingThreshold(false); }}>Save</button>
+                <button className="vz-btn alt" style={{ margin:0, padding:"7px 12px" }} onClick={() => setEditingThreshold(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="vz-stat"><i>Recharged this month</i><b style={{ fontSize:18 }}>{inr(rechargedThisMonth)}</b>
           <small>counts as diesel spend</small></div>
       </div>
@@ -8752,7 +8769,8 @@ function VibeCRM() {
           onAddCard={() => setSheet({ type:"fuelcard" })}
           onEditCard={(c) => setSheet({ type:"fuelcard", data:c })}
           onRecharge={(c) => setSheet({ type:"fueltxn", data:c, kind:"recharge" })}
-          onBalance={(c) => setSheet({ type:"fueltxn", data:c, kind:"reading" })} />
+          onBalance={(c) => setSheet({ type:"fueltxn", data:c, kind:"reading" })}
+          onSetThreshold={(n) => { setSetting("fuelLow", n); setToast("Low-balance threshold saved"); }} />
       )}
       {sheet?.type === "fuelcard" && (
         <FuelCardForm init={sheet.data} db={db} vehOf={vehOf} onClose={() => setSheet({ type:"fuel" })}
