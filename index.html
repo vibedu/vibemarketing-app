@@ -3705,9 +3705,23 @@ function FollowupForm({ row, db, onSave, onClose }) {
    Everything the business pays for other than wages. Until this existed the
    app knew every rupee coming in and almost none going out, so the forecast
    read as if the vans ran on air. */
-function ExpenseForm({ init, db, defaultMode, onSave, onDelete, onClose }) {
+function ExpenseForm({ init, db, defaultMode, onSave, onDelete, onAddSupplier, onClose }) {
   const [f, set] = useState(init || { date: today(), cat:"Diesel", amount:"", gstPaid:"", vehicleId:"", orderId:"", supplierId:"", mode: defaultMode || "Cash", note:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  // A quick, right-here way to add the vendor rather than losing everything
+  // already typed on this expense by navigating away to the full Suppliers
+  // screen and back. Address/GST can be filled in properly later — this is
+  // just enough to pick the vendor on this expense today.
+  const [addingSupplier, setAddingSupplier] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState("");
+  const saveNewSupplier = () => {
+    const name = newSupplierName.trim();
+    if (!name) return;
+    const sup = { id: uid(), name, address:"", gst:"" };
+    onAddSupplier(sup);
+    set(prev => ({ ...prev, supplierId: sup.id }));
+    setNewSupplierName(""); setAddingSupplier(false);
+  };
   return (
     <Sheet title={init ? "Edit expense" : "Record an expense"} onClose={onClose}>
       <div className="vz-2">
@@ -3725,12 +3739,26 @@ function ExpenseForm({ init, db, defaultMode, onSave, onDelete, onClose }) {
         Fill the GST only if you have a tax invoice for it — it comes off what we pay on the 20th.
         Diesel carries no GST credit.
       </div>
-      <F label="Vendor (optional)">
-        <select value={f.supplierId} onChange={u("supplierId")}>
-          <option value="">— not on file —</option>
-          {(db.suppliers || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </F>
+      <div className="vz-eyebrow" style={{ marginTop:0, marginBottom:0 }}>
+        Vendor (optional)
+        {!addingSupplier && <button onClick={() => setAddingSupplier(true)}>+ Add vendor</button>}
+      </div>
+      {addingSupplier ? (
+        <div className="vz-2" style={{ marginBottom:11 }}>
+          <F label="New vendor's name"><input value={newSupplierName} onChange={e => setNewSupplierName(e.target.value)} placeholder="Sakthi Auto Paints" autoFocus /></F>
+          <div style={{ display:"flex", gap:8, alignItems:"flex-end", paddingBottom:2 }}>
+            <button className="vz-btn" style={{ margin:0 }} disabled={!newSupplierName.trim()} onClick={saveNewSupplier}>Save</button>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => { setAddingSupplier(false); setNewSupplierName(""); }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <F label="">
+          <select value={f.supplierId} onChange={u("supplierId")}>
+            <option value="">— not on file —</option>
+            {(db.suppliers || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </F>
+      )}
       <F label="Which vehicle (optional)">
         <select value={f.vehicleId} onChange={u("vehicleId")}>
           <option value="">— not vehicle-specific —</option>
@@ -8647,6 +8675,7 @@ function VibeCRM() {
         const back = sheet.returnTo || "expenses";
         return (
           <ExpenseForm init={sheet.data} db={db} defaultMode={sheet.defaultMode} onClose={() => setSheet({ type:back })}
+            onAddSupplier={(sup) => { put("suppliers", sup); setToast("Vendor added"); }}
             onSave={(x) => {
               const locked = filingCovering(db, "gstr3b", x.date);
               if (locked) { setToast(filedLockMsg(locked)); return; }
