@@ -1695,7 +1695,7 @@ const blankData = () => ({
     bankOpeningBalance: 0, bankOpeningDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -1708,11 +1708,11 @@ const blankData = () => ({
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing",
-                    bankClears:"bankclear" };
+                    bankClears:"bankclear", kmLogs:"kmlog" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings",
-                      bankclear:"bankClears" };
+                      bankclear:"bankClears", kmlog:"kmLogs" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -2230,6 +2230,96 @@ function VehicleForm({ init, drivers, plates, canEdit = true, canDel = true, onS
       {canEdit && (!f.fcDue || !f.insDue) && <div className="vz-meta">FC and insurance dates are needed so the app can warn you before they expire.</div>}
       {!canEdit && <div className="vz-meta">View only — ask an admin to make changes.</div>}
       {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete vehicle</button>}
+    </Sheet>
+  );
+}
+
+/* A manual daily kilometre reading, independent of the driver's own GPS
+   punch-in/out (db.attendance) — finance wants to log a vehicle's running
+   themselves, on days a driver didn't punch in digitally or just to keep
+   their own record. One entry per vehicle per day: saving again for the
+   same vehicle and date overwrites that day's reading rather than piling
+   up duplicates, so the id is derived from the two rather than random. */
+function KmLogForm({ init, vehicles, defaultVehicleId, onSave, onDelete, onClose }) {
+  const [f, set] = useState(init || { vehicleId: defaultVehicleId || vehicles[0]?.id || "", date: today(), openKm:"", closeKm:"", note:"" });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  const open = f.openKm === "" ? null : +f.openKm;
+  const close = f.closeKm === "" ? null : +f.closeKm;
+  const km = (open != null && close != null) ? close - open : null;
+  const over = km != null && km < 0;
+  const ready = f.vehicleId && f.date && open != null && close != null && !over;
+  return (
+    <Sheet title={init ? "Edit kilometre log" : "Log kilometres"} onClose={onClose}>
+      <F label="Vehicle">
+        <PlatePicker value={f.vehicleId} vehicles={vehicles} title="Select a vehicle"
+          placeholder="— choose a vehicle —" onChange={id => set({ ...f, vehicleId: id })} />
+      </F>
+      <F label="Date"><input type="date" value={f.date} max={today()} onChange={u("date")} /></F>
+      <div className="vz-2">
+        <F label="Opening km"><input type="number" inputMode="numeric" value={f.openKm} onChange={u("openKm")} min="0" /></F>
+        <F label="Closing km"><input type="number" inputMode="numeric" value={f.closeKm} onChange={u("closeKm")} min="0" /></F>
+      </div>
+      {over && <div className="vz-meta" style={{ color:"#B4262A" }}>Closing km can't be less than opening km.</div>}
+      <F label="Note (optional)"><input value={f.note || ""} onChange={u("note")} placeholder="Anything worth remembering about the day" /></F>
+      <div className="vz-card" style={{ background:"#FAFBFC" }}>
+        <div className="vz-kv"><span>Kilometres travelled</span><b className="vz-money">{km != null ? km + " km" : "—"}</b></div>
+      </div>
+      <button className="vz-btn" disabled={!ready}
+        onClick={() => onSave({ id: f.vehicleId + "_" + f.date, vehicleId: f.vehicleId, date: f.date, openKm: open, closeKm: close, note: f.note || "" })}>
+        Save
+      </button>
+      {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete this entry</button>}
+    </Sheet>
+  );
+}
+
+/* The register itself — every manually-logged day, most recent first, with
+   a running total for whichever month is picked. Driver-punched running
+   (db.attendance) is a separate log shown on the vehicle's own detail
+   screen in Fleet; this one is finance's own record, kept apart so neither
+   can quietly overwrite the other. */
+function KmLogSheet({ db, onAdd, onEdit, onClose }) {
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+  }
+  const vehOf = (id) => (db.vehicles || []).find(v => v.id === id);
+  const entries = (db.kmLogs || []).filter(x => String(x.date || "").slice(0, 7) === month)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const totalKm = entries.reduce((s, x) => s + Math.max(0, (+x.closeKm || 0) - (+x.openKm || 0)), 0);
+  return (
+    <Sheet title="Daily kilometres" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0 }}>
+        Opening and closing km for any vehicle, any day — saved and totalled automatically.
+      </div>
+      <button className="vz-btn go" onClick={() => onAdd()}>+ Log kilometres</button>
+      <F label="Month">
+        <select value={month} onChange={e => setMonth(e.target.value)}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </F>
+      <div className="vz-grid" style={{ marginBottom:6 }}>
+        <div className="vz-stat"><i>Entries</i><b style={{ fontSize:18 }}>{entries.length}</b><small>{monthLabel(month)}</small></div>
+        <div className="vz-stat"><i>Total km</i><b style={{ fontSize:18 }}>{totalKm.toLocaleString("en-IN")}</b><small>across all vehicles</small></div>
+      </div>
+      {entries.length === 0 && <div className="vz-card"><div className="vz-meta">No kilometres logged this month yet.</div></div>}
+      {entries.map(x => {
+        const v = vehOf(x.vehicleId);
+        const km = Math.max(0, (+x.closeKm || 0) - (+x.openKm || 0));
+        return (
+          <button className="vz-card vz-tapcard" key={x.id} onClick={() => onEdit(x)}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title">{v ? v.plate : "—"}</div>
+                <div className="vz-meta">{dmy(x.date)} · Open {x.openKm} · Close {x.closeKm}{x.note ? " · " + x.note : ""}</div>
+              </div>
+              <b className="vz-money">{km} km</b>
+            </div>
+          </button>
+        );
+      })}
     </Sheet>
   );
 }
@@ -7285,19 +7375,26 @@ function VibeCRM() {
                 })()}
                 <button className="vz-btn alt" style={{ marginTop:10 }} onClick={() => setSheet({ type:"vehicle", data:v })}>{perm.fleetEdit ? "Edit this vehicle" : "View full details"}</button>
 
-                <div className="vz-eyebrow" style={{ marginTop:14 }}>Daily kilometres</div>
+                <div className="vz-eyebrow" style={{ marginTop:14 }}>
+                  Daily kilometres
+                  <button onClick={() => setSheet({ type:"kmlogform", vehicleId:v.id })}>+ Log kilometres</button>
+                </div>
                 {(() => {
-                  const log = (db.attendance || []).filter(a => a.vehicleId === v.id)
-                    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.inAt < b.inAt ? 1 : -1)));
+                  const punched = (db.attendance || []).filter(a => a.vehicleId === v.id)
+                    .map(a => ({ id:"a_" + a.id, date:a.date, openKm:a.openKm, closeKm:a.closeKm, who:a.driverName || "—", auto:a.autoClosed, sortKey:a.date + " " + (a.inAt || "") }));
+                  const logged = (db.kmLogs || []).filter(x => x.vehicleId === v.id)
+                    .map(x => ({ id:"k_" + x.id, date:x.date, openKm:x.openKm, closeKm:x.closeKm, who:"Manually logged" + (x.note ? " · " + x.note : ""), auto:false, sortKey:x.date + " z", edit:x }));
+                  const log = [...punched, ...logged].sort((a, b) => (a.sortKey < b.sortKey ? 1 : -1));
                   if (!log.length) return <div className="vz-card"><div className="vz-meta">No trips logged for this vehicle yet.</div></div>;
                   return log.slice(0, 60).map(a => {
                     const dist = (a.openKm != null && a.closeKm != null) ? (a.closeKm - a.openKm) : null;
                     return (
-                      <div className="vz-card" key={a.id} style={{ padding:"9px 12px" }}>
+                      <div className={"vz-card" + (a.edit ? " vz-tapcard" : "")} key={a.id} style={{ padding:"9px 12px" }}
+                        onClick={a.edit ? () => setSheet({ type:"kmlogform", data:a.edit }) : undefined}>
                         <div className="vz-row">
                           <div>
                             <div className="vz-title" style={{ fontSize:13.5 }}>{a.date === today() ? "Today" : dmy(a.date)}</div>
-                            <div className="vz-meta">{a.driverName || "—"}{a.autoClosed ? " · auto-closed" : ""}</div>
+                            <div className="vz-meta">{a.who}{a.auto ? " · auto-closed" : ""}</div>
                           </div>
                           <div style={{ textAlign:"right" }}>
                             <div className="vz-meta">Open <b>{a.openKm != null ? a.openKm : "—"}</b> · Close <b>{a.closeKm != null ? a.closeKm : "—"}</b></div>
@@ -7539,7 +7636,10 @@ function VibeCRM() {
           <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(cash.expenses)}</b><small>paid out, incl. payroll</small></div>
         </div>
 
-        <div className="vz-eyebrow">Vehicles running now</div>
+        <div className="vz-eyebrow">
+          Vehicles running now
+          <button onClick={() => setSheet({ type:"kmlog" })}>Daily kilometres</button>
+        </div>
         {runningNow.length === 0 && <div className="vz-card"><div className="vz-meta">Nothing on the road right now.</div></div>}
         {runningNow.map(({ v, a }) => (
           <div className="vz-kv" key={v.id} style={{ background:"#fff", padding:"10px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
@@ -7548,6 +7648,9 @@ function VibeCRM() {
             <b className="vz-money">{a.openKm != null ? a.openKm + " km" : "—"}</b>
           </div>
         ))}
+        <div className="vz-meta" style={{ marginTop:-2 }}>
+          Enter a vehicle's opening and closing km for the day yourself — separate from a driver's own punch-in log.
+        </div>
 
         <div className="vz-grid">
           <div className="vz-stat"><i>Invoiced</i><b style={{ fontSize:18 }}>{inr(stats.billed)}</b><small>confirmed orders</small></div>
@@ -8570,6 +8673,16 @@ function VibeCRM() {
       )}
       {sheet?.type === "bankrecon" && (
         <BankReconSheet db={db} put={put} drop={drop} onClose={() => setSheet(null)} />
+      )}
+      {sheet?.type === "kmlog" && (
+        <KmLogSheet db={db} onClose={() => setSheet(null)}
+          onAdd={() => setSheet({ type:"kmlogform" })}
+          onEdit={(x) => setSheet({ type:"kmlogform", data:x })} />
+      )}
+      {sheet?.type === "kmlogform" && (
+        <KmLogForm init={sheet.data} vehicles={db.vehicles} defaultVehicleId={sheet.vehicleId} onClose={() => setSheet({ type:"kmlog" })}
+          onSave={(x) => { put("kmLogs", x); setSheet({ type:"kmlog" }); setToast("Kilometres saved"); }}
+          onDelete={(id) => { drop("kmLogs", id); setSheet({ type:"kmlog" }); setToast("Entry deleted"); }} />
       )}
       {sheet?.type === "creditnote" && (
         <CreditNoteForm db={db} vendorOf={vendorOf} paidOn={paidOn}
