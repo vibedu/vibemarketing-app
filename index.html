@@ -4243,18 +4243,29 @@ function VoucherForm({ db, onSave, onClose }) {
           {["Payment", "Receipt", "Journal", "Contra"].map(t => <option key={t}>{t}</option>)}
         </select>
       </F>
-      <F label="Debit (what it was for)">
-        <input list="vz-ledgers" value={f.dr} onChange={u("dr")} placeholder="Bank charges" />
+      <F label="Debit (what it was for) *">
+        <input list="vz-ledgers" value={f.dr} onChange={u("dr")} placeholder="e.g. Bank charges — type your own or pick a suggestion" />
       </F>
-      <F label="Credit (where it came from)">
+      <F label="Credit (where it came from) *">
         <input list="vz-ledgers" value={f.cr} onChange={u("cr")} />
       </F>
       <datalist id="vz-ledgers">{suggestions.map(s => <option key={s} value={s} />)}</datalist>
       <F label="Narration"><input value={f.narration} onChange={u("narration")} placeholder="what this was" /></F>
-      <button className="vz-btn" disabled={!(+f.amount > 0) || !f.dr.trim() || !f.cr.trim()}
-        onClick={() => onSave({ id: uid(), ...f, dr: f.dr.trim(), cr: f.cr.trim(), amount: +f.amount })}>
-        Save entry
-      </button>
+      {(() => {
+        const missing = [];
+        if (!(+f.amount > 0)) missing.push("an amount above zero");
+        if (!f.dr.trim()) missing.push("Debit");
+        if (!f.cr.trim()) missing.push("Credit");
+        return (
+          <>
+            <button className="vz-btn" disabled={missing.length > 0}
+              onClick={() => onSave({ id: uid(), ...f, dr: f.dr.trim(), cr: f.cr.trim(), amount: +f.amount })}>
+              Save entry
+            </button>
+            {missing.length > 0 && <div className="vz-meta" style={{ color:"#B4262A" }}>Still needed: {missing.join(", ")}.</div>}
+          </>
+        );
+      })()}
       <div className="vz-meta">
         Invoices, receipts, expenses and payroll are already in the day book on their own —
         this is only for what happened outside the app.
