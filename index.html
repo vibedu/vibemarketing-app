@@ -8868,7 +8868,7 @@ function VibeCRM() {
             // it adds up to. Only block when the edit actually touches those
             // numbers; a typo fix in the title or route shouldn't need reopening
             // a return that has nothing to do with it.
-            if (x.id) {
+            if (sheet.data) {
               const orig = sheet.data;
               const lockedBill = billsOf(orig, vendorOf(orig.vendorId)).map(b => filingCovering(db, "gstr1", b.date)).find(Boolean);
               if (lockedBill) {
