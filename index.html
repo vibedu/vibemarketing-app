@@ -6987,6 +6987,22 @@ function VibeCRM() {
         );
       })()}
 
+      {(perm.money || perm.fleetEdit) && (() => {
+        const todaysLogs = (db.kmLogs || []).filter(x => x.date === today());
+        const todaysKm = todaysLogs.reduce((s, x) => s + Math.max(0, (+x.closeKm || 0) - (+x.openKm || 0)), 0);
+        return (
+          <button className="vz-card vz-tapcard" onClick={() => setSheet({ type:"kmlog" })}>
+            <div className="vz-row">
+              <div style={{ minWidth:0 }}>
+                <div className="vz-title">🛣️ Daily kilometres{todaysLogs.length > 0 ? " · " + todaysLogs.length + " today" : ""}</div>
+                <div className="vz-meta">{todaysLogs.length > 0 ? todaysKm.toLocaleString("en-IN") + " km logged today so far" : "Log a vehicle's opening & closing km for today"}</div>
+              </div>
+              <span className="vz-chip c-blue">Open</span>
+            </div>
+          </button>
+        );
+      })()}
+
       {perm.fleetEdit && <div className="vz-inline" style={{ marginTop:2, marginBottom:2, display:"flex", gap:8 }}>
         <button className="vz-btn alt" style={{ margin:0, flex:1 }} onClick={() => { setTab("fleet"); setFleetView("drivers"); setSheet({ type:"driver" }); }}>+ Add driver</button>
         <button className="vz-btn alt" style={{ margin:0, flex:1 }} onClick={() => { setTab("fleet"); setFleetView("vehicles"); setSheet({ type:"vehicle" }); }}>+ Add vehicle</button>
