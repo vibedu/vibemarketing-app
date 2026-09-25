@@ -653,6 +653,19 @@ const dueDateOf = (o, v) => {
   const from = o.invDate || o.created || today();
   return days > 0 ? addDays(from, days) : (o.end || from);
 };
+/* Document numbers follow the financial year (April to March), the way the
+   Tally invoices always have: tax invoice "26-27/42", quotation "QT/26-27/003",
+   proforma "PI/26-27/003". fyLabel gives the "26-27" part for any date, and
+   invSeq pulls the running number back out of a printed one (old invoices are
+   plain numbers, new ones are "26-27/42" — both sort and compare the same). */
+const fyLabel = (d) => {
+  const s = String(d || today()).slice(0, 10);
+  const y = +s.slice(0, 4), m = +s.slice(5, 7);
+  const start = m >= 4 ? y : y - 1;
+  return String(start).slice(2) + "-" + String(start + 1).slice(2);
+};
+const invSeq = (n) => +String(n == null ? "" : n).split("/").pop() || 0;
+
 const roleOf = (u) => ROLES[u && u.role] || ROLES["Field manager"];
 const addMonths = (iso, n) => {
   const p = String(iso || today()).slice(0, 10).split("-").map(Number);
@@ -722,6 +735,10 @@ const advanceRate = (o) => {
   return Math.min(100, Math.max(0, +raw));
 };
 
+/* Two-decimal rounding for rupee-and-paise figures, so a sum of them never
+   carries float noise like 3492.7200000000003 into a report or a CSV. */
+const r2 = (n) => Math.round(((+n || 0) + Number.EPSILON) * 100) / 100;
+
 const orderMath = (o) => {
   // Day-wise campaigns are quoted for a number of days with no fixed dates,
   // so the typed day count wins over anything left in the date fields.
@@ -741,20 +758,27 @@ const orderMath = (o) => {
   const outRate = +o.outRate || (outKm > 0 ? OUT_RATE_DEFAULT : 0);
   const outstation = Math.round(outRate * outKm);
   const sub = base + extras + outstation;
-  const gst = o.gst ? Math.round(sub * 0.18) : 0;
   /* Out-of-state customers are charged the same 18%, but as one IGST line
      instead of the CGST/SGST pair. `igst` is stamped on the campaign from the
      customer's state when it is saved, so every screen that only has the
      campaign in hand still prints the right tax. */
   const inter = !!o.igst;
-  // Split the ONE rounded GST figure, so CGST + SGST always equals the tax charged.
-  // Rounding 9% twice independently disagreed with the 18% total on ~half of all subtotals.
-  const cgst = inter ? 0 : Math.floor(gst / 2);
-  const sgst = inter ? 0 : gst - cgst;
-  const igst = inter ? gst : 0;
-  const total = sub + gst;
+  /* Tax is carried to the paisa, exactly as the tax invoice prints it (and as
+     Tally computes it): sub is a whole number of rupees, so 9% of it is a whole
+     number of paise — CGST and SGST are each sub × 9 paise, IGST sub × 18, with
+     no rounding step to disagree about. Only the grand total is rounded to the
+     rupee, and the difference is shown as its own Round Off line. The payable
+     total is the same figure it always was (sub + round(18%)); what is new is
+     that the tax columns now add up to the paisa on the invoice and in GSTR-1. */
+  const gst   = o.gst ? (sub * 18) / 100 : 0;
+  const cgst  = o.gst && !inter ? (sub * 9) / 100 : 0;
+  const sgst  = o.gst && !inter ? (sub * 9) / 100 : 0;
+  const igst  = o.gst && inter ? (sub * 18) / 100 : 0;
+  const gross = sub + gst;
+  const total = Math.round(gross);
+  const roundOff = r2(total - gross);
   const pct = advanceRate(o);
-  return { base, extras, sub, gst, cgst, sgst, igst, inter, total, days, outRate, outKm, outstation,
+  return { base, extras, sub, gst, cgst, sgst, igst, inter, total, roundOff, days, outRate, outKm, outstation,
            advance: Math.round((total * pct) / 100) };
 };
 
@@ -909,20 +933,23 @@ const termsForOrder = (s, o) => {
   });
 };
 
-/* The pre-sale document has three flavours — same layout, different heading
-   and number prefix — chosen per campaign (OrderForm's "Document type").
-   A tax invoice is never one of these; it has its own fixed heading below. */
-const DOC_KIND_LABEL  = { po: "PURCHASE ORDER", proforma: "PROFORMA INVOICE", quotation: "QUOTATION" };
-const DOC_KIND_PREFIX = { po: "PO# ", proforma: "Proforma# ", quotation: "Quotation# " };
+/* Quotation and proforma invoice share this two-page layout — different
+   heading, number and dates, taken from the pipeline (docNoOf). The tax
+   invoice is not one of them: it is its own single-page document, drawn by
+   taxInvoicePages() in the layout the accounts team already files. */
+const DOC_KIND_LABEL  = { proforma: "PROFORMA INVOICE", quotation: "QUOTATION" };
+const DOC_KIND_PREFIX = { proforma: "Proforma# ", quotation: "Quotation# " };
 
-const docPages = async ({ title, s, v, o, m }) => {
+const docPages = async ({ kind, s, v, o, m }) => {
+  if (kind === "invoice") return taxInvoicePages({ s, v, o, m });
   const M = 64, RIGHT = PAGE_W - M;
-  const isInvoice = title === "TAX INVOICE";
-  const docKind = DOC_KIND_LABEL[o.docType] ? o.docType : "quotation";
+  const isInvoice = false;
+  const docKind = kind === "proforma" ? "proforma" : "quotation";
   const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const logo = await inkLogo();
-  const docNo = o.invNo || o.no || "";
-  const docNoLabel = (isInvoice ? "Invoice# " : DOC_KIND_PREFIX[docKind]) + docNo;
+  const docNo = docNoOf(o, docKind);
+  const docNoLabel = DOC_KIND_PREFIX[docKind] + docNo;
+  const docDate = docKind === "proforma" ? (o.piDate || today()) : (o.qtDate || o.created || today());
 
   const footer = (g, n) => {
     g.fillStyle = DOC_ORANGE; g.fillRect(0, PAGE_H - 9, PAGE_W, 9);
@@ -955,7 +982,8 @@ const docPages = async ({ title, s, v, o, m }) => {
   const leftEnd = y;
 
   g.textAlign = "right";
-  g.fillStyle = DOC_ORANGE; F("800", 54);
+  // "PROFORMA INVOICE" is the longest heading; at full size it would run into the logo.
+  g.fillStyle = DOC_ORANGE; F("800", docKind === "proforma" ? 44 : 54);
   g.fillText(isInvoice ? "TAX INVOICE" : DOC_KIND_LABEL[docKind], RIGHT, 132);
   g.fillStyle = DOC_INK; F("600", 23);
   g.fillText(docNoLabel, RIGHT, 176);
@@ -983,22 +1011,28 @@ const docPages = async ({ title, s, v, o, m }) => {
   g.fillStyle = DOC_MUTE; F("700", 18); g.fillText("SUBJECT", M, y); y += 28;
   g.fillStyle = DOC_INK; F("500", 21);
   wrap(o.title || "Mobile Van Advertising campaign", RIGHT - M).forEach(l => { g.fillText(l, M, y); y += 27; });
+  // A proforma says what it follows: the quotation, and the customer's yes.
+  if (docKind === "proforma") {
+    g.fillStyle = DOC_MUTE; F("500", 19);
+    const ref = ["Against quotation " + docNoOf(o, "quotation"),
+      o.confirm ? "confirmed " + dmy(o.confirm.date) + " (" + o.confirm.how + ")" : "",
+      o.confirm && o.confirm.poNo ? "your PO " + o.confirm.poNo : ""].filter(Boolean).join(" · ");
+    wrap(ref, RIGHT - M).forEach(l => { g.fillText(l, M, y); y += 25; });
+  }
   y += 24;
 
   /* ---- the four facts a customer checks first ---- */
   const validTill = (() => {
-    const d = new Date(o.invDate || o.created || today());
+    const d = new Date(o.qtDate || o.created || today());
     if (isNaN(d.getTime())) return "—";
     d.setDate(d.getDate() + 15);
     return dmy(localDay(d));
   })();
   const meta = [
-    [isInvoice ? "Invoice Date" : "Quotation Date", dmy(o.invDate || o.created || today())],
-    // An invoice with no date on it is an invoice nobody chases. Print the date
-    // the customer's own credit terms make it due.
-    [isInvoice ? "Payment Due" : "Valid Till",
-     isInvoice ? (creditDaysOf(v) > 0 ? dmy(dueDateOf(o, v)) + " (" + creditDaysOf(v) + " days)" : dmy(dueDateOf(o, v)))
-               : validTill],
+    [docKind === "proforma" ? "Proforma Date" : "Quotation Date", dmy(docDate)],
+    // A quotation is an offer with a shelf life; a proforma is a request for
+    // the advance, payable before the vehicles go out.
+    [docKind === "proforma" ? "Payable" : "Valid Till", docKind === "proforma" ? "Advance before start" : validTill],
     ["Campaign Days", m.days + " day(s)"],
     ["Period", (o.dayWise || !o.start || !o.end) ? "Not specified" : dmy(o.start) + " to " + dmy(o.end)],
   ];
@@ -1060,16 +1094,19 @@ const docPages = async ({ title, s, v, o, m }) => {
      taxable line silently absorbs whatever paisa the rounding leaves over —
      the standard way a multi-line GST invoice keeps its columns exactly
      summing to the total already shown below. */
-  const totalGst = o.gst ? (m.inter ? m.igst : m.gst) : 0;
-  let gstLeft = totalGst;
+  // Worked in whole paise so the lines add up to the paisa: each line takes its
+  // share, and the last taxable line takes whatever the rounding left over.
+  const totalGstP = o.gst ? Math.round((m.inter ? m.igst : m.gst) * 100) : 0;
+  let gstLeftP = totalGstP;
   const taxableLines = items.filter(it => it.amt > 0);
-  items.forEach((it, i) => {
+  items.forEach((it) => {
     const isLastTaxable = it === taxableLines[taxableLines.length - 1];
-    it.gst = !o.gst || it.amt <= 0 ? 0
-      : isLastTaxable ? gstLeft
-      : Math.round((it.amt / m.sub) * totalGst);
-    if (o.gst && it.amt > 0 && !isLastTaxable) gstLeft -= it.gst;
-    it.total = it.amt + it.gst;
+    const shareP = !o.gst || it.amt <= 0 ? 0
+      : isLastTaxable ? gstLeftP
+      : Math.round((it.amt / m.sub) * totalGstP);
+    if (o.gst && it.amt > 0 && !isLastTaxable) gstLeftP -= shareP;
+    it.gst = shareP / 100;
+    it.total = r2(it.amt + it.gst);
   });
 
   items.forEach((it, idx) => {
@@ -1133,6 +1170,8 @@ const docPages = async ({ title, s, v, o, m }) => {
     if (m.inter) totRow("IGST 18%", money(m.igst));
     else { totRow("CGST 9%", money(m.cgst)); totRow("SGST 9%", money(m.sgst)); }
   }
+  // The payable total is a whole rupee; the paise it rounds off are shown, not hidden.
+  if (m.roundOff) totRow("Round Off", (m.roundOff > 0 ? "" : "-") + money(Math.abs(m.roundOff)));
   totRow(isInvoice ? "Total" : "Grand Total", money(m.total),
     { fill: "#3A3A3A", fg: "#fff", bold: true, h: 54, size: 23 });
   if (m.advance > 0) {
@@ -1163,7 +1202,7 @@ const docPages = async ({ title, s, v, o, m }) => {
   h2.fillStyle = DOC_INK; F2("500", 20);
   wrap2(s.invNotes || ("Thank you for the opportunity. We are committed to giving your brand the best "
     + "visibility on the road, every single day of the campaign. If you have any question about this "
-    + (isInvoice ? "invoice" : "quotation") + ", please call " + CONTACT.name + " on " + CONTACT.phone + "."),
+    + (docKind === "proforma" ? "proforma invoice" : "quotation") + ", please call " + CONTACT.name + " on " + CONTACT.phone + "."),
     RIGHT - M).forEach(l => { h2.fillText(l, M, y2); y2 += 27; });
   y2 += 34;
 
@@ -1207,6 +1246,311 @@ const docPages = async ({ title, s, v, o, m }) => {
     { url: P1.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H },
     { url: P2.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H },
   ];
+};
+
+/* ---------------------------- the tax invoice ----------------------------
+   Drawn in the layout the accounts team already files from Tally — one A4
+   page: seller and buyer on the left, the invoice particulars grid on the
+   right, then Sl No / Particulars / HSN / Quantity / Rate / per / Amount with
+   CGST, SGST and Round Off as their own lines under the items, the total in
+   words, an HSN/SAC tax summary, bank details and signature. The layout is
+   theirs; the logo and colours are ours. The buyer's PO number and the
+   proforma it follows come from the pipeline (o.confirm, o.piNo). */
+const MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dMonYY = (iso) => {
+  const s = String(iso || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return "";
+  return s.slice(8, 10) + "-" + MON3[+s.slice(5, 7) - 1] + "-" + s.slice(2, 4);
+};
+const dotDate = (iso) => (iso ? dmy(iso).replace(/\//g, ".") : "");
+const numTrim = (n) => Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+/* State name and code for the buyer — the GSTIN's own first two digits win over
+   the dropdown, exactly as isInterstate() decides the tax. */
+const stateParts = (v) => {
+  const st = stateOf(v).split("-");
+  const gstin = String((v && v.gst) || "").trim();
+  const code = /^\d{2}/.test(gstin) ? gstin.slice(0, 2) : st[0];
+  const hit = STATES.find(x => x.slice(0, 2) === code);
+  return { code, name: hit ? hit.split("-").slice(1).join("-") : (st[1] || "") };
+};
+const wholeWords = (amount) => {
+  let n = Math.round(Math.abs(+amount || 0));
+  if (!n) return "Zero";
+  const out = [];
+  const cr = Math.floor(n / 10000000); n %= 10000000;
+  const la = Math.floor(n / 100000);   n %= 100000;
+  const th = Math.floor(n / 1000);     n %= 1000;
+  if (cr) out.push(w999(cr) + " Crore");
+  if (la) out.push(w999(la) + " Lakh");
+  if (th) out.push(w999(th) + " Thousand");
+  if (n)  out.push(w999(n));
+  return out.join(" ");
+};
+/* "INR Three Thousand Four Hundred Ninety Two and Seventy Two paise Only" */
+const inrWords = (amount) => {
+  const p = Math.round(Math.abs(+amount || 0) * 100);
+  const r = Math.floor(p / 100), ps = p % 100;
+  return "INR " + wholeWords(r) + (ps ? " and " + w99(ps) + " paise" : "") + " Only";
+};
+
+const taxInvoicePages = async ({ s, v, o, m }) => {
+  const logo = await inkLogo();
+  const P = newDocPage(), g = P.g, wrap = P.wrap;
+  const X0 = 50, X1 = PAGE_W - 50, W = X1 - X0;
+  const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const gstOn = !!o.gst;
+  const rule = (x1, y1, x2, y2, w, c) => { g.strokeStyle = c || DOC_INK; g.lineWidth = w || 1.2; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); };
+  const T = (str, x, y, opt) => {
+    const q = opt || {};
+    g.font = (q.italic ? "italic " : "") + (q.w || "500") + " " + (q.size || 19) + "px " + DOC_FONT;
+    g.fillStyle = q.color || DOC_INK; g.textAlign = q.align || "left";
+    g.fillText(String(str), x, y);
+  };
+  // Shrink a value until it fits its cell, rather than running into the next one.
+  const fit = (str, maxW, size, w) => {
+    let z = size;
+    g.font = (w || "700") + " " + z + "px " + DOC_FONT;
+    while (z > 13 && g.measureText(String(str)).width > maxW) { z -= 1; g.font = (w || "700") + " " + z + "px " + DOC_FONT; }
+    return z;
+  };
+
+  /* ---- header: logo, title, and the brand bars ---- */
+  g.fillStyle = DOC_ORANGE; g.fillRect(0, 0, PAGE_W, 12);
+  if (logo) {
+    const lw = 400, lh = Math.round(lw * logo.height / logo.width);
+    g.drawImage(logo, X0, 40, lw, lh);
+  } else T((s.company || "Vibe Marketing").toUpperCase(), X0, 86, { w:"800", size:34 });
+  T(gstOn ? "TAX INVOICE" : "INVOICE", X1, 92, { w:"800", size:46, color:DOC_ORANGE, align:"right" });
+  T("Original for Recipient", X1, 124, { size:18, color:DOC_MUTE, align:"right" });
+
+  /* ---- the main box ---- */
+  const BY = 160, A_H = 400, LW = 610, RX = X0 + LW, CW = (X1 - RX) / 2;
+  const seller = stateParts({ state: (s.placeOfSupply || HOME_STATE), gst: s.gstin });
+  const buyer = stateParts(v);
+
+  // seller
+  let ty = BY + 38;
+  T(s.company || "Vibe Marketing", X0 + 14, ty, { w:"800", size:26 }); ty += 32;
+  g.font = "500 18px " + DOC_FONT;
+  [].concat(wrap(s.address || "", LW - 28),
+            s.gstin ? ["GSTIN/UIN: " + s.gstin] : [],
+            ["State Name : " + seller.name + ", Code : " + seller.code],
+            CONTACT.email ? ["E-Mail : " + CONTACT.email] : [])
+    .forEach(l => { T(l, X0 + 14, ty, { size:18 }); ty += 25; });
+  rule(X0, BY + 196, RX, BY + 196);
+
+  // buyer
+  ty = BY + 196 + 28;
+  T("Buyer (Bill to)", X0 + 14, ty, { size:17, color:DOC_MUTE }); ty += 34;
+  T(v ? v.name : "—", X0 + 14, ty, { w:"800", size:25 }); ty += 30;
+  g.font = "500 19px " + DOC_FONT;
+  [].concat(wrap((v && v.area) || "", LW - 28))
+    .filter(Boolean).forEach(l => { T(l, X0 + 14, ty, { size:19 }); ty += 25; });
+  if (v && v.gst) { T("GSTIN/UIN", X0 + 14, ty, { size:19 }); T(": " + v.gst, X0 + 150, ty, { size:19, w:"700" }); ty += 25; }
+  T("State Name", X0 + 14, ty, { size:19 }); T(": " + buyer.name + ", Code : " + buyer.code, X0 + 150, ty, { size:19 }); ty += 25;
+  if (v && v.person) { T("Attn", X0 + 14, ty, { size:19 }); T(": " + v.person, X0 + 150, ty, { size:19 }); ty += 25; }
+
+  // the particulars grid
+  const invDate = o.invDate || today();
+  const proformaNo = (o.piNo || (!o.flow && o.no)) ? docNoOf(o, "proforma") : "";
+  const refText = proformaNo ? proformaNo + (o.piDate ? " dt. " + dMonYY(o.piDate) : "") : "";
+  const terms = creditDaysOf(v) > 0 ? creditDaysOf(v) + " days" : "On completion";
+  const period = (o.start && o.end) ? "Campaign period: " + dotDate(o.start) + " to " + dotDate(o.end) : "";
+  const cells = [
+    [["Invoice No.", String(o.invNo || ""), true], ["Dated", dMonYY(invDate), true]],
+    [["Delivery Note", ""], ["Mode/Terms of Payment", terms]],
+    [["Reference No. & Date.", refText], ["Other References", o.no ? "Campaign " + o.no : ""]],
+    [["Buyer's Order No.", (o.confirm && o.confirm.poNo) || ""], ["Dated", (o.confirm && o.confirm.poDate) ? dMonYY(o.confirm.poDate) : ""]],
+    [["Dispatch Doc No.", ""], ["Delivery Note Date", ""]],
+    [["Dispatched through", ""], ["Destination", ""]],
+  ];
+  const RH = 56;
+  cells.forEach((row, ri) => {
+    row.forEach((c, ci) => {
+      const cx = RX + ci * CW, cy = BY + ri * RH;
+      T(c[0], cx + 10, cy + 22, { size:16, color:DOC_MUTE });
+      if (c[1]) { const z = fit(c[1], CW - 20, c[2] ? 21 : 19); T(c[1], cx + 10, cy + 47, { w:"700", size:z }); }
+    });
+    rule(RX, BY + (ri + 1) * RH, X1, BY + (ri + 1) * RH, 1);
+  });
+  rule(RX + CW, BY, RX + CW, BY + 6 * RH, 1);
+  T("Terms of Delivery", RX + 10, BY + 6 * RH + 22, { size:16, color:DOC_MUTE });
+  if (period) T(period, RX + 10, BY + 6 * RH + 50, { w:"600", size:18 });
+  rule(RX, BY, RX, BY + A_H);
+
+  /* ---- what is being charged ---- */
+  const c = [X0, X0 + 62, X0 + 592, X0 + 712, X0 + 832, X0 + 932, X0 + 992, X1];
+  const HY = BY + A_H, HH = 44;
+  rule(X0, HY, X1, HY);
+  g.fillStyle = DOC_INK; g.fillRect(X0, HY, W, HH);
+  const th = (str, x, al) => T(str, x, HY + 29, { w:"700", size:18, color:"#fff", align:al || "center" });
+  th("Sl", (c[0] + c[1]) / 2); th("Particulars", (c[1] + c[2]) / 2); th("HSN/SAC", (c[2] + c[3]) / 2);
+  th("Quantity", (c[3] + c[4]) / 2); th("Rate", (c[4] + c[5]) / 2); th("per", (c[5] + c[6]) / 2); th("Amount", (c[6] + c[7]) / 2);
+
+  const hsnMain = s.sac || "998365", hsnFlex = s.sacFlex || "998912";
+  const veh = +o.vehicles || 0;
+  const items = [];
+  if (m.base > 0) items.push({
+    title: "Campaign - " + (o.title || "Mobile Van Advertising"),
+    lines: [o.route ? "Route: " + o.route : "",
+            (o.start && o.end) ? "From " + dotDate(o.start) + " to " + dotDate(o.end) : "",
+            "No of Days - " + m.days + " Days",
+            veh > 1 ? "No of Vehicle - " + veh + " Nos" : "",
+            "Per Day - " + numTrim(o.rate) + (veh > 1 ? " per vehicle" : "")].filter(Boolean),
+    sac: hsnMain, qty: veh === 1 ? m.days + " Days" : veh + " × " + m.days, rate: numTrim(o.rate), per: "Day", amt: m.base });
+  if (m.extras > 0) {
+    const each = veh > 0 ? m.extras / veh : 0;
+    const even = veh > 0 && Number.isInteger(each);
+    items.push({
+      title: "Fabrication Work with Flex",
+      lines: [+o.fabrication > 0 && +o.flex > 0 ? "Fabrication " + numTrim(o.fabrication) + " + Flex printing " + numTrim(o.flex) : "",
+              even ? "Per Vehicle - " + numTrim(each) : "",
+              veh > 0 ? "No of Vehicle - " + veh + " Nos" : ""].filter(Boolean),
+      sac: hsnFlex, qty: even ? veh + " Nos" : "", rate: even ? numTrim(each) : "", per: even ? "Nos" : "", amt: m.extras });
+  }
+  if (m.outstation > 0) items.push({
+    title: "Transport Charges" + (gstOn ? " - GST" : ""),
+    lines: ["Outstation running - " + m.outKm + " KM", "Total - " + m.outKm + " × " + numTrim(m.outRate)],
+    sac: hsnMain, qty: m.outKm + " KM", rate: numTrim(m.outRate), per: "KM", amt: m.outstation });
+
+  // Everything below the items is anchored to the foot of the page, so the
+  // total, the words, the HSN table and the signature always land in the same
+  // place and only the blank space between items and total gives.
+  const groups = {};
+  items.forEach(it => { groups[it.sac] = (groups[it.sac] || 0) + it.amt; });
+  const hsnRows = Object.keys(groups);
+  const SIGN_H = 250, BOT = 1690;
+  const signTop = BOT - SIGN_H;
+  const twH = gstOn ? 50 : 0;
+  const hsnH = gstOn ? 70 + 34 * hsnRows.length + 34 : 0;
+  const wordsTop = signTop - twH - hsnH - 74;
+  const Ttop = wordsTop - 62;
+
+  let y = HY + HH + 10;
+  items.forEach((it, i) => {
+    T(String(i + 1), (c[0] + c[1]) / 2, y + 24, { w:"600", size:20, align:"center" });
+    T(it.title, c[1] + 16, y + 24, { w:"800", size:22 });
+    let ly = y + 24;
+    it.lines.forEach(l => { ly += 25; T(l, c[1] + 16, ly, { italic:true, size:18, color:DOC_MUTE }); });
+    T(it.sac, (c[2] + c[3]) / 2, y + 24, { size:19, align:"center" });
+    if (it.qty)  T(it.qty,  (c[3] + c[4]) / 2, y + 24, { size:19, align:"center" });
+    if (it.rate) T(it.rate, c[5] - 10, y + 24, { size:19, align:"right" });
+    if (it.per)  T(it.per,  (c[5] + c[6]) / 2, y + 24, { size:18, align:"center" });
+    T(money(it.amt), c[7] - 12, y + 24, { w:"800", size:21, align:"right" });
+    y = ly + 22;
+  });
+  // tax and round-off lines, in the Particulars column exactly as Tally sets them
+  const taxLine = (label, pct, amt) => {
+    T(label, c[2] - 16, y + 22, { w:"800", size:21, align:"right" });
+    if (pct) { T(pct, c[5] - 10, y + 22, { size:19, align:"right" }); T("%", c[5] + 10, y + 22, { size:19 }); }
+    T(money(amt), c[7] - 12, y + 22, { w:"800", size:21, align:"right" });
+    y += 34;
+  };
+  if (gstOn) {
+    if (m.inter) taxLine("IGST 18% Collection", "18", m.igst);
+    else { taxLine("CGST 9% Collection", "9", m.cgst); taxLine("SGST 9% Collection", "9", m.sgst); }
+  }
+  if (m.roundOff) {
+    T("Round Off", c[1] + 16, y + 22, { w:"800", size:21 });
+    T((m.roundOff < 0 ? "-" : "") + money(Math.abs(m.roundOff)), c[7] - 12, y + 22, { w:"800", size:21, align:"right" });
+    y += 34;
+  }
+
+  // the body's column rules, then the total row
+  for (let i = 1; i < 7; i++) rule(c[i], HY + HH, c[i], Ttop);
+  rule(X0, Ttop, X1, Ttop);
+  g.fillStyle = "#FFF6EC"; g.fillRect(X0, Ttop, W, 62);
+  rule(X0, Ttop, X1, Ttop); rule(X0, Ttop + 62, X1, Ttop + 62);
+  T("Total", c[2] - 16, Ttop + 40, { w:"600", size:21, align:"right" });
+  T("₹ " + money(m.total), c[7] - 12, Ttop + 44, { w:"800", size:32, color:DOC_ORANGE, align:"right" });
+
+  // amount in words
+  T("Amount Chargeable (in words)", X0 + 14, wordsTop + 26, { size:17, color:DOC_MUTE });
+  T("E. & O.E", X1 - 14, wordsTop + 26, { italic:true, size:17, color:DOC_MUTE, align:"right" });
+  const aw = inrWords(m.total);
+  T(aw, X0 + 14, wordsTop + 58, { w:"800", size:fit(aw, W - 28, 22, "800") });
+
+  // HSN/SAC tax summary + tax in words
+  if (gstOn) {
+    const hy = wordsTop + 74;
+    rule(X0, hy, X1, hy);
+    const cw = m.inter ? [300, 260, 110, 240, 230] : [240, 200, 90, 170, 90, 170, 180];
+    const xs = [X0]; cw.forEach(w => xs.push(xs[xs.length - 1] + w));
+    const hh = (a, b, x, al) => T(a, x, b, { w:"700", size:17, align:al || "center" });
+    const mid = (i, j) => (xs[i] + xs[j]) / 2;
+    hh("HSN/SAC", hy + 40, mid(0, 1)); hh("Taxable", hy + 26, mid(1, 2)); hh("Value", hy + 50, mid(1, 2));
+    if (m.inter) {
+      hh("IGST", hy + 24, mid(2, 4)); rule(xs[2], hy + 34, xs[4], hy + 34, 1);
+      hh("Rate", hy + 56, mid(2, 3)); hh("Amount", hy + 56, mid(3, 4));
+      hh("Total", hy + 26, mid(4, 5)); hh("Tax Amount", hy + 50, mid(4, 5));
+    } else {
+      hh("CGST", hy + 24, mid(2, 4)); rule(xs[2], hy + 34, xs[4], hy + 34, 1);
+      hh("SGST/UTGST", hy + 24, mid(4, 6)); rule(xs[4], hy + 34, xs[6], hy + 34, 1);
+      hh("Rate", hy + 56, mid(2, 3)); hh("Amount", hy + 56, mid(3, 4)); hh("Rate", hy + 56, mid(4, 5)); hh("Amount", hy + 56, mid(5, 6));
+      hh("Total", hy + 26, mid(6, 7)); hh("Tax Amount", hy + 50, mid(6, 7));
+    }
+    let ry = hy + 70;
+    rule(X0, ry, X1, ry);
+    const row = (label, taxable, bold) => {
+      const w = bold ? "800" : "500";
+      if (bold) T(label, xs[1] - 12, ry + 24, { w, size:19, align:"right" });
+      else T(label, X0 + 14, ry + 24, { w, size:19 });
+      T(money(taxable), xs[2] - 10, ry + 24, { w, size:19, align:"right" });
+      if (m.inter) {
+        T(bold ? "" : "18%", xs[3] - 10, ry + 24, { size:19, align:"right" });
+        T(money((taxable * 18) / 100), xs[4] - 10, ry + 24, { w, size:19, align:"right" });
+        T(money((taxable * 18) / 100), xs[5] - 10, ry + 24, { w, size:19, align:"right" });
+      } else {
+        T(bold ? "" : "9%", xs[3] - 10, ry + 24, { size:19, align:"right" });
+        T(money((taxable * 9) / 100), xs[4] - 10, ry + 24, { w, size:19, align:"right" });
+        T(bold ? "" : "9%", xs[5] - 10, ry + 24, { size:19, align:"right" });
+        T(money((taxable * 9) / 100), xs[6] - 10, ry + 24, { w, size:19, align:"right" });
+        T(money((taxable * 18) / 100), xs[7] - 10, ry + 24, { w, size:19, align:"right" });
+      }
+      ry += 34; rule(X0, ry, X1, ry);
+    };
+    hsnRows.forEach(h => row(h, groups[h], false));
+    row("Total", m.sub, true);
+    // The rule between a group's Rate and Amount starts under the group label.
+    for (let i = 1; i < cw.length; i++) {
+      const inGroup = m.inter ? i === 3 : (i === 3 || i === 5);
+      rule(xs[i], inGroup ? hy + 34 : hy, xs[i], ry, 1);
+    }
+    // tax amount in words
+    const ay = wordsTop + 74 + hsnH;
+    T("Tax Amount (in words) :", X0 + 14, ay + 32, { size:18 });
+    const tw = inrWords(m.gst);
+    T(tw, X0 + 250, ay + 32, { w:"800", size:fit(tw, W - 264, 20, "800") });
+  }
+
+  // bank details, terms and the signature
+  rule(X0, signTop, X1, signTop);
+  rule(RX, signTop, RX, BOT);
+  T("Terms & Conditions", X0 + 14, signTop + 30, { w:"800", size:17, color:DOC_ORANGE });
+  let tyy = signTop + 58;
+  g.font = "500 16px " + DOC_FONT;
+  termsForOrder(s, o).forEach(line => {
+    const body = line.replace(/^\s*\d+[.)]\s*/, "");
+    wrap(body, LW - 44).forEach((l, k) => { if (tyy < BOT - 14) { T((k === 0 ? "• " : "  ") + l, X0 + 14, tyy, { size:16, color:DOC_MUTE }); tyy += 21; } });
+  });
+  T("Company's Bank Details", RX + 14, signTop + 30, { w:"800", size:17, color:DOC_ORANGE });
+  let by2 = signTop + 60;
+  [["A/c Holder's Name", s.bankHolder || s.company || ""], ["Bank Name", s.bankName], ["A/c No.", s.bankAcNo],
+   ["Branch & IFS Code", [s.bankBranch, s.bankIFSC].filter(Boolean).join(" & ")]]
+    .filter(r => r[1]).forEach(r => {
+      T(r[0], RX + 14, by2, { size:17, color:DOC_MUTE });
+      T(": " + r[1], RX + 200, by2, { w:"700", size:fit(": " + r[1], X1 - RX - 214, 18) });
+      by2 += 28;
+    });
+  T("for " + (s.company || "Vibe Marketing"), X1 - 14, signTop + 192, { w:"800", size:21, align:"right" });
+  T("Authorised Signatory", X1 - 14, BOT - 14, { size:18, color:DOC_MUTE, align:"right" });
+
+  // outer frame, footer and the bottom brand bar
+  g.strokeStyle = DOC_INK; g.lineWidth = 1.8; g.strokeRect(X0, BY, W, BOT - BY);
+  T("This is a Computer Generated Invoice", PAGE_W / 2, BOT + 34, { size:18, color:DOC_MUTE, align:"center" });
+  g.fillStyle = DOC_ORANGE; g.fillRect(0, PAGE_H - 12, PAGE_W, 12);
+
+  return [{ url: P.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H }];
 };
 
 /* Wrap the drawn pages in a PDF: one full-page JPEG per page. Offsets are
@@ -1405,9 +1749,16 @@ const creditNotePage = async ({ s, v, o, cn }) => {
 };
 
 /* ---------------------------- message templates ---------------------------- */
-const proformaText = (o, v, m) =>
+const proformaText = (o, v, m, kind) => {
+  const k = kind || "proforma";
+  const head = k === "quotation" ? "Quotation " + docNoOf(o, "quotation")
+    : k === "invoice" ? "Tax invoice " + docNoOf(o, "invoice")
+    : "Proforma invoice " + docNoOf(o, "proforma");
+  return _proformaLines(o, v, m, k, head);
+};
+const _proformaLines = (o, v, m, k, head) =>
   ["*VIBE MARKETING* — Mobile Van Advertising",
-   "Proforma invoice " + o.no,
+   head,
    "To: " + (v ? v.name : "—"),
    "",
    "Campaign: " + o.title,
@@ -1423,18 +1774,20 @@ const proformaText = (o, v, m) =>
    o.gst ? "GST 18%: " + inr(m.gst) : "",
    "TOTAL: " + inr(m.total),
    // Say it here too — the same warning that is boxed on the quotation.
-   m.outstation ? "" :
+   (m.outstation || k === "invoice") ? "" :
      "\nNOTE: For outstation campaigns (outside Coimbatore), transport is charged extra at "
        + inr(quotedOutRate(o)) + " per kilometre, measured after the campaign and billed in the final invoice.",
    "",
-   "Advance to start work (" + advanceRate(o) + "%): " + inr(m.advance),
-   "Balance on completion: " + inr(m.total - m.advance),
+   k === "invoice" ? "Amount due: " + inr(m.total) : "Advance to start work (" + advanceRate(o) + "%): " + inr(m.advance),
+   k === "invoice" ? "" : "Balance on completion: " + inr(m.total - m.advance),
    "",
-   "Reply CONFIRM and we will block the vehicles for your dates.",
+   k === "quotation" ? "Reply CONFIRM and we will block the vehicles for your dates."
+     : k === "proforma" ? "Please pay the advance to confirm the booking — we will block the vehicles for your dates as soon as it reaches us."
+     : "Thank you for your business.",
    signOff()].filter(Boolean).join("\n");
 
 const reminderText = (o, v, m, days) =>
-  "Hello " + (v ? v.person || v.name : "") + ", gentle reminder on proforma " + o.no + " for \"" + o.title +
+  "Hello " + (v ? v.person || v.name : "") + ", gentle reminder on quotation " + docNoOf(o, "quotation") + " for \"" + o.title +
   "\" (" + inr(m.total) + "), sent " + days + " days back. Shall we block " + o.vehicles +
   (o.dayWise || !o.start ? " vehicles for " + m.days + " days?\n" + signOff()
                          : " vehicles from " + dmy(o.start) + "?\n" + signOff());
@@ -1995,7 +2348,7 @@ function VendorForm({ init, canDel = true, onSave, onDelete, onClose }) {
         <F label="GSTIN"><input value={f.gst} onChange={u("gst")} /></F>
       </div>
       <F label="Email (for invoices)"><input value={f.email} onChange={u("email")} inputMode="email" /></F>
-      <F label="Area / address"><input value={f.area} onChange={u("area")} /></F>
+      <F label="Address (as it should print on the invoice)"><textarea rows={3} value={f.area} onChange={u("area")} placeholder={"19 A, 11-D, Vedapatti Road,\nTelungupalayam, Coimbatore"} /></F>
       <div className="vz-2">
         <F label="State (place of supply)">
           <select value={f.state || HOME_STATE} onChange={u("state")}>
@@ -2078,7 +2431,7 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
   const [f, set] = useState(init || {
     title:"", vendorId: vendors[0]?.id || "", vehicles:1, rate:1900, months:0,
     fabrication:0, flex:0, gst:true, advancePct:50, start:today(), end:"", route:"", stage:"Proforma", vehicleIds:[], sends:[],
-    docType:"proforma",
+    flow:2,   // raised under the quotation → confirmation → proforma → tax invoice pipeline
     // Left blank on purpose: every quotation states the standing rate anyway,
     // so this is only filled in to quote one customer something different.
     outRate: "",
@@ -2097,14 +2450,7 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
   return (
     <Sheet title={init ? "Edit campaign" : "New campaign"} onClose={onClose}>
       <F label="Campaign name"><input value={f.title} onChange={u("title")} placeholder="Aadi offer 25%" /></F>
-      <F label="Vendor"><select value={f.vendorId} onChange={u("vendorId")}>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></F>
-      <F label="Document type">
-        <select value={f.docType || "proforma"} onChange={u("docType")}>
-          <option value="po">Purchase order</option>
-          <option value="proforma">Proforma invoice</option>
-          <option value="quotation">Quotation</option>
-        </select>
-      </F>
+      <F label="Customer"><select value={f.vendorId} onChange={u("vendorId")}>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></F>
       <div className="vz-2">
         <F label="Vehicles"><input type="number" value={f.vehicles} onChange={num("vehicles")} inputMode="numeric" min="0" /></F>
         <F label="Rate / vehicle / day"><input type="number" value={f.rate} onChange={num("rate")} inputMode="numeric" min="0" /></F>
@@ -2171,13 +2517,13 @@ function OrderForm({ init, vendors, settings = {}, onSave, onClose }) {
           </div>
         )}
         <div className="vz-kv"><span>GST</span><b className="vz-money">{inr(m.gst)}</b></div>
-        <div className="vz-kv"><span style={{ fontWeight:700, color:"#12192A" }}>Proforma total</span><b className="vz-money" style={{ fontSize:16 }}>{inr(m.total)}</b></div>
+        <div className="vz-kv"><span style={{ fontWeight:700, color:"#12192A" }}>Quotation total</span><b className="vz-money" style={{ fontSize:16 }}>{inr(m.total)}</b></div>
         <div className="vz-kv"><span>Advance to start</span><b className="vz-money">{inr(m.advance)}</b></div>
       </div>
       <button className="vz-btn" disabled={!f.title.trim() || m.days <= 0 || (!f.dayWise && (!f.start || !f.end))}
         onClick={() => onSave({ ...f, id: f.id || uid(), days: m.days, months: Math.max(1, Math.round(m.days / 30)),
           start: f.dayWise ? "" : f.start, end: f.dayWise ? "" : f.end })}>
-        {init ? "Save changes" : "Raise proforma invoice"}
+        {init ? "Save changes" : "Create campaign & quotation"}
       </button>
       {(!f.start || !f.end || m.days <= 0) && <div className="vz-meta">Pick a start and end date — the campaign length in days is worked out automatically.</div>}
     </Sheet>
@@ -2269,6 +2615,41 @@ function KmLogForm({ init, vehicles, defaultVehicleId, onSave, onDelete, onClose
         Save
       </button>
       {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete this entry</button>}
+    </Sheet>
+  );
+}
+
+/* The customer saying yes. Recorded once per campaign — how they confirmed
+   and, when they sent one, their own purchase-order number and date (it is
+   printed on the tax invoice as "Buyer's Order No."). Saving it is what
+   unlocks the proforma invoice and, later, the tax invoice. */
+function ConfirmForm({ order, vendor, onSave, onClose }) {
+  const c0 = order.confirm || {};
+  const [f, set] = useState({
+    date: c0.date || today(), how: c0.how || CONFIRM_HOW[0], poNo: c0.poNo || "", poDate: c0.poDate || "", note: c0.note || "",
+  });
+  const u = (k) => (e) => set({ ...f, [k]: e.target.value });
+  return (
+    <Sheet title="Customer confirmation" onClose={onClose}>
+      <div className="vz-meta" style={{ marginTop:0 }}>
+        {(vendor ? vendor.name : "The customer") + " — " + order.title + " · " + docNoOf(order, "quotation")}
+      </div>
+      <div className="vz-2">
+        <F label="Confirmed on"><input type="date" value={f.date} max={today()} onChange={u("date")} /></F>
+        <F label="How"><select value={f.how} onChange={u("how")}>{CONFIRM_HOW.map(h => <option key={h}>{h}</option>)}</select></F>
+      </div>
+      <div className="vz-2">
+        <F label="Their PO number (if any)"><input value={f.poNo} onChange={u("poNo")} placeholder="e.g. WD/PO/0456" /></F>
+        <F label="PO date"><input type="date" value={f.poDate} onChange={u("poDate")} /></F>
+      </div>
+      <F label="Note (optional)"><input value={f.note} onChange={u("note")} placeholder="who confirmed, any change agreed" /></F>
+      <button className="vz-btn go" disabled={!f.date}
+        onClick={() => onSave({ date: f.date, how: f.how, poNo: f.poNo.trim(), poDate: f.poDate, note: f.note.trim() })}>
+        {order.confirm ? "Save changes" : "Confirm campaign"}
+      </button>
+      <div className="vz-meta">
+        This unlocks the proforma invoice for the advance. The tax invoice comes later, once the work is done.
+      </div>
     </Sheet>
   );
 }
@@ -2547,8 +2928,11 @@ function ChangePwSheet({ onSave, onClose }) {
 function PayLinkSheet({ order, vendor, math, paid, busy, status, onCreate, onClose }) {
   const due = Math.max(0, math.total - paid);
   const advanceLeft = Math.max(0, math.advance - paid);
-  const [kind, setKind] = useState(paid > 0 ? "Balance" : "Advance");
-  const [amount, setAmount] = useState(String(paid > 0 ? due : (math.advance || due)));
+  // Once a tax invoice exists the link is for getting that invoice paid — the
+  // whole amount still due — not the advance the proforma asked for.
+  const invoiced = hasInvoice(order);
+  const [kind, setKind] = useState(invoiced ? (paid > 0 ? "Balance" : "Full payment") : (paid > 0 ? "Balance" : "Advance"));
+  const [amount, setAmount] = useState(String(invoiced || paid > 0 ? due : (math.advance || due)));
   const preset = (label, value) => (
     <button className="vz-chip c-blue" onClick={() => { setKind(label); setAmount(String(value)); }}>{label} · {inr(value)}</button>
   );
@@ -2584,7 +2968,7 @@ function PayLinkSheet({ order, vendor, math, paid, busy, status, onCreate, onClo
 
       <div className="vz-eyebrow">Quick amounts</div>
       <div className="vz-inline" style={{ flexWrap:"wrap", marginBottom:12 }}>
-        {advanceLeft > 0 && preset("Advance", advanceLeft)}
+        {advanceLeft > 0 && !invoiced && preset("Advance", advanceLeft)}
         {paid > 0 && due > 0 && preset("Balance", due)}
         {math.total > 0 && preset("Full payment", math.total)}
       </div>
@@ -2803,11 +3187,15 @@ const weekLabel = (satStr) => {
    charged so the month's GST comes out right. */
 const cnMath = (order, taxable) => {
   const sub = Math.max(0, Math.round(+taxable || 0));
-  const gst = order && order.gst ? Math.round(sub * 0.18) : 0;
   const inter = !!(order && order.igst);
-  const cgst = inter ? 0 : Math.floor(gst / 2);
-  const sgst = inter ? 0 : gst - cgst;
-  return { sub, gst, cgst, sgst, igst: inter ? gst : 0, inter, total: sub + gst };
+  const taxed = !!(order && order.gst);
+  const gst  = taxed ? (sub * 18) / 100 : 0;
+  const cgst = taxed && !inter ? (sub * 9) / 100 : 0;
+  const sgst = taxed && !inter ? (sub * 9) / 100 : 0;
+  const igst = taxed && inter ? (sub * 18) / 100 : 0;
+  const gross = sub + gst;
+  const total = Math.round(gross);
+  return { sub, gst, cgst, sgst, igst, inter, total, roundOff: r2(total - gross) };
 };
 const notesFor = (db, orderId) => (db.creditNotes || []).filter(c => c.orderId === orderId);
 const creditedOn = (db, orderId) => notesFor(db, orderId).reduce((s, c) => s + (+c.total || 0), 0);
@@ -2883,6 +3271,7 @@ const LEDGERS = {
   wages:  "Wages & Batta",
   cash:   "Cash",
   bank:   "Bank",
+  roundoff: "Round Off",
 };
 const modeLedger = (mode) => /cash/i.test(String(mode || "")) ? LEDGERS.cash : LEDGERS.bank;
 
@@ -2902,6 +3291,11 @@ const dayBook = (db, month) => {
       if (b.igst > 0) lines.push({ cr: LEDGERS.igst, amount: b.igst });
       if (b.cgst > 0) lines.push({ cr: LEDGERS.cgst, amount: b.cgst });
       if (b.sgst > 0) lines.push({ cr: LEDGERS.sgst, amount: b.sgst });
+      // The invoice total is rounded to the rupee; the paise that rounding
+      // adds or takes off is its own line, so the voucher still balances.
+      const ro = r2(b.total - b.sub - (+b.cgst || 0) - (+b.sgst || 0) - (+b.igst || 0));
+      if (ro > 0) lines.push({ cr: LEDGERS.roundoff, amount: ro });
+      if (ro < 0) lines.push({ dr: LEDGERS.roundoff, amount: -ro });
       out.push({ id: "sal_" + o.id + "_" + b.id, date: b.date, type: "Sales", ref: "#" + b.invNo,
                  party, narration: o.title || o.no, amount: b.total, lines });
     });
@@ -2916,6 +3310,9 @@ const dayBook = (db, month) => {
     if (c.igst > 0) lines.push({ dr: LEDGERS.igst, amount: c.igst });
     if (c.cgst > 0) lines.push({ dr: LEDGERS.cgst, amount: c.cgst });
     if (c.sgst > 0) lines.push({ dr: LEDGERS.sgst, amount: c.sgst });
+    const cro = r2(c.total - c.sub - (+c.cgst || 0) - (+c.sgst || 0) - (+c.igst || 0));
+    if (cro > 0) lines.push({ dr: LEDGERS.roundoff, amount: cro });
+    if (cro < 0) lines.push({ cr: LEDGERS.roundoff, amount: -cro });
     lines.push({ cr: party, amount: c.total });
     out.push({ id: "cn_" + c.id, date: c.date, type: "Credit Note", ref: c.no,
                party, narration: c.reason || "", amount: c.total, lines });
@@ -2977,13 +3374,50 @@ const billsOf = (o, v) => {
     const m = orderMath(o);
     return [{ id: "whole", invNo: o.invNo, date: o.invDate || o.created, dueDate: dueDateOf(o, v),
               from: o.start || "", to: o.end || "", sub: m.sub, gst: m.gst, cgst: m.cgst, sgst: m.sgst,
-              igst: m.igst, inter: m.inter, total: m.total, whole: true }];
+              igst: m.igst, inter: m.inter, total: m.total, roundOff: m.roundOff, whole: true }];
   }
   return [];
 };
 const billedTotal = (o, v) => billsOf(o, v).reduce((s, b) => s + (+b.total || 0), 0);
 /* How a campaign is billed: its own setting, falling back to the customer's. */
 const billingOf = (o, v) => (o && o.billing) || (v && v.billing) || "end";
+
+/* ---------------------------- the document pipeline ----------------------------
+   A campaign moves through four documents, in this order, and each one has its
+   own number so no two can be mistaken for each other:
+
+     1. Quotation        QT/26-27/003   the price offer — no commitment
+     2. Confirmation     (recorded)     the customer says yes: by purchase order,
+                                        WhatsApp, email, a signed copy… — this is
+                                        where a customer's PO number is kept
+     3. Proforma invoice PI/26-27/003   sent only after confirmation, to collect
+                                        the advance — not a tax document
+     4. Tax invoice      26-27/42       raised once the work is done; the only
+                                        one that carries GST and reaches GSTR-1
+
+   Campaigns raised before this pipeline existed (no `flow` on them) keep their
+   one old number for both the quotation and the proforma, exactly as printed
+   before, and take the new rules from here on. */
+const stageLabel = (s) => (s === "Proforma" ? "Quotation" : s);   // the stored value is old; the word is new
+const hasInvoice = (o) => !!(o && (o.invNo || (o.parts || []).length));
+const isConfirmed = (o) => !!(o && (o.confirm || ORDER_STAGES.indexOf(o.stage) >= 1));
+const docNoOf = (o, kind) =>
+  kind === "quotation" ? ((o && o.qtNo) || (o && o.no) || "")
+  : kind === "proforma" ? ((o && o.piNo) || (o && o.no) || "")
+  : String((o && o.invNo) || "");
+const CONFIRM_HOW = ["Purchase order received", "Signed quotation", "WhatsApp message", "Email", "Phone call", "In person"];
+
+/* Whether a tax invoice may be raised now, and if not, the one thing to do. */
+const invoiceGate = (o, v) => {
+  if (!isConfirmed(o)) return { ok:false, why:"The customer hasn't confirmed yet — record their confirmation first." };
+  const st = o.stage;
+  if (billingOf(o, v) === "monthly") {
+    return (st === "Running" || st === "Completed") ? { ok:true }
+      : { ok:false, why:"This campaign is billed month by month — start it running first, then raise each month's invoice." };
+  }
+  return st === "Completed" ? { ok:true }
+    : { ok:false, why:"A tax invoice is raised once the work is done — mark the campaign completed first." };
+};
 
 /* The next unbilled slice of a monthly campaign: from the day after the last
    billed period to the end of that calendar month, clipped to the campaign. */
@@ -3320,11 +3754,11 @@ function GstSheet({ db, vendorOf, onClose }) {
       return billsOf(o, v).map(b => ({ o, v, m: b, date: String(b.date || "").slice(0, 10) }));
     })
     .filter(x => x.date.slice(0, 7) === month)
-    .sort((a, b) => (a.date === b.date ? (+a.m.invNo) - (+b.m.invNo) : (a.date < b.date ? -1 : 1)));
+    .sort((a, b) => (a.date === b.date ? invSeq(a.m.invNo) - invSeq(b.m.invNo) : (a.date < b.date ? -1 : 1)));
 
   const sum = invoices.reduce((t, x) => ({
-    taxable: t.taxable + x.m.sub, cgst: t.cgst + x.m.cgst, sgst: t.sgst + x.m.sgst,
-    igst: t.igst + x.m.igst, total: t.total + x.m.total,
+    taxable: r2(t.taxable + x.m.sub), cgst: r2(t.cgst + x.m.cgst), sgst: r2(t.sgst + x.m.sgst),
+    igst: r2(t.igst + x.m.igst), total: r2(t.total + x.m.total),
   }), { taxable:0, cgst:0, sgst:0, igst:0, total:0 });
 
   /* Credit notes raised in the month reverse tax already charged, and input GST
@@ -3338,8 +3772,8 @@ function GstSheet({ db, vendorOf, onClose }) {
     taxable: t.taxable + (+x.c.sub || 0), tax: t.tax + (+x.c.gst || 0), total: t.total + (+x.c.total || 0),
   }), { taxable:0, tax:0, total:0 });
   const inputGst = inputGstIn(db, month);
-  const outputGst = sum.cgst + sum.sgst + sum.igst;
-  const netGst = Math.max(0, outputGst - noteSum.tax - inputGst);
+  const outputGst = r2(sum.cgst + sum.sgst + sum.igst);
+  const netGst = Math.max(0, r2(outputGst - noteSum.tax - inputGst));
 
   // Money actually received in the month, whatever it was invoiced against.
   const receipts = (db.payments || []).filter(p => String(p.date || "").slice(0, 7) === month);
@@ -3492,7 +3926,7 @@ function GstSheet({ db, vendorOf, onClose }) {
             return (
               <div className="vz-kv" key={o.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
                 <span style={{ color:"var(--ink)", fontWeight:600 }}>{v ? v.name : "—"}<br />
-                  <small style={{ color:"var(--muted)", fontWeight:400 }}>{o.no} · {o.stage} · {age} days old</small></span>
+                  <small style={{ color:"var(--muted)", fontWeight:400 }}>{o.no} · {stageLabel(o.stage)} · {age} days old</small></span>
                 <b className="vz-money">{inr(m.total)}</b>
               </div>
             );
@@ -4117,7 +4551,7 @@ function CreditNoteForm({ db, vendorOf, paidOn, nextNo, onSave, onClose }) {
           onClick={() => onSave({
             id: uid(), orderId: o.id, no: nextNo, date: f.date, reason: f.reason.trim(),
             againstInv: bills.map(b => b.invNo).join(", "),
-            sub: m.sub, gst: m.gst, cgst: m.cgst, sgst: m.sgst, igst: m.igst, total: m.total,
+            sub: m.sub, gst: m.gst, cgst: m.cgst, sgst: m.sgst, igst: m.igst, total: m.total, roundOff: m.roundOff,
           })}>
           Raise credit note for {inr(m.total)}
         </button>
@@ -4313,7 +4747,7 @@ const periodFigures = (db, from, to, paidOn) => {
   const runs = (db.payruns || []).filter(p => p.paidOn && inP(p.paidOn));
 
   const revenue = bills.reduce((s, x) => s + (+x.b.sub || 0), 0) - notes.reduce((s, c) => s + (+c.sub || 0), 0);
-  const outTax = bills.reduce((s, x) => s + (+x.b.gst || 0), 0) - notes.reduce((s, c) => s + (+c.gst || 0), 0);
+  const outTax = r2(bills.reduce((s, x) => s + (+x.b.gst || 0), 0) - notes.reduce((s, c) => s + (+c.gst || 0), 0));
   const inTax = spend.reduce((s, e) => s + (+e.gstPaid || 0), 0);
   const collected = receipts.reduce((s, p) => s + (+p.amount || 0), 0);
   const tds = receipts.reduce((s, p) => s + (+p.tds || 0), 0);
@@ -4397,9 +4831,9 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, put, drop, who, onCl
       b.sub, b.cgst, b.sgst, b.igst, b.total]));
     rows.push([]);
     rows.push(["", "", "", "", "", "", "TOTAL",
-      f.bills.reduce((s, x) => s + x.b.sub, 0), f.bills.reduce((s, x) => s + x.b.cgst, 0),
-      f.bills.reduce((s, x) => s + x.b.sgst, 0), f.bills.reduce((s, x) => s + x.b.igst, 0),
-      f.bills.reduce((s, x) => s + x.b.total, 0)]);
+      r2(f.bills.reduce((s, x) => s + x.b.sub, 0)), r2(f.bills.reduce((s, x) => s + x.b.cgst, 0)),
+      r2(f.bills.reduce((s, x) => s + x.b.sgst, 0)), r2(f.bills.reduce((s, x) => s + x.b.igst, 0)),
+      r2(f.bills.reduce((s, x) => s + x.b.total, 0))]);
     downloadCsv("sales-register-" + stamp + ".csv", rows);
   };
 
@@ -5106,7 +5540,7 @@ function ForecastSheet({ db, paidOn, onClose }) {
       .reduce((s, b) => s + (+b.gst || 0), 0);
     const credited = (db.creditNotes || []).filter(c => String(c.date || "").slice(0, 7) === prev)
       .reduce((s, c) => s + (+c.gst || 0), 0);
-    const gstOut = Math.max(0, outTax - credited - inputGstIn(db, prev));
+    const gstOut = Math.max(0, r2(outTax - credited - inputGstIn(db, prev)));
 
     // Straight off the vehicle records, not the alert list: alerts only reach
     // 30 days ahead, and a forecast that stops at 30 days is not a forecast.
@@ -6322,17 +6756,33 @@ function VibeCRM() {
     if (mode === "manager" && !perm.tabs.includes(tab)) setTab(perm.tabs[0]);
   }, [mode, db.userId, tab]);
 
-  const nextOrderNo = () => {
-    const yr = new Date().getFullYear();
-    const key = "orderSeq" + yr;
-    // Never reuse: take whichever is higher — the stored counter, or the highest
-    // number already issued this year (covers data restored from a backup).
+  /* Numbers for the pipeline's documents, one series each per financial year:
+     campaign CMP/26-27/012, quotation QT/26-27/012, proforma PI/26-27/012.
+     Never reused: whichever is higher wins — the stored counter, or the highest
+     number already on any campaign (covers data restored from a backup). */
+  const nextDocNo = (kind, dateISO) => {
+    const fy = fyLabel(dateISO || today());
+    const key = "seq" + kind + fy.replace("-", "");
+    const re = new RegExp("^" + kind + "/" + fy + "/(\\d+)$");
+    const field = kind === "QT" ? "qtNo" : kind === "PI" ? "piNo" : "no";
     const used = (db.orders || []).reduce((mx, o) => {
-      const mt = String(o.no || "").match(new RegExp("^VM/PI/" + yr + "/(\d+)$"));
+      const mt = String(o[field] || "").match(re);
       return mt ? Math.max(mx, +mt[1]) : mx;
     }, 0);
     const n = Math.max(+(db.settings || {})[key] || 0, used) + 1;
-    return { no: "VM/PI/" + yr + "/" + String(n).padStart(3, "0"), key, n };
+    return { no: kind + "/" + fy + "/" + String(n).padStart(3, "0"), key, n };
+  };
+  const nextOrderNo = () => nextDocNo("CMP");
+  /* A quotation or proforma gets its number the first time it is actually
+     produced, not when the campaign is created — so backing out doesn't burn
+     one. Older campaigns (no `flow`) keep their single legacy number. */
+  const withDocNo = (o, kind) => {
+    if (kind === "invoice" || !o.flow) return { rec: o, fresh: false };
+    const [nf, df, pfx] = kind === "quotation" ? ["qtNo", "qtDate", "QT"] : ["piNo", "piDate", "PI"];
+    if (o[nf]) return { rec: o, fresh: false };
+    const seq = nextDocNo(pfx);
+    setSetting(seq.key, seq.n);
+    return { rec: { ...o, [nf]: seq.no, [df]: today() }, fresh: true };
   };
 
   /* fire one phone notification a day for anything overdue or inside the final window */
@@ -6385,20 +6835,27 @@ function VibeCRM() {
   /* ---------- send helpers ---------- */
   const logSend = (order, kind, channel) => put("orders", { ...order, sends: [{ id: uid(), kind, channel, at: new Date().toISOString() }, ...(order.sends || [])] });
 
-  const sendProforma = (o, auto) => {
-    const v = vendorOf(o.vendorId), m = orderMath(o);
+  const KIND_TITLE = { quotation: "Quotation", proforma: "Proforma invoice", invoice: "Tax invoice" };
+  /* Send one document of the pipeline as text. The proforma only goes out
+     once the customer has confirmed — enforced here as well as on the screen,
+     so no path (auto-send, a stale button) can send one early. */
+  const sendDoc = (o0, kind, auto) => {
+    if (kind === "proforma" && !isConfirmed(o0)) { setToast("Record the customer's confirmation before sending a proforma invoice"); return; }
+    const { rec: o, fresh } = withDocNo(o0, kind);
+    if (fresh) put("orders", o);
+    const v = vendorOf(o.vendorId), m = orderMath(o), no = docNoOf(o, kind);
     setSend({
-      title: auto ? "Auto-send proforma" : "Send proforma", auto, to: v ? v.name : "—",
-      phone: v?.phone, email: v?.email, subject: "Proforma invoice " + o.no + " — Vibe Marketing",
-      text: proformaText(o, v, m),
-      onSent: (ch) => { logSend(o, "Proforma", ch); setToast("Proforma " + o.no + " sent · " + ch); },
+      title: (auto ? "Auto-send " : "Send ") + KIND_TITLE[kind].toLowerCase(), auto, to: v ? v.name : "—",
+      phone: v?.phone, email: v?.email, subject: KIND_TITLE[kind] + " " + no + " — Vibe Marketing",
+      text: proformaText(o, v, m, kind),
+      onSent: (ch) => { logSend(o, KIND_TITLE[kind], ch); setToast(KIND_TITLE[kind] + " " + no + " sent · " + ch); },
     });
   };
   const sendReminder = (o) => {
     const v = vendorOf(o.vendorId), m = orderMath(o);
     setSend({
       title: "Send reminder", to: v ? v.name : "—", phone: v?.phone, email: v?.email,
-      subject: "Reminder — proforma " + o.no, text: reminderText(o, v, m, Math.abs(daysTo(o.created) || 0)),
+      subject: "Reminder — quotation " + docNoOf(o, "quotation"), text: reminderText(o, v, m, Math.abs(daysTo(o.created) || 0)),
       onSent: (ch) => { logSend(o, "Reminder", ch); setToast("Reminder sent · " + ch); },
     });
   };
@@ -6411,21 +6868,24 @@ function VibeCRM() {
   const [docBusy, setDocBusy] = useState(false);
 
   /* Build the two-page document for a campaign and open the viewer. */
-  const openDoc = async (o, title) => {
+  const openDoc = async (o0, kind0) => {
+    const kind = (kind0 === "TAX INVOICE" || kind0 === "invoice") ? "invoice" : kind0 === "proforma" ? "proforma" : "quotation";
+    if (kind === "proforma" && !isConfirmed(o0)) { setToast("Record the customer's confirmation before issuing a proforma invoice"); return; }
+    const { rec: o, fresh } = withDocNo(o0, kind);
+    if (fresh) put("orders", o);
     const v = vendorOf(o.vendorId), m = orderMath(o), s = db.settings;
     setDocBusy(true);
     try {
-      const pages = await docPages({ title, s, v, o, m });
+      const pages = await docPages({ kind, s, v, o, m });
       const blob = pdfFromPages(pages);
       setOpenOrder(null); setSheet(null);
-      const kindLabel = title === "TAX INVOICE" ? "Invoice" : (DOC_KIND_LABEL[o.docType] || "QUOTATION").replace(/(^\w)(.*)/, (_, a, b) => a + b.toLowerCase());
+      const no = docNoOf(o, kind);
       setDoc({
-        pages, blob, title, order: o, vendor: v,
-        file: kindLabel.replace(/\s+/g, "") + "-"
-              + String(o.invNo || o.no || "").replace(/\W+/g, "-")
+        pages, blob, kind, title: KIND_TITLE[kind], order: o, vendor: v,
+        file: KIND_TITLE[kind].replace(/\s+/g, "") + "-" + String(no).replace(/\W+/g, "-")
               + (v && v.name ? "-" + v.name.replace(/\W+/g, "-") : "") + ".pdf",
-        text: proformaText(o, v, m),
-        subject: (title === "TAX INVOICE" ? "Tax invoice " : kindLabel + " ") + (o.invNo || o.no) + " — Vibe Marketing",
+        text: proformaText(o, v, m, kind),
+        subject: KIND_TITLE[kind] + " " + no + " — Vibe Marketing",
       });
     } catch (e) { setToast("Could not build the document"); }
     setDocBusy(false);
@@ -6904,7 +7364,7 @@ function VibeCRM() {
           <div className="vz-meta" style={{ color:"#9AA6BE" }}>
             1. Add your vehicles with their FC and insurance dates<br />
             2. Add your drivers with their phone numbers<br />
-            3. Add a customer and raise the first proforma
+            3. Add a customer and send the first quotation
           </div>
           <div className="vz-inline" style={{ marginTop:11 }}>
             <button className="vz-btn pop" style={{ margin:0 }} onClick={() => { setTab("fleet"); setFleetView("vehicles"); setSheet({ type:"vehicle" }); }}>Add vehicle</button>
@@ -7009,7 +7469,7 @@ function VibeCRM() {
       </div>}
 
       {stats.chase.length > 0 && <>
-        <div className="vz-eyebrow">Proformas awaiting confirmation</div>
+        <div className="vz-eyebrow">Quotations awaiting confirmation</div>
         {stats.chase.map(o => {
           const v = vendorOf(o.vendorId);
           return (
@@ -7107,10 +7567,12 @@ function VibeCRM() {
 
   const Orders = () => (
     <>
-      {db.orders.length === 0 && <Empty head="No campaigns yet" sub="Raise a proforma invoice to start one." />}
+      {db.orders.length === 0 && <Empty head="No campaigns yet" sub="Create a campaign and send its quotation to start one." />}
       {db.orders.map(o => {
         const v = vendorOf(o.vendorId), m = orderMath(o), paid = paidOn(o.id);
-        const sent = (o.sends || []).find(s => s.kind === "Proforma");
+        // Whichever document went out last — quotation, proforma or tax invoice
+        // (sends are newest-first). Old "Proforma"/"Invoice" logs count too.
+        const sent = (o.sends || []).find(s => ["Quotation", "Proforma", "Proforma invoice", "Tax invoice", "Invoice"].includes(s.kind));
         return (
           <button className="vz-card vz-tapcard" key={o.id} onClick={() => setOpenOrder(o.id)}>
             <div className="vz-row">
@@ -7118,10 +7580,10 @@ function VibeCRM() {
                 <div className="vz-title">{o.title}</div>
                 <div className="vz-meta">{v ? v.name : "—"} · {o.no}<br />{o.vehicles} vehicles · {o.dayWise || !o.start || !o.end ? orderMath(o).days + " days (dates not set)" : dmy(o.start) + " → " + dmy(o.end)}</div>
               </div>
-              <Chip c={STAGE_COLOR[o.stage]}>{o.stage}</Chip>
+              <Chip c={STAGE_COLOR[o.stage]}>{stageLabel(o.stage)}</Chip>
             </div>
             <div className="vz-row" style={{ marginTop:10, alignItems:"center" }}>
-              <div className="vz-meta">{sent ? "Invoice sent · " + sent.channel : "Invoice not sent yet"}</div>
+              <div className="vz-meta">{sent ? (sent.kind === "Proforma" ? "Proforma invoice" : sent.kind === "Invoice" ? "Tax invoice" : sent.kind) + " sent · " + sent.channel : "Nothing sent yet"}</div>
               {perm.money && <div className="vz-money" style={{ color: m.total - paid > 0 ? "#E5484D" : "#178951" }}>
                 {m.total - paid > 0 ? inr(m.total - paid) + " due" : "Settled"}
               </div>}
@@ -7131,6 +7593,113 @@ function VibeCRM() {
       })}
     </>
   );
+
+  /* The campaign's four documents, in the order they happen, each with its own
+     number and only the buttons that make sense at that point. A step that
+     can't be done yet says what unlocks it, instead of being a button that
+     looks live and fails. (Plain function, not a component — it is called
+     from OrderDetail and the Finance Dashboard, so it holds no state.) */
+  const PipelineCard = (o, v, m, paid) => {
+    const legacy = !o.flow;
+    const confirmed = isConfirmed(o);
+    const bills = billsOf(o, v);
+    const monthly = billingOf(o, v) === "monthly";
+    const gate = invoiceGate(o, v);
+    const more = monthly ? !!nextSlice(o, v) : !hasInvoice(o);
+    const qtIssued = !!o.qtNo || (legacy && !!o.no);
+    const piIssued = !!o.piNo || (legacy && confirmed);
+    const partDoc = (part) => ({ ...o, invNo: part.invNo, invDate: part.date, dueDate: part.dueDate,
+      start: part.from, end: part.to, dayWise: true, days: part.days,
+      fabrication: part.first ? o.fabrication : 0, flex: part.first ? o.flex : 0, outKm: part.last ? (o.outKm || 0) : 0 });
+    const Step = ({ n, title, chip, tone, children }) => (
+      <div className="vz-card" style={{ marginBottom:8 }}>
+        <div className="vz-row" style={{ alignItems:"center", marginBottom:4 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:0 }}>
+            <span style={{ width:24, height:24, borderRadius:12, background:"var(--ink)", color:"#fff", fontSize:12, fontWeight:800,
+              display:"inline-flex", alignItems:"center", justifyContent:"center", flex:"0 0 auto" }}>{n}</span>
+            <div className="vz-title">{title}</div>
+          </div>
+          <Chip c={tone}>{chip}</Chip>
+        </div>
+        {children}
+      </div>
+    );
+    return (
+      <>
+        <div className="vz-eyebrow" style={{ marginTop:6 }}>Documents — in order</div>
+
+        <Step n="1" title="Quotation" chip={qtIssued ? "Issued" : "Not issued"} tone={qtIssued ? "c-green" : "c-grey"}>
+          <div className="vz-meta">{qtIssued ? docNoOf(o, "quotation") + " · " + dmy(o.qtDate || o.created) : "The price offer. Nothing is committed until the customer confirms."}</div>
+          <div className="vz-inline" style={{ marginTop:8, flexWrap:"wrap" }}>
+            <button className="vz-chip c-blue" disabled={docBusy} onClick={() => openDoc(o, "quotation")}>{docBusy ? "Preparing…" : "View / PDF"}</button>
+            <button className="vz-chip c-green" onClick={() => { setOpenOrder(null); sendDoc(o, "quotation"); }}>Send</button>
+          </div>
+        </Step>
+
+        <Step n="2" title="Customer confirmation" chip={confirmed ? "Confirmed" : "Awaiting"} tone={confirmed ? "c-green" : "c-yellow"}>
+          <div className="vz-meta">
+            {o.confirm
+              ? dmy(o.confirm.date) + " · " + o.confirm.how + (o.confirm.poNo ? " · their PO " + o.confirm.poNo : "") + (o.confirm.note ? " · " + o.confirm.note : "")
+              : confirmed ? "Marked as confirmed — stage is " + stageLabel(o.stage) + "."
+              : "Record how the customer said yes — a purchase order, WhatsApp, email… Their PO number goes on the tax invoice."}
+          </div>
+          {perm.campaign && (
+            <div className="vz-inline" style={{ marginTop:8 }}>
+              <button className={"vz-chip " + (confirmed ? "c-grey" : "c-green")} onClick={() => { setOpenOrder(null); setSheet({ type:"confirm", orderId:o.id }); }}>
+                {o.confirm ? "Edit confirmation" : "Record confirmation"}
+              </button>
+            </div>
+          )}
+        </Step>
+
+        <Step n="3" title="Proforma invoice" chip={!confirmed ? "Locked" : piIssued ? "Issued" : "Ready"} tone={!confirmed ? "c-grey" : piIssued ? "c-green" : "c-blue"}>
+          {!confirmed
+            ? <div className="vz-meta">Unlocks once the customer confirms. It is the request for the advance — not a tax invoice.</div>
+            : <>
+                <div className="vz-meta">
+                  {piIssued ? docNoOf(o, "proforma") + " · " + dmy(o.piDate || o.created) + " · " : ""}
+                  Advance {inr(m.advance)} ({advanceRate(o)}%) · received {inr(paid)}
+                </div>
+                <div className="vz-inline" style={{ marginTop:8, flexWrap:"wrap" }}>
+                  <button className="vz-chip c-blue" disabled={docBusy} onClick={() => openDoc(o, "proforma")}>{docBusy ? "Preparing…" : "View / PDF"}</button>
+                  <button className="vz-chip c-green" onClick={() => { setOpenOrder(null); sendDoc(o, "proforma"); }}>Send</button>
+                  <button className="vz-chip c-yellow" onClick={() => { setOpenOrder(null); setSheet({ type:"paylink", data:o }); }}>Payment link</button>
+                </div>
+              </>}
+        </Step>
+
+        <Step n="4" title="Tax invoice" chip={bills.length ? (more ? "Part-billed" : "Raised") : gate.ok ? "Ready" : "Locked"}
+          tone={bills.length ? (more ? "c-yellow" : "c-green") : gate.ok ? "c-blue" : "c-grey"}>
+          {bills.map(b => (
+            <div className="vz-row" key={b.id} style={{ alignItems:"center", padding:"5px 0" }}>
+              <div className="vz-meta" style={{ marginTop:0 }}><b style={{ color:"var(--ink)" }}>{b.invNo}</b> · {dmy(b.date)} · {inr(b.total)}</div>
+              {perm.invoice && <button className="vz-chip c-blue" disabled={docBusy}
+                onClick={() => openDoc(b.whole ? o : partDoc(b), "invoice")}>View / PDF</button>}
+            </div>
+          ))}
+          {!bills.length && !gate.ok && <div className="vz-meta">{gate.why}</div>}
+          {perm.invoice && more && gate.ok && (
+            <button className="vz-btn go" style={{ marginBottom:0 }} onClick={() => { setOpenOrder(null); openInvoice(o); }}>
+              {bills.length ? "Raise next month's tax invoice" : "Raise tax invoice"}
+            </button>
+          )}
+          {perm.campaign && confirmed && !gate.ok && (
+            <button className="vz-btn alt" style={{ marginBottom:0 }}
+              onClick={() => put("orders", { ...o, stage: monthly ? "Running" : "Completed" })}>
+              {monthly ? "Mark campaign running" : "Mark campaign completed"}
+            </button>
+          )}
+          {bills.length > 0 && perm.money && (
+            <div className="vz-inline" style={{ marginTop:8 }}>
+              <button className="vz-chip c-yellow" onClick={() => { setOpenOrder(null); setSheet({ type:"paylink", data:o }); }}>
+                Payment link · balance {inr(Math.max(0, m.total - paid))}
+              </button>
+            </div>
+          )}
+        </Step>
+      </>
+    );
+  };
 
   const OrderDetail = () => {
     const o = orderOf(openOrder);
@@ -7155,14 +7724,7 @@ function VibeCRM() {
           <div className="vz-kv"><span>Balance</span><b className="vz-money" style={{ color: m.total - paid > 0 ? "#E5484D" : "#178951" }}>{inr(m.total - paid)}</b></div>
         </div>}
 
-        {perm.money && <button className="vz-btn pop" disabled={docBusy} onClick={() => openDoc(o, "QUOTATION")}>
-          {docBusy ? "Preparing…" : (DOC_KIND_LABEL[o.docType] || "QUOTATION").replace(/(^\w)(.*)/, (_, a, b) => a + b.toLowerCase()) + " (PDF)"}
-        </button>}
-        {perm.money && <button className="vz-btn alt" onClick={() => sendProforma(o, false)}>Send as text instead</button>}
-        {perm.invoice && <button className="vz-btn alt" disabled={idx < 1}
-          onClick={() => { setOpenOrder(null); openInvoice(o); }}>Tax invoice</button>}
-        {perm.invoice && idx < 1 && <div className="vz-meta">Confirm the campaign with the vendor first — move its stage past Proforma to raise a tax invoice.</div>}
-        {perm.money && <button className="vz-btn" onClick={() => { setOpenOrder(null); setSheet({ type:"paylink", data:o }); }}>Payment link</button>}
+        {perm.money && PipelineCard(o, v, m, paid)}
 
         <div className="vz-eyebrow">Sent history</div>
         {(o.sends || []).length === 0 && <div className="vz-meta" style={{ marginBottom:6 }}>Nothing sent yet.</div>}
@@ -7173,11 +7735,11 @@ function VibeCRM() {
         <div className="vz-eyebrow">Stage</div>
         <div className="vz-seg" style={{ flexWrap:"wrap" }}>
           {ORDER_STAGES.map(s => (
-            <button key={s} data-on={s === o.stage ? "1" : "0"} style={{ flex:"1 0 32%", fontSize:11 }} onClick={() => put("orders", { ...o, stage: s })}>{s}</button>
+            <button key={s} data-on={s === o.stage ? "1" : "0"} style={{ flex:"1 0 32%", fontSize:11 }} onClick={() => put("orders", { ...o, stage: s })}>{stageLabel(s)}</button>
           ))}
         </div>
         {idx < ORDER_STAGES.length - 1 && (
-          <button className="vz-btn" onClick={() => put("orders", { ...o, stage: ORDER_STAGES[idx + 1] })}>Move to “{ORDER_STAGES[idx + 1]}”</button>
+          <button className="vz-btn" onClick={() => put("orders", { ...o, stage: ORDER_STAGES[idx + 1] })}>Move to “{stageLabel(ORDER_STAGES[idx + 1])}”</button>
         )}
 
         <div className="vz-eyebrow">Vehicles on this campaign <span style={{ textTransform:"none", letterSpacing:0 }}>{assigned.length}/{o.vehicles}</span></div>
@@ -7231,6 +7793,17 @@ function VibeCRM() {
     const locked = filingCovering(db, "gstr1", today());
     if (locked) { setToast(filedLockMsg(locked)); setInvAsk(null); return; }
     const v = vendorOf(o.vendorId);
+    // Enforced here too, not only by the button: a tax invoice is the one
+    // document that reaches GSTR-1, so nothing may raise it early.
+    const gate = hasInvoice(o) && billingOf(o, v) !== "monthly" ? { ok:true } : invoiceGate(orderOf(o.id) || o, v);
+    if (!gate.ok) { setToast(gate.why); setInvAsk(null); return; }
+    /* The tax-invoice series follows the financial year, like the Tally one
+       ("26-27/42"). It restarts at 1 each April; until then it carries on from
+       the number in Settings, so set that to the next number in your Tally. */
+    const invFy = fyLabel(today());
+    const invN = (db.settings.invSeqFy && db.settings.invSeqFy !== invFy) ? 1 : (db.settings.nextInvNo || 1);
+    const invLabel = invFy + "/" + invN;
+    const commitInvNo = () => { setSetting("nextInvNo", invN + 1); setSetting("invSeqFy", invFy); };
     // Re-read the customer at the moment of invoicing: their state and credit
     // terms may have been corrected since the campaign was first raised.
     let ord = { ...o, outKm: km || 0, igst: isInterstate(v, db.settings) };
@@ -7241,33 +7814,31 @@ function VibeCRM() {
     if (billingOf(ord, v) === "monthly") {
       const slice = nextSlice(ord, v);
       if (!slice) { setToast("Every month of this campaign has already been invoiced"); setInvAsk(null); return; }
-      const n = db.settings.nextInvNo || 1;
       const t = cnMath(ord, slice.sub);
-      const part = { id: uid(), invNo: n, date: today(), days: slice.days,
+      const part = { id: uid(), invNo: invLabel, date: today(), days: slice.days,
                      dueDate: creditDaysOf(v) > 0 ? addDays(today(), creditDaysOf(v)) : slice.to,
                      from: slice.from, to: slice.to, first: slice.first, last: slice.last,
-                     sub: t.sub, gst: t.gst, cgst: t.cgst, sgst: t.sgst, igst: t.igst, inter: t.inter, total: t.total };
+                     sub: t.sub, gst: t.gst, cgst: t.cgst, sgst: t.sgst, igst: t.igst, inter: t.inter, total: t.total, roundOff: t.roundOff };
       ord = { ...ord, parts: [...(ord.parts || []), part] };
-      setSetting("nextInvNo", n + 1);
+      commitInvNo();
       put("orders", ord);
       setInvAsk(null);
       // The PDF prints this slice, not the whole campaign.
       openDoc({ ...ord, invNo: part.invNo, invDate: part.date, dueDate: part.dueDate,
                 start: part.from, end: part.to, dayWise: true, days: part.days,
                 fabrication: part.first ? ord.fabrication : 0, flex: part.first ? ord.flex : 0,
-                outKm: part.last ? (km || 0) : 0 }, "TAX INVOICE");
+                outKm: part.last ? (km || 0) : 0 }, "invoice");
       return;
     }
 
     if (!ord.invNo) {
-      const n = db.settings.nextInvNo || 1;
-      ord = { ...ord, invNo: n, invDate: today() };
+      ord = { ...ord, invNo: invLabel, invDate: today() };
       ord = { ...ord, dueDate: creditDaysOf(v) > 0 ? addDays(ord.invDate, creditDaysOf(v)) : (ord.end || ord.invDate) };
-      setSetting("nextInvNo", n + 1);
+      commitInvNo();
     }
     put("orders", ord);
     setInvAsk(null);
-    openDoc(ord, "TAX INVOICE");
+    openDoc(ord, "invoice");
   };
 
   const Field = () => {
@@ -7641,6 +8212,91 @@ function VibeCRM() {
     );
   };
 
+  /* Finance's working list, on the Finance Dashboard: every campaign sitting at
+     a step of the document pipeline, with the button for that step right on the
+     row — so the day's invoicing and chasing starts here, not by opening each
+     campaign in turn. Plain function (Money() is one too), so no state of its
+     own; it reads the same helpers the campaign screen's pipeline does. */
+  const InvoicingPipeline = () => {
+    if (!perm.money) return null;
+    const rows = db.orders.map(o => {
+      const v = vendorOf(o.vendorId);
+      const paid = paidOn(o.id), m = orderMath(o), gate = invoiceGate(o, v);
+      const monthly = billingOf(o, v) === "monthly";
+      const more = monthly ? !!nextSlice(o, v) : !hasInvoice(o);
+      const due = Math.max(0, billedTotal(o, v) - paid);
+      return { o, v, m, paid, gate, more, due, billed: hasInvoice(o) };
+    });
+    const awaitingConfirm = rows.filter(r => !isConfirmed(r.o) && !r.billed);
+    const advanceDue      = rows.filter(r => isConfirmed(r.o) && !r.billed && r.o.stage !== "Completed" && r.m.advance > 0 && r.paid < r.m.advance);
+    const readyToInvoice  = rows.filter(r => r.gate.ok && r.more);
+    const awaitingPayment = rows.filter(r => r.billed && r.due > 0);
+    const Row = ({ r, children, right }) => (
+      <div className="vz-card" style={{ padding:"10px 12px", marginBottom:6 }}>
+        <div className="vz-row" style={{ alignItems:"flex-start" }}>
+          <button className="vz-tapcard" style={{ flex:1, textAlign:"left", minWidth:0 }} onClick={() => setOpenOrder(r.o.id)}>
+            <div className="vz-title" style={{ fontSize:13.5 }}>{r.v ? r.v.name : "—"}</div>
+            <div className="vz-meta">{r.o.title} · {r.o.no}</div>
+          </button>
+          <b className="vz-money" style={{ fontSize:14 }}>{right}</b>
+        </div>
+        <div className="vz-inline" style={{ marginTop:7, flexWrap:"wrap" }}>{children}</div>
+      </div>
+    );
+    return (
+      <>
+        <div className="vz-eyebrow">Invoicing pipeline</div>
+        <div className="vz-grid" style={{ marginBottom:6 }}>
+          <div className="vz-stat"><i>Awaiting confirmation</i><b style={{ fontSize:18 }}>{awaitingConfirm.length}</b><small>quotations out</small></div>
+          <div className="vz-stat"><i>Advance to collect</i><b style={{ fontSize:18, color: advanceDue.length ? "#E5484D" : undefined }}>{advanceDue.length}</b><small>confirmed, not paid up</small></div>
+          <div className="vz-stat"><i>Ready to invoice</i><b style={{ fontSize:18, color: readyToInvoice.length ? "#178951" : undefined }}>{readyToInvoice.length}</b><small>work done, no tax invoice</small></div>
+          <div className="vz-stat"><i>Awaiting payment</i><b style={{ fontSize:18, color: awaitingPayment.length ? "#E5484D" : undefined }}>{awaitingPayment.length}</b><small>{inr(awaitingPayment.reduce((s, r) => s + r.due, 0))} due</small></div>
+        </div>
+
+        {readyToInvoice.length > 0 && <>
+          <div className="vz-meta" style={{ margin:"4px 0", fontWeight:700, color:"var(--ink)" }}>Ready to raise a tax invoice</div>
+          {readyToInvoice.map(r => (
+            <Row key={r.o.id} r={r} right={inr(r.m.total)}>
+              {perm.invoice && <button className="vz-chip c-green" onClick={() => openInvoice(r.o)}>Raise tax invoice</button>}
+              <button className="vz-chip c-grey" onClick={() => setOpenOrder(r.o.id)}>Open</button>
+            </Row>
+          ))}
+        </>}
+
+        {awaitingPayment.length > 0 && <>
+          <div className="vz-meta" style={{ margin:"8px 0 4px", fontWeight:700, color:"var(--ink)" }}>Invoiced — waiting for payment</div>
+          {awaitingPayment.map(r => (
+            <Row key={r.o.id} r={r} right={inr(r.due) + " due"}>
+              <button className="vz-chip c-yellow" onClick={() => setSheet({ type:"paylink", data:r.o })}>Payment link</button>
+              <button className="vz-chip c-green" onClick={() => setSheet({ type:"payment", data:{ orderId:r.o.id, kind:"Part payment" } })}>Record payment</button>
+              <button className="vz-chip c-grey" onClick={() => setOpenOrder(r.o.id)}>Open</button>
+            </Row>
+          ))}
+        </>}
+
+        {advanceDue.length > 0 && <>
+          <div className="vz-meta" style={{ margin:"8px 0 4px", fontWeight:700, color:"var(--ink)" }}>Confirmed — advance to collect</div>
+          {advanceDue.map(r => (
+            <Row key={r.o.id} r={r} right={inr(Math.max(0, r.m.advance - r.paid))}>
+              <button className="vz-chip c-blue" onClick={() => openDoc(r.o, "proforma")}>Proforma PDF</button>
+              <button className="vz-chip c-yellow" onClick={() => setSheet({ type:"paylink", data:r.o })}>Payment link</button>
+            </Row>
+          ))}
+        </>}
+
+        {awaitingConfirm.length > 0 && <>
+          <div className="vz-meta" style={{ margin:"8px 0 4px", fontWeight:700, color:"var(--ink)" }}>Quotations awaiting the customer</div>
+          {awaitingConfirm.map(r => (
+            <Row key={r.o.id} r={r} right={inr(r.m.total)}>
+              {perm.campaign && <button className="vz-chip c-green" onClick={() => setSheet({ type:"confirm", orderId:r.o.id })}>Record confirmation</button>}
+              <button className="vz-chip c-blue" onClick={() => sendDoc(r.o, "quotation")}>Send quotation</button>
+            </Row>
+          ))}
+        </>}
+      </>
+    );
+  };
+
   const Money = () => {
     const spend = db.jobs.reduce((s, j) => s + j.cost, 0);
     const mth = today().slice(0, 7);
@@ -7707,6 +8363,8 @@ function VibeCRM() {
           <div className="vz-stat"><i>Income</i><b style={{ fontSize:17, color:"#178951" }}>{inr(cash.income)}</b><small>received in period</small></div>
           <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(cash.expenses)}</b><small>paid out, incl. payroll</small></div>
         </div>
+
+        {InvoicingPipeline()}
 
         <div className="vz-eyebrow">
           Vehicles running now
@@ -7888,7 +8546,7 @@ function VibeCRM() {
           Every tax invoice raised, month by month, with the tax split out and a file for the accountant.
         </div>
 
-        <div className="vz-eyebrow">Proforma invoices</div>
+        <div className="vz-eyebrow">All campaigns — documents &amp; payment</div>
         {db.orders.map(o => {
           const v = vendorOf(o.vendorId), m = orderMath(o), paid = paidOn(o.id);
           return (
@@ -7903,7 +8561,7 @@ function VibeCRM() {
                   <Chip c={paid >= m.total ? "c-green" : paid > 0 ? "c-yellow" : "c-grey"}>{paid >= m.total ? "Settled" : paid > 0 ? "Part paid" : "Unpaid"}</Chip>
                 </div>
               </div>
-              <button className="vz-chip c-blue" style={{ marginTop:9 }} onClick={() => sendProforma(o, false)}>Send invoice again</button>
+              <button className="vz-chip c-blue" style={{ marginTop:9 }} onClick={() => setOpenOrder(o.id)}>Open — documents &amp; payment</button>
             </div>
           );
         })}
@@ -8348,6 +9006,11 @@ function VibeCRM() {
 
       <div className="vz-eyebrow">Invoice</div>
       <F label="Next tax invoice number"><input type="number" value={db.settings.nextInvNo || 1} onChange={e => setSetting("nextInvNo", +e.target.value)} inputMode="numeric" /></F>
+      <div className="vz-meta" style={{ marginTop:-4, marginBottom:8 }}>
+        The next invoice prints as <b>{fyLabel(today())}/{(db.settings.invSeqFy && db.settings.invSeqFy !== fyLabel(today())) ? 1 : (db.settings.nextInvNo || 1)}</b> —
+        the financial year, then this number, the same way your Tally invoices are numbered. It restarts at 1 each April.
+        Set it to the next number in your Tally so the two never clash.
+      </div>
       <F label="Outstation charge ₹ per km — fills in new campaigns, change it per customer">
         <input type="number" value={db.settings.outRateDefault ?? ""} inputMode="numeric" min="0" placeholder="15"
           onChange={e => setSetting("outRateDefault", e.target.value === "" ? "" : Math.max(0, +e.target.value))} />
@@ -8356,7 +9019,7 @@ function VibeCRM() {
 
       <div className="vz-eyebrow">Invoices</div>
       <div className="vz-tog">
-        <p>Auto-send proforma<small>Opens the ready message the moment a campaign is raised</small></p>
+        <p>Open the quotation on save<small>Shows the quotation PDF the moment a new campaign is created</small></p>
         <Toggle on={db.settings.autoSendProforma} onChange={v => setSetting("autoSendProforma", v)} />
       </div>
       <div className="vz-tog">
@@ -8906,9 +9569,25 @@ function VibeCRM() {
             // plain-text version automatically while the actual formatted PDF
             // sat one tap away on the order screen — so the one send that
             // happens without anyone asking for it was the weaker one.
-            if (!x.id || !(x.sends || []).length) { if (db.settings.autoSendProforma) setTimeout(() => openDoc(rec, "QUOTATION"), 250); }
+            // Only for a brand-new campaign — a later edit shouldn't reopen it.
+            if (!sheet.data && db.settings.autoSendProforma) setTimeout(() => openDoc(rec, "quotation"), 250);
           }} />
       )}
+      {sheet?.type === "confirm" && (() => {
+        const co = orderOf(sheet.orderId);
+        if (!co) return null;
+        return (
+          <ConfirmForm order={co} vendor={vendorOf(co.vendorId)} onClose={() => { setSheet(null); setOpenOrder(co.id); }}
+            onSave={(confirm) => {
+              // Confirming moves a campaign still at the quotation stage on to
+              // Confirmed; one already further along keeps its stage.
+              const stage = ORDER_STAGES.indexOf(co.stage) < 1 ? "Confirmed" : co.stage;
+              put("orders", { ...co, confirm: { ...confirm, by: db.adminName || "office" }, stage });
+              setSheet(null); setOpenOrder(co.id);
+              setToast("Confirmed — the proforma invoice is now unlocked");
+            }} />
+        );
+      })()}
       {sheet?.type === "vehicle" && (
         <VehicleForm init={sheet.data} drivers={db.drivers} plates={db.vehicles} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onClose={() => setSheet(null)}
           onSave={(x) => { put("vehicles", x); setSheet(null); }}
@@ -9050,9 +9729,20 @@ function VibeCRM() {
                 repeated as text under the attachment read as clutter. */}
             <button className="vz-btn go" style={{ margin:0 }} onClick={async () => {
               const ok = await sharePdf(doc.blob, doc.file);
-              if (ok) { logSend(doc.order, doc.title === "TAX INVOICE" ? "Invoice" : "Quotation", "WhatsApp"); setToast("Sent"); }
+              // Log against the campaign as it is now, not the copy the viewer
+              // holds — a month's invoice is built from a trimmed-down copy of it.
+              if (ok) { logSend(orderOf(doc.order.id) || doc.order, KIND_TITLE[doc.kind] || "Quotation", "WhatsApp"); setToast("Sent"); }
               else { savePdf(doc.blob, doc.file); openWA(doc.vendor?.phone, ""); setToast("PDF saved — attach it in the chat"); }
             }}>Send PDF on WhatsApp</button>
+            {/* From the tax invoice straight to getting paid: the balance link is
+                one tap away instead of a trip back through the campaign screen. */}
+            {(doc.kind === "invoice" || doc.kind === "proforma") && perm.money && (
+              <button className="vz-btn pop" style={{ margin:0 }} onClick={() => {
+                const cur = orderOf(doc.order.id);
+                if (!cur) return;
+                setDoc(null); setSheet({ type:"paylink", data:cur });
+              }}>Payment link</button>
+            )}
             <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
               savePdf(doc.blob, doc.file);
               setToast("PDF saved to your downloads");
