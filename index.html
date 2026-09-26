@@ -2048,7 +2048,7 @@ const blankData = () => ({
     bankOpeningBalance: 0, bankOpeningDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [], wageRates: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -2061,11 +2061,11 @@ const blankData = () => ({
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing",
-                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout" };
+                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout", wageRates:"wagerate" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings",
-                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts" };
+                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts", wagerate:"wageRates" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -2682,7 +2682,7 @@ function KmLogSheet({ db, put, drop, onAdd, onClose }) {
     const att = (db.attendance || []).find(a => a.vehicleId === vehicleId && a.date === date);
     const drv = (att && att.driverId && drvById(att.driverId)) || (veh && veh.driverId && drvById(veh.driverId)) || null;
     const name = (att && att.driverName) || (drv && drv.name) || (veh && veh.driverName) || "";
-    const salary = drv ? (+drv.wage || 0) + (att && att.outstation ? (+drv.batta || 0) : 0) : null;
+    const salary = drv ? dayPay(db, drv, att || { date, outstation: false }).pay : null;
     return { name, salary };
   };
 
@@ -2782,11 +2782,17 @@ function KmLogSheet({ db, put, drop, onAdd, onClose }) {
   );
 }
 
-function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || {
-    name:"", phone:"", wage:700, batta:"", joined:today(), aadhaar:"", pan:"", dl:"", dlExpiry:"",
-    photoId:"", dlFrontId:"", dlBackId:"", bankAccount:"", ifsc:"", bankName:"", address:"", refPhone:"", pin:"",
+function DriverForm({ init, initRates, pics, canEdit = true, canDel = true, onPhoto, onSave, onDelete, onClose }) {
+  const [f, set] = useState(() => {
+    const base = init || {
+      name:"", phone:"", wage:700, batta:"", joined:today(), aadhaar:"", pan:"", dl:"", dlExpiry:"",
+      photoId:"", dlFrontId:"", dlBackId:"", bankAccount:"", ifsc:"", bankName:"", address:"", refPhone:"", pin:"",
+    };
+    // The stored figure is the extra an outstation day pays over the local wage
+    // (batta); the form shows the outstation rate itself, which is what people think in.
+    return { ...base, outRate: (+base.batta > 0) ? (+base.wage || 0) + (+base.batta || 0) : "" };
   });
+  const [rates, setRates] = useState(initRates || []);
   const faceRef = useRef(null), frontRef = useRef(null), backRef = useRef(null);
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const grabTo = (key) => async (e) => {
@@ -2829,12 +2835,13 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
         <F label="Local wage ₹ per day"><input type="number" value={f.wage} onChange={u("wage")} inputMode="numeric" /></F>
         <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
       </div>
-      <F label="Outstation wage (batta) ₹ per day — on top of the local wage">
-        <input type="number" value={f.batta === undefined ? "" : f.batta} onChange={u("batta")} inputMode="numeric" placeholder="0" />
+      <F label="Outstation wage ₹ per day">
+        <input type="number" value={f.outRate === undefined ? "" : f.outRate} onChange={u("outRate")} inputMode="numeric" placeholder="same as local" />
       </F>
       <div className="vz-meta" style={{ marginTop:-4 }}>
-        Paid on top of the daily wage for any day ticked as outstation on the payroll sheet.
+        A day ticked as outstation on the payroll sheet pays this instead of the local wage.
       </div>
+      <RatePeriods rates={rates} onChange={setRates} localLabel="Local wage ₹ per day" outLabel="Outstation wage ₹ per day" />
       <F label="Home address"><textarea rows={2} value={f.address} onChange={u("address")} /></F>
 
       <div className="vz-eyebrow" style={{ marginTop:14 }}>Driving licence</div>
@@ -2875,12 +2882,59 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
         <input value={f.pin || ""} inputMode="numeric" onChange={e => set({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })}
           style={{ fontFamily:"var(--mono)", letterSpacing:6 }} placeholder={String(f.phone || "").replace(/\D/g, "").slice(-4) || "----"} />
       </F>
-      {canEdit && <button className="vz-btn" disabled={!ready}
-        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), wage: +f.wage || 0, batta: +f.batta || 0 })}>Save driver</button>}
+      {canEdit && <button className="vz-btn" disabled={!ready || !ratePeriodsOk(rates)}
+        onClick={() => {
+          const { outRate, ...rest } = f;
+          const wage = +f.wage || 0;
+          // Back to the stored form: batta is what an outstation day pays over local.
+          const batta = outRate === "" || outRate == null ? 0 : (+outRate || 0) - wage;
+          onSave({ ...rest, id: f.id || uid(), name: f.name.trim(), wage, batta }, rates);
+        }}>Save driver</button>}
       {canEdit && !ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name, 10-digit phone, emergency contact, licence number, licence expiry, and licence front &amp; back photos.</div>}
+      {canEdit && ready && !ratePeriodsOk(rates) && <div className="vz-meta" style={{ color:"#B4262A" }}>Fix the rate period above — it needs a From date and at least one rate.</div>}
       {!canEdit && <div className="vz-meta">View only — ask an admin to make changes.</div>}
       {init && canDel && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Delete driver</button>}
     </Sheet>
+  );
+}
+
+/* Dated wage rates: a Local and an Outstation rate that apply only between a
+   From and a To date, on top of the person's standard rates. The editor keeps
+   the list in the parent form's state; the parent saves it (db.wageRates) with
+   the person. A blank To date means "until changed". */
+const ratePeriodsOk = (rates) => (rates || []).every(r => r.from && (!r.to || r.to >= r.from) && (+r.local > 0 || +r.outstation > 0));
+function RatePeriods({ rates, onChange, localLabel, outLabel }) {
+  const set = (id, patch) => onChange(rates.map(r => (r.id === id ? { ...r, ...patch } : r)));
+  return (
+    <>
+      <div className="vz-eyebrow">
+        Rate for a period
+        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "" }])}>+ Add period</button>
+      </div>
+      {rates.length === 0 && (
+        <div className="vz-meta" style={{ marginTop:-4 }}>
+          Optional. Set different Local and Outstation rates for a date range — for example Local 700,
+          Outstation 900, from 21.09.2026 to 26.09.2026. Days inside a period use its rates; every other day uses the standard rates above.
+        </div>
+      )}
+      {rates.map(r => {
+        const bad = !r.from || (r.to && r.to < r.from) || !(+r.local > 0 || +r.outstation > 0);
+        return (
+          <div className="vz-card" key={r.id} style={{ padding:"10px 12px", marginBottom:8, borderColor: bad ? "#F2C9C9" : undefined }}>
+            <div className="vz-2">
+              <F label="From date"><input type="date" value={r.from} onChange={e => set(r.id, { from: e.target.value })} /></F>
+              <F label="To date"><input type="date" value={r.to || ""} min={r.from || undefined} onChange={e => set(r.id, { to: e.target.value })} /></F>
+            </div>
+            <div className="vz-2">
+              <F label={localLabel}><input type="number" inputMode="numeric" value={r.local} onChange={e => set(r.id, { local: e.target.value })} /></F>
+              <F label={outLabel}><input type="number" inputMode="numeric" value={r.outstation} onChange={e => set(r.id, { outstation: e.target.value })} placeholder="same as local" /></F>
+            </div>
+            {bad && <div className="vz-meta" style={{ color:"#B4262A", marginTop:0 }}>Needs a From date (To can't be earlier) and at least one rate.</div>}
+            <button className="vz-chip c-red" onClick={() => onChange(rates.filter(x => x.id !== r.id))}>Remove this period</button>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -2888,8 +2942,9 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
    driver, paid the same amount every Saturday whether or not there is
    anything to sign in for. Kept separate from drivers, whose pay depends on
    which days they actually worked. */
-function StaffForm({ init, onSave, onDelete, onClose }) {
+function StaffForm({ init, initRates, onSave, onDelete, onClose }) {
   const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", outstationWage:"", joined:today(), active:true, bankAccount:"", ifsc:"" });
+  const [rates, setRates] = useState(initRates || []);
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const ready = f.name.trim() && +f.weeklyWage > 0;
   return (
@@ -2908,6 +2963,7 @@ function StaffForm({ init, onSave, onDelete, onClose }) {
         The local wage is paid every week. The outstation wage is added on top for each day they
         are out of town — you enter those days on the payroll sheet.
       </div>
+      <RatePeriods rates={rates} onChange={setRates} localLabel="Local wage ₹ per week" outLabel="Outstation wage ₹ per day" />
       <div className="vz-2">
         <F label="Bank account number"><input value={f.bankAccount || ""} onChange={u("bankAccount")} inputMode="numeric" /></F>
         <F label="IFSC code"><input value={f.ifsc || ""} onChange={e => set({ ...f, ifsc: e.target.value.toUpperCase() })} style={{ textTransform:"uppercase" }} /></F>
@@ -2916,8 +2972,8 @@ function StaffForm({ init, onSave, onDelete, onClose }) {
         <input type="checkbox" checked={f.active !== false} onChange={e => set({ ...f, active: e.target.checked })} />
         Active — paid every week until turned off
       </label>
-      <button className="vz-btn" disabled={!ready}
-        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), weeklyWage: +f.weeklyWage || 0, outstationWage: +f.outstationWage || 0 })}>
+      <button className="vz-btn" disabled={!ready || !ratePeriodsOk(rates)}
+        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), weeklyWage: +f.weeklyWage || 0, outstationWage: +f.outstationWage || 0 }, rates)}>
         Save staff
       </button>
       {!ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name and a weekly wage above zero.</div>}
@@ -3532,15 +3588,46 @@ const nextSlice = (o, v) => {
    screens that showed them, the same week's wages came to two different figures
    depending on which screen you were standing on. */
 
+/* Wage rates, by trip type and by period. A person has a standard Local and
+   Outstation rate, and any number of dated rate periods (db.wageRates: from,
+   to, local, outstation) that override it for the dates they cover — so a raise
+   from 21.09 to 26.09 changes those days and leaves every earlier week as it
+   was paid. Where periods overlap, the one that started latest wins.
+   An outstation day pays the outstation rate INSTEAD of the local one. The
+   old "wage + batta" is the same thing written differently (outstation =
+   wage + batta), so a driver with no periods pays exactly what he always did. */
+const rateFor = (db, personId, date, std, blankOut) => {
+  const d = String(date || "").slice(0, 10);
+  const hit = (db.wageRates || [])
+    .filter(r => r.personId === personId && r.from && r.from <= d && (!r.to || d <= r.to))
+    .sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+  if (!hit) return std;
+  const local = +hit.local || 0;
+  // A period with no outstation rate typed: a driver's outstation day pays the
+  // local rate (blankOut undefined); for staff it means no outstation extra (0).
+  const blank = hit.outstation === "" || hit.outstation == null;
+  return { local, out: blank ? (blankOut === undefined ? local : blankOut) : (+hit.outstation || 0) };
+};
+/* What one duty day pays, split the way payroll shows it: the local rate, and
+   the extra (or less) an outstation day pays over it. */
+const dayPay = (db, driver, att) => {
+  const std = { local: +driver.wage || 0, out: (+driver.wage || 0) + (+driver.batta || 0) };
+  const r = rateFor(db, driver.id, att && att.date, std);
+  const outstation = !!(att && att.outstation);
+  return { base: r.local, extra: outstation ? r.out - r.local : 0, pay: outstation ? r.out : r.local };
+};
+
 /* What a driver is owed for one week, and what comes off it.
-   Wage is per day on duty; batta is per day marked outstation; advances taken
-   during the week are recovered from that week's pay, never more than it. */
+   Wage is per day on duty at the local rate; batta is what each outstation day
+   pays over that (see dayPay); advances taken during the week are recovered
+   from that week's pay, never more than it. */
 const driverWeek = (db, driver, weekStart, weekEnd) => {
   const days = (db.attendance || []).filter(a => a.driverId === driver.id
     && String(a.date || "") >= weekStart && String(a.date || "") <= weekEnd);
   const outDays = days.filter(a => a.outstation).length;
-  const wage = days.length * (+driver.wage || 0);
-  const batta = outDays * (+driver.batta || 0);
+  const pays = days.map(a => dayPay(db, driver, a));
+  const wage = pays.reduce((s, p) => s + p.base, 0);
+  const batta = pays.reduce((s, p) => s + p.extra, 0);
   const gross = wage + batta;
   const owed = advanceOwed(db, driver.id, weekEnd);
   const deduct = Math.min(owed, gross);
@@ -3567,7 +3654,7 @@ const advanceOwed = (db, driverId, uptoWeekEnd) => {
         && String(a.date || "") >= start && String(a.date || "") <= w);
       const takenBy = (db.advances || []).filter(a => a.driverId === driverId && String(a.date || "") <= w)
         .reduce((s, a) => s + (+a.amount || 0), 0);
-      const gross = days.length * (+drv.wage || 0) + days.filter(a => a.outstation).length * (+drv.batta || 0);
+      const gross = days.reduce((s, a) => s + dayPay(db, drv, a).pay, 0);
       recovered += Math.min(Math.max(0, takenBy - recovered), gross);
     }
   }
@@ -3603,8 +3690,9 @@ const campaignPnl = (db, order) => {
     const drv = (db.drivers || []).find(d => d.id === a.driverId);
     if (!drv) return;
     const share = Math.max(1, ordersOnDay(db.orders, a.vehicleId, date).length);
-    wages += (+drv.wage || 0) / share;
-    battas += a.outstation ? (+drv.batta || 0) / share : 0;
+    const dp = dayPay(db, drv, a);
+    wages += dp.base / share;
+    battas += dp.extra / share;
     dutyDays += 1 / share;
   });
   wages = Math.round(wages); battas = Math.round(battas);
@@ -5033,7 +5121,7 @@ function ReportsSheet({ db, paidOn, vendorOf, vehOf, drvOf, put, drop, who, onCl
       const veh = vehOf(a.vehicleId);
       const drv = a.driverId ? drvOf(a.driverId) : null;
       const km = (a.openKm != null && a.closeKm != null) ? Math.max(0, a.closeKm - a.openKm) : "";
-      const wage = (+((drv || {}).wage) || 0) + (a.outstation ? (+((drv || {}).batta) || 0) : 0);
+      const wage = drv ? dayPay(db, drv, a).pay : 0;
       if (typeof km === "number") kmTotal += km;
       wageTotal += wage;
       rows.push([
@@ -5586,7 +5674,7 @@ function ForecastSheet({ db, paidOn, onClose }) {
     weeks++;
     wageSum += (db.drivers || []).reduce((s, d) => {
       const mine = recs.filter(a => a.driverId === d.id);
-      return s + mine.length * (+d.wage || 0) + mine.filter(a => a.outstation).length * (+d.batta || 0);
+      return s + mine.reduce((t, a) => t + dayPay(db, d, a).pay, 0);
     }, 0);
   }
   const weeklyWages = weeks ? Math.round(wageSum / weeks) : 0;
@@ -5881,8 +5969,9 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
   const driverRows = db.drivers.map(d => {
     const w = driverWeek(db, d, weekStart, weekEnd);
     return { id: d.id, kind: "driver", name: d.name, w, rec: d,
-      sub: w.days + " day" + (w.days === 1 ? "" : "s") + " × " + inr(d.wage)
-        + (w.batta > 0 ? " + batta " + inr(w.batta) : "")
+        sub: w.days + " day" + (w.days === 1 ? "" : "s")
+        + (w.outDays > 0 ? " (" + w.outDays + " outstation)" : "") + " · local " + inr(w.wage)
+        + (w.batta !== 0 ? (w.batta > 0 ? " + outstation " : " − outstation ") + inr(Math.abs(w.batta)) : "")
         + (w.advance > 0 ? " − advance " + inr(w.advance) : ""),
       pay: w.net };
   });
@@ -5893,7 +5982,8 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
     .map(s => {
       // Local wage every week, plus the outstation wage for each day out of town
       // that was entered for this week (kept per staff member per week).
-      const local = +s.weeklyWage || 0, perDay = +s.outstationWage || 0;
+      const sr = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0);
+      const local = sr.local, perDay = sr.out;
       const outDays = perDay > 0 ? ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0 : 0;
       const outPay = outDays * perDay;
       return { id: s.id, kind: "staff", name: s.name, local, outDays, outPay, perDay,
@@ -6040,8 +6130,8 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
                       : (a.outstation ? <Chip c="c-green">Outstation</Chip> : <span className="vz-meta">Local</span>)}
                   </div>
                 ))}
-                <div className="vz-kv"><span>Wage · {r.w.days} day(s)</span><b className="vz-money">{inr(r.w.wage)}</b></div>
-                {(+r.rec.batta || 0) > 0 && <div className="vz-kv"><span>Batta · {r.w.outDays} outstation day(s)</span><b className="vz-money">{inr(r.w.batta)}</b></div>}
+                <div className="vz-kv"><span>Local wage · {r.w.days} day(s)</span><b className="vz-money">{inr(r.w.wage)}</b></div>
+                {r.w.batta !== 0 && <div className="vz-kv"><span>Outstation · {r.w.outDays} day(s) at the outstation rate</span><b className="vz-money">{r.w.batta > 0 ? "" : "− "}{inr(Math.abs(r.w.batta))}</b></div>}
                 {r.w.advance > 0 && <div className="vz-kv"><span>Advance recovered</span><b className="vz-money" style={{ color:"#B4262A" }}>− {inr(r.w.advance)}</b></div>}
                 {r.w.owed > r.w.advance && <div className="vz-meta" style={{ color:"#8A6100" }}>
                   {inr(r.w.owed - r.w.advance)} of advance still to recover after this week.
@@ -6823,6 +6913,19 @@ function VibeCRM() {
     }
     return next;
   });
+  /* Save a person's dated wage rates alongside them: drop the periods that
+     were removed, add or update the rest. Rows without a From date and a rate
+     are never saved (the form blocks them; this is the backstop). */
+  const saveRates = (personId, rates) => {
+    const cur = (db.wageRates || []).filter(r => r.personId === personId);
+    const keep = (rates || []).filter(r => r.from && (+r.local > 0 || +r.outstation > 0));
+    cur.filter(c => !keep.some(r => r.id === c.id)).forEach(c => drop("wageRates", c.id));
+    keep.forEach(r => {
+      const rec = { id: r.id, personId, from: r.from, to: r.to || "", local: +r.local || 0, outstation: r.outstation === "" ? "" : (+r.outstation || 0) };
+      const old = cur.find(c => c.id === r.id);
+      if (!old || old.from !== rec.from || old.to !== rec.to || old.local !== rec.local || old.outstation !== rec.outstation) put("wageRates", rec);
+    });
+  };
   const savePic = (id, dataUrl) => setPics(p => {
     const next = { ...p, [id]: dataUrl };
     const keys = Object.keys(next);
@@ -7418,15 +7521,15 @@ function VibeCRM() {
     const lines = ta
       ? ["*VIBE MARKETING* — ஊதிய விவரம்", "",
          drv.name, dmy(start) + " முதல் " + dmy(weekEnd) + " வரை", "",
-         "வேலை நாட்கள்: " + w.days + " × " + inr(drv.wage) + " = " + inr(w.wage),
-         w.batta > 0 ? "வெளியூர் பத்தா: " + w.outDays + " நாள் = " + inr(w.batta) : "",
+         "வேலை நாட்கள்: " + w.days + " (உள்ளூர்) = " + inr(w.wage),
+         w.batta !== 0 ? "வெளியூர்: " + w.outDays + " நாள் = " + (w.batta > 0 ? "+" : "−") + inr(Math.abs(w.batta)) : "",
          w.advance > 0 ? "முன்பணம் பிடித்தம்: −" + inr(w.advance) : "",
          "", "*கையில் கிடைப்பது: " + inr(w.net) + "*",
          w.owed > w.advance ? "மீதி முன்பணம்: " + inr(w.owed - w.advance) : ""]
       : ["*VIBE MARKETING* — wage slip", "",
          drv.name, "Week " + dmy(start) + " to " + dmy(weekEnd), "",
-         "Days worked: " + w.days + " × " + inr(drv.wage) + " = " + inr(w.wage),
-         w.batta > 0 ? "Outstation batta: " + w.outDays + " day(s) = " + inr(w.batta) : "",
+         "Days worked: " + w.days + " (local rate) = " + inr(w.wage),
+         w.batta !== 0 ? "Outstation: " + w.outDays + " day(s) at the outstation rate = " + (w.batta > 0 ? "+" : "−") + inr(Math.abs(w.batta)) : "",
          w.advance > 0 ? "Advance recovered: −" + inr(w.advance) : "",
          "", "*Net paid: " + inr(w.net) + "*",
          w.owed > w.advance ? "Advance still to recover: " + inr(w.owed - w.advance) : ""];
@@ -8407,7 +8510,7 @@ function VibeCRM() {
     const spend = db.jobs.reduce((s, j) => s + j.cost, 0);
     const mth = today().slice(0, 7);
     const wages = (db.attendance || []).filter(a => String(a.date).slice(0, 7) === mth)
-      .reduce((s, a) => { const d = drvOf(a.driverId); return s + (+(d && d.wage) || 0) + (a.outstation ? (+(d && d.batta) || 0) : 0); }, 0);
+      .reduce((s, a) => { const d = drvOf(a.driverId); return s + (d ? dayPay(db, d, a).pay : 0); }, 0);
     const rec = receivables(db, paidOn);
     const thisMonthSpend = expenseTotal(expensesIn(db, mth));
     const thisMonthInputGst = inputGstIn(db, mth);
@@ -9599,8 +9702,8 @@ function VibeCRM() {
           onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }} />
       )}
       {sheet?.type === "staff" && (
-        <StaffForm init={sheet.data} onClose={() => setSheet(null)}
-          onSave={(x) => { put("staff", x); setSheet(null); }}
+        <StaffForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} onClose={() => setSheet(null)}
+          onSave={(x, rates) => { put("staff", x); saveRates(x.id, rates); setSheet(null); }}
           onDelete={(id) => { if (window.confirm("Remove this person from staff? Past weeks stay in the record.")) { drop("staff", id); setSheet(null); } }} />
       )}
       {sheet?.type === "suppliers" && (
@@ -9713,10 +9816,10 @@ function VibeCRM() {
           }} />
       )}
       {sheet?.type === "driver" && (
-        <DriverForm init={sheet.data} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
-          onSave={(x) => {
+        <DriverForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
+          onSave={(x, rates) => {
             x = { ...x, updatedAt: new Date().toISOString() };
-            put("drivers", x); setSheet(null);
+            put("drivers", x); saveRates(x.id, rates); setSheet(null);
             apiPost("drivers.php", {
               id: x.id, name: x.name, phone: x.phone, pin: x.pin || "", active: 1,
               emergency: x.refPhone || "", dl: x.dl || "", dl_expiry: x.dlExpiry || "",
