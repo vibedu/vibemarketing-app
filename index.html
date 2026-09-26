@@ -2048,7 +2048,7 @@ const blankData = () => ({
     bankOpeningBalance: 0, bankOpeningDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -2061,11 +2061,11 @@ const blankData = () => ({
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing",
-                    bankClears:"bankclear", kmLogs:"kmlog" };
+                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings",
-                      bankclear:"bankClears", kmlog:"kmLogs" };
+                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -2654,53 +2654,130 @@ function ConfirmForm({ order, vendor, onSave, onClose }) {
   );
 }
 
-/* The register itself — every manually-logged day, most recent first, with
-   a running total for whichever month is picked. Driver-punched running
-   (db.attendance) is a separate log shown on the vehicle's own detail
-   screen in Fleet; this one is finance's own record, kept apart so neither
-   can quietly overwrite the other. */
-function KmLogSheet({ db, onAdd, onEdit, onClose }) {
-  const [month, setMonth] = useState(today().slice(0, 7));
-  const months = [];
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
-    months.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+/* The daily kilometre register, laid out the way finance keeps it in Excel:
+   pick a vehicle and a From / To date, and every date in between is a row —
+   Starting km, Closing km, Running (worked out), the driver and his day's
+   salary. Type straight into the cells; each one saves as you leave it.
+   The driver's own GPS punch-in log (db.attendance) is separate and lives on
+   the vehicle's Fleet screen — this is finance's record, kept apart so
+   neither can quietly overwrite the other. */
+function KmLogSheet({ db, put, drop, onAdd, onClose }) {
+  const vehicles = db.vehicles || [];
+  const [vehicleId, setVehicleId] = useState(vehicles[0] ? vehicles[0].id : "");
+  const [from, setFrom] = useState(today().slice(0, 7) + "-01");
+  const [to, setTo] = useState(today());
+  const veh = vehicles.find(v => v.id === vehicleId);
+  const MAX_DAYS = 93;
+  const dates = [];
+  if (from && to && from <= to) {
+    for (let d = from; d <= to && dates.length < MAX_DAYS; d = addDays(d, 1)) dates.push(d);
   }
-  const vehOf = (id) => (db.vehicles || []).find(v => v.id === id);
-  const entries = (db.kmLogs || []).filter(x => String(x.date || "").slice(0, 7) === month)
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
-  const totalKm = entries.reduce((s, x) => s + Math.max(0, (+x.closeKm || 0) - (+x.openKm || 0)), 0);
+  const byDate = {};
+  (db.kmLogs || []).filter(x => x.vehicleId === vehicleId).forEach(x => { byDate[x.date] = x; });
+
+  // Who drove that day and what he earned: the driver punched in on that
+  // vehicle if there is a record, otherwise the vehicle's assigned driver.
+  const drvById = (id) => (db.drivers || []).find(d => d.id === id);
+  const driverFor = (date) => {
+    const att = (db.attendance || []).find(a => a.vehicleId === vehicleId && a.date === date);
+    const drv = (att && att.driverId && drvById(att.driverId)) || (veh && veh.driverId && drvById(veh.driverId)) || null;
+    const name = (att && att.driverName) || (drv && drv.name) || (veh && veh.driverName) || "";
+    const salary = drv ? (+drv.wage || 0) + (att && att.outstation ? (+drv.batta || 0) : 0) : null;
+    return { name, salary };
+  };
+
+  let prevClose = null;
+  const rows = dates.map((date, i) => {
+    const rec = byDate[date] || {};
+    const open = rec.openKm != null ? rec.openKm : null;
+    const close = rec.closeKm != null ? rec.closeKm : null;
+    const startShown = open != null ? open : prevClose;
+    const running = (startShown != null && close != null) ? close - startShown : null;
+    const drvInfo = driverFor(date);
+    const row = { n: i + 1, date, rec, open, close, startHint: open == null ? prevClose : null, running, ...drvInfo };
+    if (close != null) prevClose = close;
+    return row;
+  });
+  const totalKm = rows.reduce((s, r) => s + (r.running != null && r.running > 0 ? r.running : 0), 0);
+  const totalSalary = rows.reduce((s, r) => s + (r.salary || 0), 0);
+
+  // Save one cell as it is left. A closing km typed with no starting km takes
+  // the previous day's closing as its start, so Running is never a guess.
+  const commit = (r, field, raw) => {
+    const val = raw === "" ? null : Math.max(0, Math.round(+raw || 0));
+    const cur = r.rec[field] != null ? r.rec[field] : null;
+    if (val === cur) return;
+    const next = { id: vehicleId + "_" + r.date, vehicleId, date: r.date, note: r.rec.note || "",
+      openKm: r.open, closeKm: r.close, [field]: val };
+    if (field === "closeKm" && next.openKm == null && r.startHint != null) next.openKm = r.startHint;
+    if (next.openKm == null && next.closeKm == null) { if (r.rec.id) drop("kmLogs", r.rec.id); return; }
+    put("kmLogs", next);
+  };
+
+  const exportCsv = () => {
+    const plate = veh ? veh.plate : "vehicle";
+    const dd = (d) => dmy(d).replace(/\//g, "-");
+    const out = [[plate], ["S.no", "Date", "Starting Km", "Closing KM", "Running", "Driver Name", "Salary"]];
+    rows.forEach(r => out.push([r.n, dd(r.date), r.open != null ? r.open : (r.startHint != null ? r.startHint : ""),
+      r.close != null ? r.close : "", r.running != null ? r.running : "", r.name, r.salary != null ? r.salary : ""]));
+    out.push([]);
+    out.push(["", "", "", "TOTAL", totalKm, "", totalSalary]);
+    downloadCsv("kilometres-" + plate.replace(/\s+/g, "") + "-" + from + "_to_" + to + ".csv", out);
+  };
+
+  const cell = { width:92, boxSizing:"border-box", padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, font:"inherit", textAlign:"right" };
   return (
     <Sheet title="Daily kilometres" onClose={onClose}>
-      <div className="vz-meta" style={{ marginTop:0 }}>
-        Opening and closing km for any vehicle, any day — saved and totalled automatically.
-      </div>
-      <button className="vz-btn go" onClick={() => onAdd()}>+ Log kilometres</button>
-      <F label="Month">
-        <select value={month} onChange={e => setMonth(e.target.value)}>
-          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
-        </select>
+      <F label="Vehicle">
+        <PlatePicker value={vehicleId} vehicles={vehicles} title="Select a vehicle" placeholder="— choose a vehicle —" onChange={setVehicleId} />
       </F>
-      <div className="vz-grid" style={{ marginBottom:6 }}>
-        <div className="vz-stat"><i>Entries</i><b style={{ fontSize:18 }}>{entries.length}</b><small>{monthLabel(month)}</small></div>
-        <div className="vz-stat"><i>Total km</i><b style={{ fontSize:18 }}>{totalKm.toLocaleString("en-IN")}</b><small>across all vehicles</small></div>
+      <div className="vz-2">
+        <F label="From date"><input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} /></F>
+        <F label="To date"><input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} /></F>
       </div>
-      {entries.length === 0 && <div className="vz-card"><div className="vz-meta">No kilometres logged this month yet.</div></div>}
-      {entries.map(x => {
-        const v = vehOf(x.vehicleId);
-        const km = Math.max(0, (+x.closeKm || 0) - (+x.openKm || 0));
-        return (
-          <button className="vz-card vz-tapcard" key={x.id} onClick={() => onEdit(x)}>
-            <div className="vz-row">
-              <div style={{ minWidth:0 }}>
-                <div className="vz-title">{v ? v.plate : "—"}</div>
-                <div className="vz-meta">{dmy(x.date)} · Open {x.openKm} · Close {x.closeKm}{x.note ? " · " + x.note : ""}</div>
-              </div>
-              <b className="vz-money">{km} km</b>
-            </div>
-          </button>
-        );
-      })}
+      <div className="vz-2">
+        <button className="vz-btn alt" style={{ margin:0 }} onClick={() => onAdd(vehicleId)}>+ Log one day</button>
+        <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length} onClick={exportCsv}>Download Excel</button>
+      </div>
+      <div className="vz-grid" style={{ margin:"10px 0 6px" }}>
+        <div className="vz-stat"><i>Total running</i><b style={{ fontSize:18 }}>{totalKm.toLocaleString("en-IN")} km</b><small>{rows.length} day{rows.length === 1 ? "" : "s"}</small></div>
+        <div className="vz-stat"><i>Driver salary</i><b style={{ fontSize:18 }}>{inr(totalSalary)}</b><small>{veh ? veh.plate : "—"}</small></div>
+      </div>
+      {!veh && <div className="vz-card"><div className="vz-meta">Pick a vehicle to see its days.</div></div>}
+      {veh && from > to && <div className="vz-meta" style={{ color:"#B4262A" }}>The From date is after the To date.</div>}
+      {veh && rows.length >= MAX_DAYS && <div className="vz-meta">Showing the first {MAX_DAYS} days — narrow the dates to see the rest.</div>}
+      {veh && rows.length > 0 && (
+        <div className="vz-tablewrap">
+          <table className="vz-table">
+            <thead><tr>
+              <th>S.no</th><th>Date</th><th className="n">Starting Km</th><th className="n">Closing KM</th>
+              <th className="n">Running</th><th>Driver Name</th><th className="n">Salary</th>
+            </tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.date}>
+                  <td>{r.n}</td>
+                  <td>{dmy(r.date).replace(/\//g, "-")}</td>
+                  <td className="n"><input type="number" inputMode="numeric" style={cell} key={r.date + "o" + (r.rec.openKm == null ? "" : r.rec.openKm)}
+                    defaultValue={r.rec.openKm == null ? "" : r.rec.openKm} placeholder={r.startHint != null ? String(r.startHint) : ""}
+                    onBlur={e => commit(r, "openKm", e.target.value)} /></td>
+                  <td className="n"><input type="number" inputMode="numeric" style={cell} key={r.date + "c" + (r.rec.closeKm == null ? "" : r.rec.closeKm)}
+                    defaultValue={r.rec.closeKm == null ? "" : r.rec.closeKm}
+                    onBlur={e => commit(r, "closeKm", e.target.value)} /></td>
+                  <td className="n" style={{ fontWeight:700, color: r.running != null && r.running < 0 ? "#B4262A" : undefined }}>{r.running != null ? r.running : ""}</td>
+                  <td>{r.name}</td>
+                  <td className="n">{r.salary != null ? r.salary : ""}</td>
+                </tr>
+              ))}
+              <tr className="tot"><td colSpan={4}>Total</td><td className="n">{totalKm}</td><td></td><td className="n">{totalSalary}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="vz-meta">
+        Type the starting and closing km on each date — Running is worked out for you. A blank starting km
+        uses the previous day's closing. Salary is that driver's daily wage (plus batta on an outstation day).
+      </div>
     </Sheet>
   );
 }
@@ -2749,10 +2826,10 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
       </div>
       <F label="Emergency contact *"><input value={f.refPhone} onChange={u("refPhone")} inputMode="tel" placeholder="Family / emergency number" /></F>
       <div className="vz-2">
-        <F label="Daily wage ₹"><input type="number" value={f.wage} onChange={u("wage")} inputMode="numeric" /></F>
+        <F label="Local wage ₹ per day"><input type="number" value={f.wage} onChange={u("wage")} inputMode="numeric" /></F>
         <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
       </div>
-      <F label="Outstation batta ₹ per day">
+      <F label="Outstation wage (batta) ₹ per day — on top of the local wage">
         <input type="number" value={f.batta === undefined ? "" : f.batta} onChange={u("batta")} inputMode="numeric" placeholder="0" />
       </F>
       <div className="vz-meta" style={{ marginTop:-4 }}>
@@ -2812,7 +2889,7 @@ function DriverForm({ init, pics, canEdit = true, canDel = true, onPhoto, onSave
    anything to sign in for. Kept separate from drivers, whose pay depends on
    which days they actually worked. */
 function StaffForm({ init, onSave, onDelete, onClose }) {
-  const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", joined:today(), active:true, bankAccount:"", ifsc:"" });
+  const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", outstationWage:"", joined:today(), active:true, bankAccount:"", ifsc:"" });
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
   const ready = f.name.trim() && +f.weeklyWage > 0;
   return (
@@ -2823,8 +2900,13 @@ function StaffForm({ init, onSave, onDelete, onClose }) {
         <F label="Role / title"><input value={f.role} onChange={u("role")} placeholder="Supervisor" /></F>
       </div>
       <div className="vz-2">
-        <F label="Weekly wage ₹"><input type="number" value={f.weeklyWage} onChange={u("weeklyWage")} inputMode="numeric" min="0" /></F>
-        <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
+        <F label="Local wage ₹ per week"><input type="number" value={f.weeklyWage} onChange={u("weeklyWage")} inputMode="numeric" min="0" /></F>
+        <F label="Outstation wage ₹ per day"><input type="number" value={f.outstationWage ?? ""} onChange={u("outstationWage")} inputMode="numeric" min="0" placeholder="0" /></F>
+      </div>
+      <F label="Joined on"><input type="date" value={f.joined} onChange={u("joined")} /></F>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        The local wage is paid every week. The outstation wage is added on top for each day they
+        are out of town — you enter those days on the payroll sheet.
       </div>
       <div className="vz-2">
         <F label="Bank account number"><input value={f.bankAccount || ""} onChange={u("bankAccount")} inputMode="numeric" /></F>
@@ -2835,7 +2917,7 @@ function StaffForm({ init, onSave, onDelete, onClose }) {
         Active — paid every week until turned off
       </label>
       <button className="vz-btn" disabled={!ready}
-        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), weeklyWage: +f.weeklyWage || 0 })}>
+        onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), weeklyWage: +f.weeklyWage || 0, outstationWage: +f.outstationWage || 0 })}>
         Save staff
       </button>
       {!ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name and a weekly wage above zero.</div>}
@@ -5786,7 +5868,7 @@ function AdvanceForm({ driver, db, onSave, onDelete, onClose }) {
   );
 }
 
-function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onAdvance, onPayWeek, onPayslip, onClose }) {
+function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onStaffOut, onAdvance, onPayWeek, onPayslip, onClose }) {
   const [closing, setClosing] = useState(null);   // {id, km} while ending a duty
   const [openRow, setOpenRow] = useState("");     // driver whose week is expanded
   // Payroll runs Sunday to Saturday and is keyed by the Saturday it is paid
@@ -5808,8 +5890,16 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
   // not before the person joined, and not once turned inactive.
   const staffRows = (db.staff || [])
     .filter(s => s.active !== false && (!s.joined || s.joined <= weekEnd))
-    .map(s => ({ id: s.id, kind: "staff", name: s.name,
-      sub: "weekly" + (s.role ? " · " + s.role : ""), pay: +s.weeklyWage || 0, rec: s }));
+    .map(s => {
+      // Local wage every week, plus the outstation wage for each day out of town
+      // that was entered for this week (kept per staff member per week).
+      const local = +s.weeklyWage || 0, perDay = +s.outstationWage || 0;
+      const outDays = perDay > 0 ? ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0 : 0;
+      const outPay = outDays * perDay;
+      return { id: s.id, kind: "staff", name: s.name, local, outDays, outPay, perDay,
+        sub: "local " + inr(local) + "/wk" + (outDays > 0 ? " + " + outDays + " outstation day" + (outDays === 1 ? "" : "s") + " × " + inr(perDay) : "") + (s.role ? " · " + s.role : ""),
+        pay: local + outPay, rec: s };
+    });
   const rows = [...driverRows, ...staffRows].sort((a, b) => b.pay - a.pay);
   const driverBill = driverRows.reduce((s, r) => s + r.pay, 0);
   const staffBill = staffRows.reduce((s, r) => s + r.pay, 0);
@@ -5906,10 +5996,26 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
           </>
         );
         if (r.kind === "staff") {
-          return perm.money
-            ? <button className="vz-kv vz-tapcard" key={r.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6, width:"100%", textAlign:"left" }}
-                onClick={() => onEditStaff(r.rec)}>{row}</button>
-            : <div className="vz-kv" key={r.id} style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>{row}</div>;
+          return (
+            <div key={r.id} style={{ background:"#fff", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
+              {perm.money
+                ? <button className="vz-kv vz-tapcard" style={{ padding:"11px 13px", width:"100%", textAlign:"left", background:"transparent", border:0 }}
+                    onClick={() => onEditStaff(r.rec)}>{row}</button>
+                : <div className="vz-kv" style={{ padding:"11px 13px" }}>{row}</div>}
+              {r.perDay > 0 && (
+                <div className="vz-kv" style={{ padding:"0 13px 10px", borderTop:"none", alignItems:"center" }}>
+                  <span className="vz-meta" style={{ marginTop:0 }}>Outstation days this week · {inr(r.perDay)} each</span>
+                  {perm.money
+                    ? <span style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+                        <button className="vz-chip c-grey" disabled={r.outDays <= 0} onClick={() => onStaffOut(r.id, weekEnd, r.outDays - 1)}>−</button>
+                        <b style={{ minWidth:18, textAlign:"center" }}>{r.outDays}</b>
+                        <button className="vz-chip c-green" disabled={r.outDays >= 7} onClick={() => onStaffOut(r.id, weekEnd, r.outDays + 1)}>+</button>
+                      </span>
+                    : <b>{r.outDays}</b>}
+                </div>
+              )}
+            </div>
+          );
         }
         /* A driver's week opens up: every day he was out, with the outstation
            tick that earns him his batta, and what he has taken in advance. The
@@ -6010,7 +6116,7 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
       <button className="vz-btn alt" disabled={!rows.length} onClick={() => {
         const out = [["Week ending", "Name", "Type", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
         driverRows.forEach(r => out.push([dmy(weekEnd), r.name, "Driver", r.w.days, r.w.outDays, r.w.wage, r.w.batta, r.w.advance, r.w.net]));
-        staffRows.forEach(r => out.push([dmy(weekEnd), r.name, "Staff", "", "", r.pay, 0, 0, r.pay]));
+        staffRows.forEach(r => out.push([dmy(weekEnd), r.name, "Staff", "", r.outDays || "", r.local, r.outPay, 0, r.pay]));
         out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", bill]);
         downloadCsv("payroll-week-ending-" + weekEnd + ".csv", out);
       }}>Export this week's payroll</button>
@@ -7292,7 +7398,7 @@ function VibeCRM() {
         lines: rows.map(r => r.kind === "driver"
           ? { id: r.id, name: r.name, kind: "driver", days: r.w.days, outDays: r.w.outDays,
               wage: r.w.wage, batta: r.w.batta, advance: r.w.advance, net: r.w.net }
-          : { id: r.id, name: r.name, kind: "staff", net: r.pay }),
+          : { id: r.id, name: r.name, kind: "staff", outDays: r.outDays || 0, wage: r.local, batta: r.outPay || 0, net: r.pay }),
       });
       setToast("Released for payment · " + inr(total));
       return;
@@ -7449,7 +7555,7 @@ function VibeCRM() {
 
       {(perm.money || perm.fleetEdit) && (() => {
         const todaysLogs = (db.kmLogs || []).filter(x => x.date === today());
-        const todaysKm = todaysLogs.reduce((s, x) => s + Math.max(0, (+x.closeKm || 0) - (+x.openKm || 0)), 0);
+        const todaysKm = todaysLogs.reduce((s, x) => s + ((x.openKm != null && x.closeKm != null) ? Math.max(0, x.closeKm - x.openKm) : 0), 0);
         return (
           <button className="vz-card vz-tapcard" onClick={() => setSheet({ type:"kmlog" })}>
             <div className="vz-row">
@@ -9370,6 +9476,11 @@ function VibeCRM() {
         onPunchIn={officePunchIn} onPunchOut={officePunchOut}
         onEditStaff={(s) => setSheet({ type:"staff", data:s })}
         onOutstation={(a, on) => setDb(d => ({ ...d, attendance: (d.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }))}
+        onStaffOut={(staffId, weekEnd, days) => {
+          const id = staffId + "_" + weekEnd;
+          if (days <= 0) drop("staffOuts", id);
+          else put("staffOuts", { id, staffId, weekEnd, days });
+        }}
         onAdvance={(drv) => setSheet({ type:"advance", data:drv })}
         onPayWeek={payWeek} onPayslip={sendPayslip}
         onClose={() => setSheet(null)} />}
@@ -9411,9 +9522,8 @@ function VibeCRM() {
         <BankReconSheet db={db} put={put} drop={drop} onClose={() => setSheet(null)} />
       )}
       {sheet?.type === "kmlog" && (
-        <KmLogSheet db={db} onClose={() => setSheet(null)}
-          onAdd={() => setSheet({ type:"kmlogform" })}
-          onEdit={(x) => setSheet({ type:"kmlogform", data:x })} />
+        <KmLogSheet db={db} put={put} drop={drop} onClose={() => setSheet(null)}
+          onAdd={(vehicleId) => setSheet({ type:"kmlogform", vehicleId })} />
       )}
       {sheet?.type === "kmlogform" && (
         <KmLogForm init={sheet.data} vehicles={db.vehicles} defaultVehicleId={sheet.vehicleId} onClose={() => setSheet({ type:"kmlog" })}
