@@ -2827,7 +2827,7 @@ function RatePeriods({ rates, onChange, localLabel, outLabel }) {
     <>
       <div className="vz-eyebrow">
         Rate for a period
-        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "" }])}>+ Add period</button>
+        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "", campaign: "" }])}>+ Add period</button>
       </div>
       {rates.length === 0 && (
         <div className="vz-meta" style={{ marginTop:-4 }}>
@@ -2848,6 +2848,7 @@ function RatePeriods({ rates, onChange, localLabel, outLabel }) {
               <F label={localLabel}><input type="number" inputMode="numeric" value={r.local} onChange={e => set(r.id, { local: e.target.value })} /></F>
               <F label={outLabel}><input type="number" inputMode="numeric" value={r.outstation} onChange={e => set(r.id, { outstation: e.target.value })} placeholder="same as local" /></F>
             </div>
+            <F label="Campaign / job name (optional)"><input value={r.campaign || ""} onChange={e => set(r.id, { campaign: e.target.value })} placeholder="Which campaign this period is for" /></F>
             {bad && <div className="vz-meta" style={{ color:"#B4262A", marginTop:0 }}>Needs a From date, and To can't be earlier than From.</div>}
             {!touched && <div className="vz-meta" style={{ marginTop:0 }}>Not saved until it has a rate — fine to leave blank, or remove it below.</div>}
             <button className="vz-chip c-red" onClick={() => onChange(rates.filter(x => x.id !== r.id))}>Remove this period</button>
@@ -2866,7 +2867,10 @@ function StaffForm({ init, initRates, onSave, onDelete, onClose }) {
   const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", outstationWage:"", joined:today(), active:true, bankAccount:"", ifsc:"" });
   const [rates, setRates] = useState(initRates || []);
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
-  const ready = f.name.trim() && +f.weeklyWage > 0;
+  // Most staff are paid a flat weekly wage, but some (like a driver kept on
+  // the Staff list) are outstation-only and have no local wage at all — don't
+  // block Save on a wage that doesn't apply to them.
+  const ready = f.name.trim() && (+f.weeklyWage > 0 || +f.outstationWage > 0 || rates.some(r => +r.local > 0 || +r.outstation > 0));
   return (
     <Sheet title={init ? "Edit staff" : "Add staff"} onClose={onClose}>
       <F label="Name"><input value={f.name} onChange={u("name")} placeholder="Full name" /></F>
@@ -2896,7 +2900,7 @@ function StaffForm({ init, initRates, onSave, onDelete, onClose }) {
         onClick={() => onSave({ ...f, id: f.id || uid(), name: f.name.trim(), weeklyWage: +f.weeklyWage || 0, outstationWage: +f.outstationWage || 0 }, rates)}>
         Save staff
       </button>
-      {!ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name and a weekly wage above zero.</div>}
+      {!ready && <div className="vz-meta" style={{ color:"#B4262A" }}>Required: name, and a local or outstation wage above zero (either above, or in a rate period below).</div>}
       {init && <button className="vz-btn warn" onClick={() => onDelete(init.id)}>Remove from staff</button>}
     </Sheet>
   );
@@ -6744,9 +6748,9 @@ function VibeCRM() {
     const keep = (rates || []).filter(r => r.from && (+r.local > 0 || +r.outstation > 0));
     cur.filter(c => !keep.some(r => r.id === c.id)).forEach(c => drop("wageRates", c.id));
     keep.forEach(r => {
-      const rec = { id: r.id, personId, from: r.from, to: r.to || "", local: +r.local || 0, outstation: r.outstation === "" ? "" : (+r.outstation || 0) };
+      const rec = { id: r.id, personId, from: r.from, to: r.to || "", local: +r.local || 0, outstation: r.outstation === "" ? "" : (+r.outstation || 0), campaign: r.campaign || "" };
       const old = cur.find(c => c.id === r.id);
-      if (!old || old.from !== rec.from || old.to !== rec.to || old.local !== rec.local || old.outstation !== rec.outstation) put("wageRates", rec);
+      if (!old || old.from !== rec.from || old.to !== rec.to || old.local !== rec.local || old.outstation !== rec.outstation || old.campaign !== rec.campaign) put("wageRates", rec);
     });
   };
   const savePic = (id, dataUrl) => setPics(p => {
