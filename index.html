@@ -2851,7 +2851,13 @@ function DriverForm({ init, initRates, pics, canEdit = true, canDel = true, onPh
    From and a To date, on top of the person's standard rates. The editor keeps
    the list in the parent form's state; the parent saves it (db.wageRates) with
    the person. A blank To date means "until changed". */
-const ratePeriodsOk = (rates) => (rates || []).every(r => r.from && (!r.to || r.to >= r.from) && (+r.local > 0 || +r.outstation > 0));
+// A period with no rate typed into it yet is just unfinished, not wrong — it's
+// silently dropped at save time (saveRates filters the same way), so it must
+// never be the reason the whole form's Save button is stuck disabled. Only a
+// period that actually carries a rate has to have a sensible date range.
+const ratePeriodsOk = (rates) => (rates || [])
+  .filter(r => +r.local > 0 || +r.outstation > 0)
+  .every(r => r.from && (!r.to || r.to >= r.from));
 function RatePeriods({ rates, onChange, localLabel, outLabel }) {
   const set = (id, patch) => onChange(rates.map(r => (r.id === id ? { ...r, ...patch } : r)));
   return (
@@ -2867,7 +2873,8 @@ function RatePeriods({ rates, onChange, localLabel, outLabel }) {
         </div>
       )}
       {rates.map(r => {
-        const bad = !r.from || (r.to && r.to < r.from) || !(+r.local > 0 || +r.outstation > 0);
+        const touched = +r.local > 0 || +r.outstation > 0;
+        const bad = touched && (!r.from || (r.to && r.to < r.from));
         return (
           <div className="vz-card" key={r.id} style={{ padding:"10px 12px", marginBottom:8, borderColor: bad ? "#F2C9C9" : undefined }}>
             <div className="vz-2">
@@ -2878,7 +2885,8 @@ function RatePeriods({ rates, onChange, localLabel, outLabel }) {
               <F label={localLabel}><input type="number" inputMode="numeric" value={r.local} onChange={e => set(r.id, { local: e.target.value })} /></F>
               <F label={outLabel}><input type="number" inputMode="numeric" value={r.outstation} onChange={e => set(r.id, { outstation: e.target.value })} placeholder="same as local" /></F>
             </div>
-            {bad && <div className="vz-meta" style={{ color:"#B4262A", marginTop:0 }}>Needs a From date (To can't be earlier) and at least one rate.</div>}
+            {bad && <div className="vz-meta" style={{ color:"#B4262A", marginTop:0 }}>Needs a From date, and To can't be earlier than From.</div>}
+            {!touched && <div className="vz-meta" style={{ marginTop:0 }}>Not saved until it has a rate — fine to leave blank, or remove it below.</div>}
             <button className="vz-chip c-red" onClick={() => onChange(rates.filter(x => x.id !== r.id))}>Remove this period</button>
           </div>
         );
