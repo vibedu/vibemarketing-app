@@ -3689,6 +3689,34 @@ const staffWeekPay = (db, s, weekEnd) => {
   return { local, outDays, perDay, outPay, wage, batta, gross: wage + batta };
 };
 
+/* One row per date, for the day-wise report — a driver's real duty days
+   (db.attendance), or a staff member's dated rate periods, whichever the
+   kind calls for. A staff member's local wage is paid once a week, not once
+   a day, so it never appears here — only the days that actually had a rate
+   (i.e. outstation-style day-pay) show a row. */
+const dayRowsFor = (db, person, kind, from, to) => {
+  const rows = [];
+  if (kind === "driver") {
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const att = (db.attendance || []).find(a => a.driverId === person.id && a.date === d);
+      if (!att) continue;
+      const dp = dayPay(db, person, att);
+      rows.push({ date: d, outstation: !!att.outstation, rate: dp.pay, pay: dp.pay, vehicle: att.vehiclePlate || "" });
+    }
+  } else {
+    const periods = (db.wageRates || []).filter(r => r.personId === person.id && r.from);
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+      if (!hit) continue;
+      const blank = hit.outstation === "" || hit.outstation == null;
+      const rate = blank ? 0 : (+hit.outstation || 0);
+      if (rate <= 0) continue;
+      rows.push({ date: d, outstation: true, rate, pay: rate, campaign: hit.campaign || "" });
+    }
+  }
+  return rows;
+};
+
 /* An advance is money handed over ahead of the wage; it is outstanding until
    the weeks that follow have covered it. Recovery is applied week by week in
    order, so a Friday advance never disappears against a wage already paid.
@@ -6104,7 +6132,96 @@ function BattaForm({ person, kind, week, weekEnd, onToggleDuty, onSetStaffOut, c
   );
 }
 
-function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onStaffOut, onAdvance, onBatta, onPayWeek, onPayslip, onPdf, pdfBusy, onClose }) {
+/* One person, one date range, one row per day — the same figures the weekly
+   payroll table totals up, but readable date by date instead of only as a
+   week's sum. A driver's days come from real duty punch-ins; a staff
+   member's from their dated rate periods (dayRowsFor). */
+function DayWiseSheet({ db, onPdf, pdfBusy, onClose }) {
+  const drivers = db.drivers || [];
+  const staff = (db.staff || []).filter(s => s.active !== false);
+  const firstKey = drivers[0] ? "driver:" + drivers[0].id : staff[0] ? "staff:" + staff[0].id : "";
+  const [personKey, setPersonKey] = useState(firstKey);
+  const [from, setFrom] = useState(today().slice(0, 7) + "-01");
+  const [to, setTo] = useState(today());
+  const [kind, id] = personKey.split(":");
+  const person = kind === "driver" ? drivers.find(d => d.id === id) : staff.find(s => s.id === id);
+  const MAX_DAYS = 93;
+  const inRange = from && to && from <= to;
+  const rows = person && inRange ? dayRowsFor(db, person, kind, from, to).slice(0, MAX_DAYS) : [];
+  const total = rows.reduce((s, r) => s + r.pay, 0);
+  const fileTag = (person ? person.name.replace(/\s+/g, "") : "report") + "-" + from + "_to_" + to;
+
+  const exportCsv = () => {
+    const out = [[person ? person.name : ""], ["Date", "Outstation", "Rate", "Campaign", "Amount"]];
+    rows.forEach(r => out.push([dmy(r.date), r.outstation ? "Yes" : "No", r.rate, r.campaign || "", r.pay]));
+    out.push([]); out.push(["", "", "", "TOTAL", total]);
+    downloadCsv("day-wise-" + fileTag + ".csv", out);
+  };
+  const exportPdf = () => {
+    const cols = [
+      { key:"date", label:"Date", w:18, align:"left" }, { key:"campaign", label:"Campaign", w:37, align:"left" },
+      { key:"rate", label:"Rate", w:20, align:"right" }, { key:"pay", label:"Amount", w:25, align:"right" },
+    ];
+    const pdfRows = rows.map(r => ({ date: dmy(r.date), campaign: r.campaign || r.vehicle || "—", rate: inr(r.rate), pay: inr(r.pay) }));
+    pdfRows.push({ _total:true, date:"", campaign:"", rate:"TOTAL", pay: inr(total) });
+    onPdf("DAY-WISE REPORT", (person ? person.name + " · " : "") + dmy(from) + " to " + dmy(to), cols, pdfRows, "day-wise-" + fileTag + ".pdf");
+  };
+
+  return (
+    <Sheet title="Day-wise payroll" onClose={onClose}>
+      <F label="Person">
+        <select value={personKey} onChange={e => setPersonKey(e.target.value)}>
+          {drivers.length > 0 && <optgroup label="Drivers">{drivers.map(d => <option key={d.id} value={"driver:" + d.id}>{d.name}</option>)}</optgroup>}
+          {staff.length > 0 && <optgroup label="Staff">{staff.map(s => <option key={s.id} value={"staff:" + s.id}>{s.name}</option>)}</optgroup>}
+        </select>
+      </F>
+      <div className="vz-2">
+        <F label="From date"><input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} /></F>
+        <F label="To date"><input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} /></F>
+      </div>
+      <div className="vz-grid" style={{ margin:"10px 0 6px" }}>
+        <div className="vz-stat"><i>Days paid</i><b style={{ fontSize:18 }}>{rows.length}</b><small>{person ? person.name : "—"}</small></div>
+        <div className="vz-stat"><i>Total</i><b style={{ fontSize:18 }}>{inr(total)}</b><small>{inRange ? dmy(from) + " – " + dmy(to) : "—"}</small></div>
+      </div>
+      {!person && <div className="vz-card"><div className="vz-meta">No drivers or staff on file.</div></div>}
+      {person && !inRange && <div className="vz-meta" style={{ color:"#B4262A" }}>The From date is after the To date.</div>}
+      {person && inRange && rows.length === 0 && (
+        <div className="vz-card"><div className="vz-meta">
+          No paid days in this range — {kind === "driver" ? "no duty recorded for these dates" : "no rate period covers these dates"}.
+        </div></div>
+      )}
+      {rows.length >= MAX_DAYS && <div className="vz-meta">Showing the first {MAX_DAYS} days — narrow the dates to see the rest.</div>}
+      {rows.length > 0 && (
+        <div className="vz-tablewrap">
+          <table className="vz-table">
+            <thead><tr><th>Date</th><th>Campaign</th><th className="n">Rate</th><th className="n">Amount</th></tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.date}>
+                  <td>{dmy(r.date)}</td>
+                  <td>{r.campaign || r.vehicle || "—"}</td>
+                  <td className="n">{inr(r.rate)}</td>
+                  <td className="n">{inr(r.pay)}</td>
+                </tr>
+              ))}
+              <tr className="tot"><td colSpan={3}>Total</td><td className="n">{inr(total)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="vz-2">
+        <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length} onClick={exportCsv}>Export as Excel</button>
+        <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length || pdfBusy} onClick={exportPdf}>{pdfBusy ? "Building…" : "Download as PDF"}</button>
+      </div>
+      <div className="vz-meta">
+        A driver's days come from actual duty punch-ins; a staff member's come from their dated rate periods.
+        A flat local weekly wage isn't shown here — it's paid once a week, not once a day.
+      </div>
+    </Sheet>
+  );
+}
+
+function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onStaffOut, onAdvance, onBatta, onPayWeek, onPayslip, onPdf, pdfBusy, onDayWise, onClose }) {
   const [closing, setClosing] = useState(null);   // {id, km} while ending a duty
   const [openRow, setOpenRow] = useState("");     // driver whose week is expanded
   // Payroll runs Sunday to Saturday and is keyed by the Saturday it is paid
@@ -6471,6 +6588,7 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
       {perm.money && (
         <button className="vz-btn alt" onClick={() => onEditStaff(null)}>Add staff — fixed weekly wage</button>
       )}
+      <button className="vz-btn alt" onClick={onDayWise}>Day-wise payroll report</button>
       {(() => {
         // Whichever filter is on screen — one week, a month, or a campaign —
         // is exactly what the CSV and PDF below are built from.
@@ -9484,7 +9602,11 @@ function VibeCRM() {
         onBatta={(personId, kind, weekEnd) => setSheet({ type:"batta", data:{ personId, kind, weekEnd } })}
         onPayWeek={payWeek} onPayslip={sendPayslip}
         onPdf={buildPayrollPdf} pdfBusy={payDocBusy}
+        onDayWise={() => setSheet({ type:"daywise" })}
         onClose={() => setSheet(null)} />}
+      {sheet?.type === "daywise" && (
+        <DayWiseSheet db={db} onPdf={buildPayrollPdf} pdfBusy={payDocBusy} onClose={() => setSheet({ type:"attendance" })} />
+      )}
       {sheet?.type === "expenses" && (
         <ExpensesSheet db={db} vehOf={vehOf} onClose={() => setSheet(null)}
           onAdd={() => setSheet({ type:"expense" })}
