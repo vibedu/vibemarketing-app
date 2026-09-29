@@ -1666,6 +1666,61 @@ const creditNotePage = async ({ s, v, o, cn }) => {
   return [{ url: P.c.toDataURL("image/jpeg", 0.92), w: PAGE_W, h: PAGE_H }];
 };
 
+/* Payroll report PDF — a plain table, paginating itself with a repeating
+   header, in the same shape as the office's own Excel sheet and the CSV
+   export next to it. `cols` is [{key, label, w (percent), align}], `rows`
+   plain objects keyed to match, with one row carrying `_total: true` for the
+   bold grand-total line at the foot of the table. */
+const payrollPages = async ({ s, title, periodLabel, cols, rows }) => {
+  const M = 50, RIGHT = PAGE_W - M, TOTAL_W = RIGHT - M;
+  const logo = await inkLogo();
+  const ROWS_PER_PAGE = 26;
+  const pageCount = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+  const xs = []; { let x = M; cols.forEach(c => { xs.push(x); x += (c.w / 100) * TOTAL_W; }); }
+  const cellX = (i) => cols[i].align === "right" ? xs[i] + (cols[i].w / 100) * TOTAL_W - 8 : xs[i] + 8;
+  const pages = [];
+  for (let pi = 0; pi < pageCount; pi++) {
+    const P = newDocPage(), g = P.g, F = P.F;
+    let y = 56;
+    g.textAlign = "left";
+    if (logo) { const lw = 230, lh = Math.round(lw * logo.height / logo.width); g.drawImage(logo, M, y, lw, lh); }
+    else { g.fillStyle = DOC_INK; F("800", 28); g.fillText((s.company || "Vibe Marketing").toUpperCase(), M, y + 24); }
+    g.textAlign = "right"; g.fillStyle = DOC_ORANGE; F("800", 30); g.fillText(title, RIGHT, y + 24);
+    g.fillStyle = DOC_MUTE; F("500", 16); g.fillText(periodLabel, RIGHT, y + 48);
+    y += 84;
+    g.strokeStyle = DOC_LINE; g.lineWidth = 1.2; g.beginPath(); g.moveTo(M, y); g.lineTo(RIGHT, y); g.stroke();
+    y += 22;
+
+    g.fillStyle = "#F2F3F5"; g.fillRect(M, y, TOTAL_W, 30);
+    cols.forEach((c, i) => { g.textAlign = c.align === "right" ? "right" : "left"; g.fillStyle = DOC_MUTE; F("700", 12);
+      g.fillText(c.label.toUpperCase(), cellX(i), y + 20); });
+    y += 30;
+    g.strokeStyle = DOC_LINE; g.lineWidth = 1; g.beginPath(); g.moveTo(M, y); g.lineTo(RIGHT, y); g.stroke();
+
+    const ROW_H = 28;
+    const pageRows = rows.slice(pi * ROWS_PER_PAGE, (pi + 1) * ROWS_PER_PAGE);
+    pageRows.forEach((row, ri) => {
+      const ry = y + ri * ROW_H;
+      if (row._total) { g.strokeStyle = DOC_INK; g.lineWidth = 1.4; g.beginPath(); g.moveTo(M, ry); g.lineTo(RIGHT, ry); g.stroke(); }
+      else if (ri % 2 === 1) { g.fillStyle = "#FAFBFC"; g.fillRect(M, ry, TOTAL_W, ROW_H); }
+      cols.forEach((c, i) => {
+        g.textAlign = c.align === "right" ? "right" : "left"; g.fillStyle = DOC_INK; F(row._total ? "800" : "500", row._total ? 15 : 13);
+        const val = row[c.key] == null ? "" : String(row[c.key]);
+        g.fillText(val, cellX(i), ry + 19);
+      });
+    });
+    y += pageRows.length * ROW_H;
+    g.strokeStyle = DOC_LINE; g.lineWidth = 1; g.beginPath(); g.moveTo(M, y); g.lineTo(RIGHT, y); g.stroke();
+
+    g.fillStyle = DOC_ORANGE; g.fillRect(0, PAGE_H - 9, PAGE_W, 9);
+    g.textAlign = "center"; g.fillStyle = DOC_MUTE; F("500", 15);
+    g.fillText((s.company || "Vibe Marketing") + "   ·   page " + (pi + 1) + " of " + pageCount, PAGE_W / 2, PAGE_H - 30);
+
+    pages.push({ url: P.c.toDataURL("image/jpeg", 0.9), w: PAGE_W, h: PAGE_H });
+  }
+  return pages;
+};
+
 /* ---------------------------- message templates ---------------------------- */
 const proformaText = (o, v, m, kind) => {
   const k = kind || "proforma";
@@ -1966,7 +2021,7 @@ const blankData = () => ({
     bankOpeningBalance: 0, bankOpeningDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [], wageRates: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [], wageRates: [], weekNotes: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -1979,11 +2034,11 @@ const blankData = () => ({
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing",
-                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout", wageRates:"wagerate" };
+                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout", wageRates:"wagerate", weekNotes:"weeknote" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings",
-                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts", wagerate:"wageRates" };
+                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts", wagerate:"wageRates", weeknote:"weekNotes" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -3558,9 +3613,25 @@ const driverWeek = (db, driver, weekStart, weekEnd) => {
   return { days: days.length, outDays, wage, batta, gross, advance: deduct, owed, net: gross - deduct, records: days };
 };
 
+// A staff member's gross pay for one week: the flat local wage, plus
+// outstation pay for whichever days were logged out of town that week
+// (db.staffOuts) — the flat-wage equivalent of a driver's dayPay.
+const staffWeekPay = (db, s, weekEnd) => {
+  const sr = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0);
+  const local = sr.local, perDay = sr.out;
+  const outDays = perDay > 0 ? ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0 : 0;
+  const outPay = outDays * perDay;
+  return { local, outDays, perDay, outPay, gross: local + outPay };
+};
+
 /* An advance is money handed over ahead of the wage; it is outstanding until
    the weeks that follow have covered it. Recovery is applied week by week in
-   order, so a Friday advance never disappears against a wage already paid. */
+   order, so a Friday advance never disappears against a wage already paid.
+
+   db.advances is keyed by "driverId" for both drivers and staff — an advance
+   record doesn't care which kind of person it was given to, and giving staff
+   their own field would mean two places to look up "does this person have an
+   advance outstanding" everywhere else in the app. */
 const advanceOwed = (db, driverId, uptoWeekEnd) => {
   const taken = (db.advances || [])
     .filter(a => a.driverId === driverId && String(a.date || "") <= uptoWeekEnd)
@@ -3580,6 +3651,31 @@ const advanceOwed = (db, driverId, uptoWeekEnd) => {
         .reduce((s, a) => s + (+a.amount || 0), 0);
       const gross = days.reduce((s, a) => s + dayPay(db, drv, a).pay, 0);
       recovered += Math.min(Math.max(0, takenBy - recovered), gross);
+    }
+  }
+  return Math.max(0, taken - recovered);
+};
+
+/* Same idea as advanceOwed, but walked against a staff member's flat weekly
+   gross (staffWeekPay) instead of a driver's per-day attendance pay — staff
+   have no daily duty records to recover an advance against. */
+const staffAdvanceOwed = (db, staffId, uptoWeekEnd) => {
+  const taken = (db.advances || [])
+    .filter(a => a.driverId === staffId && String(a.date || "") <= uptoWeekEnd)
+    .reduce((s, a) => s + (+a.amount || 0), 0);
+  if (taken <= 0) return 0;
+  const first = (db.advances || []).filter(a => a.driverId === staffId)
+    .reduce((mn, a) => (!mn || a.date < mn ? a.date : mn), "");
+  let recovered = 0;
+  if (first) {
+    const s = (db.staff || []).find(x => x.id === staffId);
+    if (s) {
+      for (let w = weekEnding(first); w < uptoWeekEnd; w = addDays(w, 7)) {
+        const takenBy = (db.advances || []).filter(a => a.driverId === staffId && String(a.date || "") <= w)
+          .reduce((sum, a) => sum + (+a.amount || 0), 0);
+        const gross = staffWeekPay(db, s, w).gross;
+        recovered += Math.min(Math.max(0, takenBy - recovered), gross);
+      }
     }
   }
   return Math.max(0, taken - recovered);
@@ -5844,23 +5940,26 @@ function OfficePunchIn({ db, vehOf, onPunchIn }) {
 
 /* Cash handed to a driver ahead of his wage. It is recovered from the coming
    weeks automatically, so nobody has to remember it on a Saturday. */
-function AdvanceForm({ driver, db, onSave, onDelete, onClose }) {
+/* Advance is its own dialog, separate from the payroll table it's read back
+   into — for a driver or a staff member alike (db.advances is keyed by
+   "driverId" for both; see the comment on advanceOwed). */
+function AdvanceForm({ person, kind, db, onSave, onDelete, onClose }) {
   const [f, set] = useState({ date: today(), amount:"", note:"" });
-  const mine = (db.advances || []).filter(a => a.driverId === driver.id).sort((a, b) => (a.date < b.date ? 1 : -1));
-  const owed = advanceOwed(db, driver.id, weekEnding(today()));
+  const mine = (db.advances || []).filter(a => a.driverId === person.id).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const owed = kind === "staff" ? staffAdvanceOwed(db, person.id, weekEnding(today())) : advanceOwed(db, person.id, weekEnding(today()));
   return (
-    <Sheet title={"Advance · " + driver.name} onClose={onClose}>
+    <Sheet title={"Advance · " + person.name} onClose={onClose}>
       <div className="vz-stat" style={{ marginBottom:10 }}>
         <i>Still to recover</i><b style={{ fontSize:18 }}>{inr(owed)}</b>
         <small>comes off the coming weeks' wages</small>
       </div>
       <div className="vz-2">
         <F label="Amount ₹"><input type="number" value={f.amount} onChange={e => set({ ...f, amount: e.target.value })} inputMode="numeric" /></F>
-        <F label="Given on"><input type="date" value={f.date} onChange={e => set({ ...f, date: e.target.value })} /></F>
+        <F label="Advance date"><input type="date" value={f.date} onChange={e => set({ ...f, date: e.target.value })} /></F>
       </div>
       <F label="What for (optional)"><input value={f.note} onChange={e => set({ ...f, note: e.target.value })} placeholder="hospital, school fees…" /></F>
       <button className="vz-btn" disabled={!(+f.amount > 0)}
-        onClick={() => onSave({ id: uid(), driverId: driver.id, date: f.date, amount: +f.amount, note: f.note.trim() })}>
+        onClick={() => onSave({ id: uid(), driverId: person.id, date: f.date, amount: +f.amount, note: f.note.trim() })}>
         Record advance
       </button>
       {mine.length > 0 && <div className="vz-eyebrow">Advances given</div>}
@@ -5880,7 +5979,47 @@ function AdvanceForm({ driver, db, onSave, onDelete, onClose }) {
   );
 }
 
-function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onStaffOut, onAdvance, onPayWeek, onPayslip, onClose }) {
+/* Batta (outstation pay), its own dialog too — a driver's week of duty days
+   each with an outstation tick, or a staff member's outstation-day count for
+   the week, alongside the campaign the days were worked for. Previously this
+   lived inline inside the payroll row; now it has its own screen so entering
+   it doesn't fight for space with the rest of the row. */
+function BattaForm({ person, kind, week, weekEnd, onToggleDuty, onSetStaffOut, campaign, onSetCampaign, onClose }) {
+  const [note, setNote] = useState(campaign || "");
+  return (
+    <Sheet title={"Batta · " + person.name} onClose={onClose}>
+      <F label="Campaign / job this week (optional)">
+        <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => onSetCampaign(note)} placeholder="Which campaign these days were for" />
+      </F>
+      {kind === "driver" ? (
+        <>
+          <div className="vz-eyebrow">Duty days this week</div>
+          {week.length === 0 && <div className="vz-meta">No duty recorded this week.</div>}
+          {week.map(a => (
+            <div className="vz-kv" key={a.id}>
+              <span>{dmy(a.date)} · {a.vehiclePlate || "—"}
+                {(a.openKm != null && a.closeKm != null) ? "  " + (a.closeKm - a.openKm) + " km" : ""}</span>
+              <button className={"vz-chip " + (a.outstation ? "c-green" : "c-grey")} onClick={() => onToggleDuty(a, !a.outstation)}>
+                {a.outstation ? "Outstation ✓" : "Outstation"}
+              </button>
+            </div>
+          ))}
+        </>
+      ) : (
+        <div className="vz-kv" style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10 }}>
+          <span>Outstation days this week{person.perDay ? " · " + inr(person.perDay) + " each" : ""}</span>
+          <span style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+            <button className="vz-chip c-grey" disabled={person.outDays <= 0} onClick={() => onSetStaffOut(person.outDays - 1)}>−</button>
+            <b style={{ minWidth:18, textAlign:"center" }}>{person.outDays}</b>
+            <button className="vz-chip c-green" disabled={person.outDays >= 7} onClick={() => onSetStaffOut(person.outDays + 1)}>+</button>
+          </span>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onOutstation, onStaffOut, onAdvance, onBatta, onPayWeek, onPayslip, onPdf, pdfBusy, onClose }) {
   const [closing, setClosing] = useState(null);   // {id, km} while ending a duty
   const [openRow, setOpenRow] = useState("");     // driver whose week is expanded
   // Payroll runs Sunday to Saturday and is keyed by the Saturday it is paid
@@ -5888,36 +6027,106 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
   const [weekEnd, setWeekEnd] = useState(weekEnding(today()));
   const { start: weekStart } = weekRange(weekEnd);
   const inWeek = (d) => d >= weekStart && d <= weekEnd;
+  // How the payroll table below is sliced: one Saturday-ending week (as
+  // always), a whole calendar month rolled up, or one week filtered down to
+  // a single campaign — three different things finance asked to filter by.
+  const [scope, setScope] = useState("week");
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const [filterCampaign, setFilterCampaign] = useState("");
+  const campaignOf = (personId, we) => ((db.weekNotes || []).find(x => x.id === personId + "_" + we) || {}).campaign || "";
 
   const weekRecs = (db.attendance || []).filter(a => inWeek(String(a.date || "")));
-  const driverRows = db.drivers.map(d => {
-    const w = driverWeek(db, d, weekStart, weekEnd);
-    return { id: d.id, kind: "driver", name: d.name, w, rec: d,
-        sub: w.days + " day" + (w.days === 1 ? "" : "s")
-        + (w.outDays > 0 ? " (" + w.outDays + " outstation)" : "") + " · local " + inr(w.wage)
-        + (w.batta !== 0 ? (w.batta > 0 ? " + outstation " : " − outstation ") + inr(Math.abs(w.batta)) : "")
-        + (w.advance > 0 ? " − advance " + inr(w.advance) : ""),
-      pay: w.net };
-  });
-  // A fixed weekly wage, paid whether or not there was work that week — but
-  // not before the person joined, and not once turned inactive.
-  const staffRows = (db.staff || [])
-    .filter(s => s.active !== false && (!s.joined || s.joined <= weekEnd))
-    .map(s => {
-      // Local wage every week, plus the outstation wage for each day out of town
-      // that was entered for this week (kept per staff member per week).
-      const sr = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0);
-      const local = sr.local, perDay = sr.out;
-      const outDays = perDay > 0 ? ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0 : 0;
-      const outPay = outDays * perDay;
-      return { id: s.id, kind: "staff", name: s.name, local, outDays, outPay, perDay,
-        sub: "local " + inr(local) + "/wk" + (outDays > 0 ? " + " + outDays + " outstation day" + (outDays === 1 ? "" : "s") + " × " + inr(perDay) : "") + (s.role ? " · " + s.role : ""),
-        pay: local + outPay, rec: s };
+  // One week's rows, for any Saturday — shared by the normal week view, the
+  // campaign filter (still one real week, just narrowed), and the month
+  // roll-up below (which calls this once per week and sums the result).
+  const rowsForWeek = (we) => {
+    const { start } = weekRange(we);
+    const driverRows = db.drivers.map(d => {
+      const w = driverWeek(db, d, start, we);
+      const campaign = campaignOf(d.id, we);
+      return { id: d.id, kind: "driver", name: d.name, w, rec: d, campaign,
+          // Flat aliases so the CSV/PDF export can read week- and month-scope
+          // rows (drivers and staff alike) through one common shape.
+          days: w.days, outDays: w.outDays, wage: w.wage, batta: w.batta, advance: w.advance,
+          sub: w.days + " day" + (w.days === 1 ? "" : "s")
+          + (w.outDays > 0 ? " (" + w.outDays + " outstation)" : "") + " · local " + inr(w.wage)
+          + (w.batta !== 0 ? (w.batta > 0 ? " + outstation " : " − outstation ") + inr(Math.abs(w.batta)) : "")
+          + (w.advance > 0 ? " − advance " + inr(w.advance) : "")
+          + (campaign ? " · " + campaign : ""),
+        pay: w.net };
     });
-  const rows = [...driverRows, ...staffRows].sort((a, b) => b.pay - a.pay);
-  const driverBill = driverRows.reduce((s, r) => s + r.pay, 0);
-  const staffBill = staffRows.reduce((s, r) => s + r.pay, 0);
-  const bill = driverBill + staffBill;
+    // A fixed weekly wage, paid whether or not there was work that week — but
+    // not before the person joined, and not once turned inactive.
+    const staffRows = (db.staff || [])
+      .filter(s => s.active !== false && (!s.joined || s.joined <= we))
+      .map(s => {
+        const wp = staffWeekPay(db, s, we);
+        const owed = staffAdvanceOwed(db, s.id, we);
+        const advance = Math.min(owed, wp.gross);
+        const campaign = campaignOf(s.id, we);
+        return { id: s.id, kind: "staff", name: s.name, local: wp.local, outDays: wp.outDays, outPay: wp.outPay, perDay: wp.perDay,
+          advance, owed, campaign,
+          // Same flat aliases as the driver row above — "days" has no meaning
+          // for a flat weekly wage, so it's left blank rather than zero.
+          days: "", wage: wp.local, batta: wp.outPay,
+          sub: "local " + inr(wp.local) + "/wk" + (wp.outDays > 0 ? " + " + wp.outDays + " outstation day" + (wp.outDays === 1 ? "" : "s") + " × " + inr(wp.perDay) : "")
+            + (s.role ? " · " + s.role : "") + (advance > 0 ? " − advance " + inr(advance) : "") + (campaign ? " · " + campaign : ""),
+          pay: wp.gross - advance, rec: s };
+      });
+    return { driverRows, staffRows };
+  };
+
+  const norm = (s) => (s || "").trim().toLowerCase();
+  let driverRows, staffRows, rows, driverBill, staffBill, bill, monthLabelText = "";
+  if (scope === "month") {
+    // Every Saturday that falls inside the chosen month, summed per person.
+    const [y, m] = month.split("-").map(Number);
+    const last = new Date(Date.UTC(y, m, 0));
+    const weeksInMonth = [];
+    for (let d = new Date(Date.UTC(y, m - 1, 1)); d <= last; d.setUTCDate(d.getUTCDate() + 1)) {
+      if (d.getUTCDay() === 6) weeksInMonth.push(localDay(d));
+    }
+    const byId = {};
+    weeksInMonth.forEach(we => {
+      const wk = rowsForWeek(we);
+      [...wk.driverRows, ...wk.staffRows].forEach(r => {
+        if (!byId[r.id]) byId[r.id] = { id: r.id, kind: r.kind, name: r.name, rec: r.rec, days: 0, outDays: 0, wage: 0, batta: 0, advance: 0, pay: 0, campaigns: new Set() };
+        const a = byId[r.id];
+        a.days += (+r.days || 0); a.outDays += (+r.outDays || 0); a.wage += r.wage; a.batta += r.batta; a.advance += r.advance; a.pay += r.pay;
+        if (r.campaign) a.campaigns.add(r.campaign);
+      });
+    });
+    rows = Object.values(byId).map(a => {
+      const campaign = [...a.campaigns].join(", ");
+      const sub = (a.days ? a.days + " day" + (a.days === 1 ? "" : "s") + " · " : "") + "wage " + inr(a.wage)
+        + (a.outDays > 0 ? " + outstation " + a.outDays + " day" + (a.outDays === 1 ? "" : "s") + " " + inr(a.batta) : "")
+        + (a.advance > 0 ? " − advance " + inr(a.advance) : "") + (campaign ? " · " + campaign : "");
+      return { ...a, campaign, sub };
+    }).sort((a, b) => b.pay - a.pay);
+    driverRows = rows.filter(r => r.kind === "driver");
+    staffRows = rows.filter(r => r.kind === "staff");
+    driverBill = driverRows.reduce((s, r) => s + r.pay, 0);
+    staffBill = staffRows.reduce((s, r) => s + r.pay, 0);
+    bill = driverBill + staffBill;
+    monthLabelText = monthLabel(month);
+  } else {
+    const wk = rowsForWeek(weekEnd);
+    driverRows = wk.driverRows; staffRows = wk.staffRows;
+    if (scope === "campaign" && filterCampaign) {
+      driverRows = driverRows.filter(r => norm(r.campaign) === norm(filterCampaign));
+      staffRows = staffRows.filter(r => norm(r.campaign) === norm(filterCampaign));
+    }
+    rows = [...driverRows, ...staffRows].sort((a, b) => b.pay - a.pay);
+    driverBill = driverRows.reduce((s, r) => s + r.pay, 0);
+    staffBill = staffRows.reduce((s, r) => s + r.pay, 0);
+    bill = driverBill + staffBill;
+  }
+  // Every campaign name anyone has typed against a week, plus every campaign
+  // on file — so the filter works whether or not this exact week used it.
+  const campaignOptions = Array.from(new Set([
+    ...((db.weekNotes || []).map(w => w.campaign).filter(Boolean)),
+    ...((db.orders || []).map(o => o.title).filter(Boolean)),
+  ])).sort();
   // A week that has been paid says so, and says when. Without this a settled
   // week and one nobody has touched looked exactly alike on a Monday morning.
   const payrun = (db.payruns || []).find(p => p.weekEnd === weekEnd);
@@ -5992,13 +6201,40 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
       })}
 
       <div className="vz-eyebrow">Payroll</div>
-      <F label="Week ending (Saturday)">
-        <select value={weekEnd} onChange={e => setWeekEnd(e.target.value)}>
-          {weeks.map(w => <option key={w} value={w}>{weekLabel(w)}{w === weekEnding(today()) ? " — current" : ""}</option>)}
-        </select>
-      </F>
-      {rows.length === 0 && <div className="vz-card"><div className="vz-meta">No drivers or staff to pay yet.</div></div>}
-      {rows.map(r => {
+      <div className="vz-mode" style={{ margin:"0 0 10px", width:"fit-content" }}>
+        {[["week","Date"],["month","Month"],["campaign","Campaign"]].map(([k, l]) =>
+          <button key={k} data-on={scope === k ? "1" : "0"} onClick={() => setScope(k)}>{l}</button>)}
+      </div>
+      {scope !== "month" && (
+        <F label="Week ending (Saturday)">
+          <select value={weekEnd} onChange={e => setWeekEnd(e.target.value)}>
+            {weeks.map(w => <option key={w} value={w}>{weekLabel(w)}{w === weekEnding(today()) ? " — current" : ""}</option>)}
+          </select>
+        </F>
+      )}
+      {scope === "month" && (
+        <F label="Month"><input type="month" value={month} onChange={e => setMonth(e.target.value)} /></F>
+      )}
+      {scope === "campaign" && (
+        <F label="Campaign">
+          <select value={filterCampaign} onChange={e => setFilterCampaign(e.target.value)}>
+            <option value="">— choose a campaign —</option>
+            {campaignOptions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </F>
+      )}
+      {rows.length === 0 && <div className="vz-card"><div className="vz-meta">
+        {scope === "campaign" && !filterCampaign ? "Choose a campaign above." : "Nobody to pay for this " + (scope === "month" ? "month" : "period") + "."}
+      </div></div>}
+      {scope === "month" ? rows.map(r => (
+        <div key={r.id} className="vz-kv" style={{ background:"#fff", border:"1px solid var(--line)", borderRadius:10, marginBottom:6, padding:"11px 13px" }}>
+          <span style={{ color:"var(--ink)", fontWeight:600 }}>
+            {r.name}{r.kind === "staff" && <Chip c="c-blue"> staff</Chip>}
+            <br /><small style={{ color:"var(--muted)", fontWeight:400 }}>{r.sub}</small>
+          </span>
+          <b className="vz-money">{inr(r.pay)}</b>
+        </div>
+      )) : rows.map(r => {
         const row = (
           <>
             <span style={{ color:"var(--ink)", fontWeight:600 }}>
@@ -6010,22 +6246,25 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
           </>
         );
         if (r.kind === "staff") {
+          const open = openRow === r.id;
           return (
             <div key={r.id} style={{ background:"#fff", border:"1px solid var(--line)", borderRadius:10, marginBottom:6 }}>
-              {perm.money
-                ? <button className="vz-kv vz-tapcard" style={{ padding:"11px 13px", width:"100%", textAlign:"left", background:"transparent", border:0 }}
-                    onClick={() => onEditStaff(r.rec)}>{row}</button>
-                : <div className="vz-kv" style={{ padding:"11px 13px" }}>{row}</div>}
-              {r.perDay > 0 && (
-                <div className="vz-kv" style={{ padding:"0 13px 10px", borderTop:"none", alignItems:"center" }}>
-                  <span className="vz-meta" style={{ marginTop:0 }}>Outstation days this week · {inr(r.perDay)} each</span>
-                  {perm.money
-                    ? <span style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
-                        <button className="vz-chip c-grey" disabled={r.outDays <= 0} onClick={() => onStaffOut(r.id, weekEnd, r.outDays - 1)}>−</button>
-                        <b style={{ minWidth:18, textAlign:"center" }}>{r.outDays}</b>
-                        <button className="vz-chip c-green" disabled={r.outDays >= 7} onClick={() => onStaffOut(r.id, weekEnd, r.outDays + 1)}>+</button>
-                      </span>
-                    : <b>{r.outDays}</b>}
+              <button className="vz-kv vz-tapcard" style={{ padding:"11px 13px", width:"100%", textAlign:"left", background:"transparent", border:0 }}
+                onClick={() => setOpenRow(open ? "" : r.id)}>{row}</button>
+              {open && (
+                <div style={{ padding:"0 13px 12px" }}>
+                  <div className="vz-kv"><span>Local wage</span><b className="vz-money">{inr(r.local)}</b></div>
+                  {r.outPay > 0 && <div className="vz-kv"><span>Outstation · {r.outDays} day(s) × {inr(r.perDay)}</span><b className="vz-money">{inr(r.outPay)}</b></div>}
+                  {r.advance > 0 && <div className="vz-kv"><span>Advance recovered</span><b className="vz-money" style={{ color:"#B4262A" }}>− {inr(r.advance)}</b></div>}
+                  {r.owed > r.advance && <div className="vz-meta" style={{ color:"#8A6100" }}>
+                    {inr(r.owed - r.advance)} of advance still to recover after this week.
+                  </div>}
+                  <div className="vz-kv"><span style={{ fontWeight:700 }}>Net payable</span><b className="vz-money" style={{ fontSize:15 }}>{inr(r.pay)}</b></div>
+                  {perm.money && <div className="vz-inline" style={{ marginTop:8, flexWrap:"wrap" }}>
+                    <button className="vz-chip c-grey" onClick={() => onEditStaff(r.rec)}>Edit staff details</button>
+                    <button className="vz-chip c-blue" onClick={() => onAdvance(r.rec, "staff")}>Give an advance</button>
+                    <button className="vz-chip c-green" onClick={() => onBatta(r.id, "staff", weekEnd)}>Edit batta</button>
+                  </div>}
                 </div>
               )}
             </div>
@@ -6062,7 +6301,8 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
                 </div>}
                 <div className="vz-kv"><span style={{ fontWeight:700 }}>Net payable</span><b className="vz-money" style={{ fontSize:15 }}>{inr(r.w.net)}</b></div>
                 {perm.money && <div className="vz-inline" style={{ marginTop:8, flexWrap:"wrap" }}>
-                  <button className="vz-chip c-blue" onClick={() => onAdvance(r.rec)}>Give an advance</button>
+                  <button className="vz-chip c-blue" onClick={() => onAdvance(r.rec, "driver")}>Give an advance</button>
+                  <button className="vz-chip c-grey" onClick={() => onBatta(r.id, "driver", weekEnd)}>Edit batta</button>
                   <button className="vz-chip c-green" onClick={() => onPayslip(r.rec, r.w, weekEnd)}>Send payslip</button>
                 </div>}
               </div>
@@ -6075,10 +6315,10 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         <b className="vz-money" style={{ fontSize:16 }}>{inr(bill)}</b>
       </div>
 
-      {/* Wages go out in two hands: whoever owns the business releases the week,
-          and finance pays it. Both are stamped, so it is always clear who
-          approved what. */}
-      {wasPaid ? (
+      {/* Releasing and paying a week is a real transaction against that one
+          week's own total — it makes no sense against a month roll-up or a
+          campaign's slice of a week, so it only shows for the plain week view. */}
+      {scope === "week" && (wasPaid ? (
         <div className="vz-card" style={{ background:"#EAF6EE", borderColor:"#BFE6CC" }}>
           <div className="vz-row">
             <div>
@@ -6122,20 +6362,53 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
                 for payment by a Director.
               </div>
             </div>
-      )}
+      ))}
 
       {perm.money && (
         <button className="vz-btn alt" onClick={() => onEditStaff(null)}>Add staff — fixed weekly wage</button>
       )}
-      <button className="vz-btn alt" disabled={!rows.length} onClick={() => {
-        const out = [["Week ending", "Name", "Type", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
-        driverRows.forEach(r => out.push([dmy(weekEnd), r.name, "Driver", r.w.days, r.w.outDays, r.w.wage, r.w.batta, r.w.advance, r.w.net]));
-        staffRows.forEach(r => out.push([dmy(weekEnd), r.name, "Staff", "", r.outDays || "", r.local, r.outPay, 0, r.pay]));
-        out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", bill]);
-        downloadCsv("payroll-week-ending-" + weekEnd + ".csv", out);
-      }}>Export this week's payroll</button>
+      {(() => {
+        // Whichever filter is on screen — one week, a month, or a campaign —
+        // is exactly what the CSV and PDF below are built from.
+        const periodLabel = scope === "month" ? monthLabelText : scope === "campaign"
+          ? (filterCampaign ? filterCampaign + " · week ending " + dmy(weekEnd) : "week ending " + dmy(weekEnd))
+          : "week ending " + dmy(weekEnd);
+        const fileTag = scope === "month" ? "month-" + month : scope === "campaign"
+          ? "campaign-" + (filterCampaign || "all") + "-" + weekEnd : "week-ending-" + weekEnd;
+        const csvRows = () => {
+          const out = [["Period", "Name", "Type", "Campaign", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
+          rows.forEach(r => out.push([periodLabel, r.name, r.kind === "driver" ? "Driver" : "Staff", r.campaign || "",
+            r.days, r.outDays || "", r.wage, r.batta, r.advance || 0, r.pay]));
+          out.push([]); out.push(["", "", "", "", "", "", "", "", "TOTAL", bill]);
+          return out;
+        };
+        const pdfCols = [
+          { key:"name", label:"Name", w:18, align:"left" }, { key:"type", label:"Type", w:8, align:"left" },
+          { key:"campaign", label:"Campaign", w:16, align:"left" }, { key:"days", label:"Days", w:6, align:"right" },
+          { key:"out", label:"Out. days", w:8, align:"right" }, { key:"wage", label:"Wage", w:10, align:"right" },
+          { key:"batta", label:"Batta", w:10, align:"right" }, { key:"advance", label:"Advance", w:11, align:"right" },
+          { key:"net", label:"Net payable", w:13, align:"right" },
+        ];
+        const pdfRows = rows.map(r => ({
+          name: r.name, type: r.kind === "driver" ? "Driver" : "Staff", campaign: r.campaign || "—",
+          days: r.days || "—", out: r.outDays || "—", wage: inr(r.wage), batta: inr(r.batta),
+          advance: r.advance ? "− " + inr(r.advance) : "—", net: inr(r.pay),
+        }));
+        pdfRows.push({ _total:true, name:"TOTAL", type:"", campaign:"", days:"", out:"", wage:"", batta:"", advance:"", net: inr(bill) });
+        return (
+          <div className="vz-2">
+            <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length} onClick={() => downloadCsv("payroll-" + fileTag + ".csv", csvRows())}>
+              Export as Excel
+            </button>
+            <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length || pdfBusy} onClick={() =>
+              onPdf("PAYROLL REPORT", periodLabel, pdfCols, pdfRows, "payroll-" + fileTag + ".pdf")}>
+              {pdfBusy ? "Building…" : "Download as PDF"}
+            </button>
+          </div>
+        );
+      })()}
 
-      {perm.money && (() => {
+      {scope === "week" && perm.money && (() => {
         const payable = rows.filter(r => r.pay > 0);
         const ready = payable.filter(r => r.rec.bankAccount && r.rec.ifsc);
         const missing = payable.filter(r => !(r.rec.bankAccount && r.rec.ifsc));
@@ -6902,6 +7175,8 @@ function VibeCRM() {
   const [invAsk, setInvAsk] = useState(null); // "how far did it run?" before an invoice
   const [doc, setDoc] = useState(null);      // generated quotation / invoice image
   const [docBusy, setDocBusy] = useState(false);
+  const [payDoc, setPayDoc] = useState(null); // generated payroll report PDF
+  const [payDocBusy, setPayDocBusy] = useState(false);
 
   /* Build the two-page document for a campaign and open the viewer. */
   const openDoc = async (o0, kind0) => {
@@ -7210,7 +7485,7 @@ function VibeCRM() {
         lines: rows.map(r => r.kind === "driver"
           ? { id: r.id, name: r.name, kind: "driver", days: r.w.days, outDays: r.w.outDays,
               wage: r.w.wage, batta: r.w.batta, advance: r.w.advance, net: r.w.net }
-          : { id: r.id, name: r.name, kind: "staff", outDays: r.outDays || 0, wage: r.local, batta: r.outPay || 0, net: r.pay }),
+          : { id: r.id, name: r.name, kind: "staff", outDays: r.outDays || 0, wage: r.local, batta: r.outPay || 0, advance: r.advance || 0, net: r.pay }),
       });
       setToast("Released for payment · " + inr(total));
       return;
@@ -7220,6 +7495,14 @@ function VibeCRM() {
     if (!window.confirm("Record " + inr(cur.total) + " as paid for the week ending " + dmy(weekEnd) + "?")) return;
     put("payruns", { ...cur, status: "paid", paidOn: today(), paidBy: who });
     setToast("Week ending " + dmy(weekEnd) + " marked paid");
+  };
+
+  // Which campaign a person's outstation days that week were worked for — a
+  // manual note (db.weekNotes), same collection for drivers and staff alike.
+  const setCampaign = (personId, weekEnd, text) => {
+    const id = personId + "_" + weekEnd;
+    const t = (text || "").trim();
+    if (!t) drop("weekNotes", id); else put("weekNotes", { id, personId, weekEnd, campaign: t });
   };
 
   /* What a driver is handed, in the language he reads. He cannot see the app's
@@ -7271,6 +7554,19 @@ function VibeCRM() {
       });
     } catch (e) { setToast("Could not build the credit note"); }
     setDocBusy(false);
+  };
+
+  /* The payroll report PDF — built from whichever rows the payroll screen's
+     own filter (week / month / campaign) currently has on screen, so the
+     download always matches what was on screen when it was asked for. */
+  const buildPayrollPdf = async (title, periodLabel, cols, rows, file) => {
+    setPayDocBusy(true);
+    try {
+      const pages = await payrollPages({ s: db.settings, title, periodLabel, cols, rows });
+      const blob = pdfFromPages(pages);
+      setPayDoc({ pages, blob, title, file });
+    } catch (e) { setToast("Could not build the payroll report"); }
+    setPayDocBusy(false);
   };
 
   /* ------------------------- screens ------------------------- */
@@ -9067,8 +9363,10 @@ function VibeCRM() {
           if (days <= 0) drop("staffOuts", id);
           else put("staffOuts", { id, staffId, weekEnd, days });
         }}
-        onAdvance={(drv) => setSheet({ type:"advance", data:drv })}
+        onAdvance={(person, kind) => setSheet({ type:"advance", data:person, kind })}
+        onBatta={(personId, kind, weekEnd) => setSheet({ type:"batta", data:{ personId, kind, weekEnd } })}
         onPayWeek={payWeek} onPayslip={sendPayslip}
+        onPdf={buildPayrollPdf} pdfBusy={payDocBusy}
         onClose={() => setSheet(null)} />}
       {sheet?.type === "expenses" && (
         <ExpensesSheet db={db} vehOf={vehOf} onClose={() => setSheet(null)}
@@ -9136,10 +9434,35 @@ function VibeCRM() {
           onSend={sendPaymentReminder} />
       )}
       {sheet?.type === "advance" && (
-        <AdvanceForm driver={sheet.data} db={db} onClose={() => setSheet({ type:"attendance" })}
+        <AdvanceForm person={sheet.data} kind={sheet.kind} db={db} onClose={() => setSheet({ type:"attendance" })}
           onSave={(x) => { put("advances", x); setSheet({ type:"attendance" }); setToast("Advance recorded"); }}
           onDelete={(id) => { drop("advances", id); setToast("Advance deleted"); }} />
       )}
+      {sheet?.type === "batta" && (() => {
+        const { personId, kind, weekEnd } = sheet.data;
+        const campaign = ((db.weekNotes || []).find(x => x.id === personId + "_" + weekEnd) || {}).campaign || "";
+        const onSetCampaign = (text) => setCampaign(personId, weekEnd, text);
+        const onClose = () => setSheet({ type:"attendance" });
+        if (kind === "driver") {
+          const d = (db.drivers || []).find(x => x.id === personId);
+          if (!d) return null;
+          const { start } = weekRange(weekEnd);
+          const week = (db.attendance || []).filter(a => a.driverId === personId && String(a.date || "") >= start && String(a.date || "") <= weekEnd)
+            .slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+          return <BattaForm person={d} kind="driver" week={week} weekEnd={weekEnd} campaign={campaign}
+            onToggleDuty={(a, on) => setDb(d2 => ({ ...d2, attendance: (d2.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }))}
+            onSetCampaign={onSetCampaign} onClose={onClose} />;
+        }
+        const s = (db.staff || []).find(x => x.id === personId);
+        if (!s) return null;
+        const wp = staffWeekPay(db, s, weekEnd);
+        return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays }} kind="staff" weekEnd={weekEnd} campaign={campaign}
+          onSetStaffOut={(days) => {
+            const id = personId + "_" + weekEnd;
+            if (days <= 0) drop("staffOuts", id); else put("staffOuts", { id, staffId: personId, weekEnd, days });
+          }}
+          onSetCampaign={onSetCampaign} onClose={onClose} />;
+      })()}
       {sheet?.type === "receivables" && (
         <ReceivablesSheet db={db} paidOn={paidOn} onClose={() => setSheet(null)}
           onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }}
@@ -9456,6 +9779,28 @@ function VibeCRM() {
           <div className="vz-invoice" style={{ padding:0, background:"#fff" }}>
             {doc.pages.map((p, i) => (
               <img key={i} src={p.url} alt={doc.title + " page " + (i + 1)}
+                style={{ width:"100%", display:"block", marginBottom: i === 0 ? 14 : 0 }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {payDoc && (
+        <div className="vz-invoice-overlay">
+          <div className="vz-invoice-actions vz-noprint" style={{ flexWrap:"wrap" }}>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => setPayDoc(null)}>← Close</button>
+            <button className="vz-btn go" style={{ margin:0 }} onClick={async () => {
+              const ok = await sharePdf(payDoc.blob, payDoc.file);
+              if (!ok) { savePdf(payDoc.blob, payDoc.file); setToast("PDF saved to your downloads"); }
+            }}>Share PDF</button>
+            <button className="vz-btn alt" style={{ margin:0 }} onClick={() => {
+              savePdf(payDoc.blob, payDoc.file);
+              setToast("PDF saved to your downloads");
+            }}>Save PDF</button>
+          </div>
+          <div className="vz-invoice" style={{ padding:0, background:"#fff" }}>
+            {payDoc.pages.map((p, i) => (
+              <img key={i} src={p.url} alt={payDoc.title + " page " + (i + 1)}
                 style={{ width:"100%", display:"block", marginBottom: i === 0 ? 14 : 0 }} />
             ))}
           </div>
