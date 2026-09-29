@@ -6056,7 +6056,19 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
   const [scope, setScope] = useState("week");
   const [month, setMonth] = useState(today().slice(0, 7));
   const [filterCampaign, setFilterCampaign] = useState("");
-  const campaignOf = (personId, we) => ((db.weekNotes || []).find(x => x.id === personId + "_" + we) || {}).campaign || "";
+  // A manual per-week tag (db.weekNotes) if one was entered via Edit batta —
+  // otherwise fall back to whichever rate period covers this week, since
+  // that's also where a campaign name can be typed in (on the Staff/Driver
+  // form itself), and a report shouldn't look blank just because the note
+  // was entered in the other of those two places.
+  const campaignOf = (personId, we) => {
+    const note = ((db.weekNotes || []).find(x => x.id === personId + "_" + we) || {}).campaign;
+    if (note) return note;
+    const hit = (db.wageRates || [])
+      .filter(r => r.personId === personId && r.from && r.from <= we && (!r.to || we <= r.to))
+      .sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+    return (hit && hit.campaign) || "";
+  };
 
   const weekRecs = (db.attendance || []).filter(a => inWeek(String(a.date || "")));
   // One week's rows, for any Saturday — shared by the normal week view, the
@@ -6398,9 +6410,16 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
           : "week ending " + dmy(weekEnd);
         const fileTag = scope === "month" ? "month-" + month : scope === "campaign"
           ? "campaign-" + (filterCampaign || "all") + "-" + weekEnd : "week-ending-" + weekEnd;
+        // A staff member's own Role/Title (e.g. "Driver", typed on the Add
+        // staff form) is what finance means by "Type" — not the underlying
+        // driver/staff record kind, which is invisible to them.
+        const typeOf = (r) => r.kind === "driver" ? "Driver" : (r.rec.role || "Staff");
+        // Nobody worked and nothing was paid — leave them off the report
+        // entirely rather than a row of dashes and zeroes for this period.
+        const activeRows = rows.filter(r => r.pay || (+r.days || 0) > 0 || (+r.outDays || 0) > 0);
         const csvRows = () => {
           const out = [["Period", "Name", "Type", "Campaign", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
-          rows.forEach(r => out.push([periodLabel, r.name, r.kind === "driver" ? "Driver" : "Staff", r.campaign || "",
+          activeRows.forEach(r => out.push([periodLabel, r.name, typeOf(r), r.campaign || "",
             r.days, r.outDays || "", r.wage, r.batta, r.advance || 0, r.pay]));
           out.push([]); out.push(["", "", "", "", "", "", "", "", "TOTAL", bill]);
           return out;
@@ -6412,18 +6431,18 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
           { key:"batta", label:"Batta", w:10, align:"right" }, { key:"advance", label:"Advance", w:11, align:"right" },
           { key:"net", label:"Net payable", w:13, align:"right" },
         ];
-        const pdfRows = rows.map(r => ({
-          name: r.name, type: r.kind === "driver" ? "Driver" : "Staff", campaign: r.campaign || "—",
+        const pdfRows = activeRows.map(r => ({
+          name: r.name, type: typeOf(r), campaign: r.campaign || "—",
           days: r.days || "—", out: r.outDays || "—", wage: inr(r.wage), batta: inr(r.batta),
           advance: r.advance ? "− " + inr(r.advance) : "—", net: inr(r.pay),
         }));
         pdfRows.push({ _total:true, name:"TOTAL", type:"", campaign:"", days:"", out:"", wage:"", batta:"", advance:"", net: inr(bill) });
         return (
           <div className="vz-2">
-            <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length} onClick={() => downloadCsv("payroll-" + fileTag + ".csv", csvRows())}>
+            <button className="vz-btn alt" style={{ margin:0 }} disabled={!activeRows.length} onClick={() => downloadCsv("payroll-" + fileTag + ".csv", csvRows())}>
               Export as Excel
             </button>
-            <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length || pdfBusy} onClick={() =>
+            <button className="vz-btn alt" style={{ margin:0 }} disabled={!activeRows.length || pdfBusy} onClick={() =>
               onPdf("PAYROLL REPORT", periodLabel, pdfCols, pdfRows, "payroll-" + fileTag + ".pdf")}>
               {pdfBusy ? "Building…" : "Download as PDF"}
             </button>
