@@ -3652,14 +3652,27 @@ const driverWeek = (db, driver, weekStart, weekEnd) => {
 // A rate period's own From/To is often exactly the campaign's dates — set
 // once on the person's form — so a week that falls inside one is counted as
 // worked automatically, without a separate manual day-count every week.
-const periodDaysInWeek = (db, personId, weekStart, weekEnd) => {
-  const periods = (db.wageRates || []).filter(r => r.personId === personId && r.from);
-  if (!periods.length) return 0;
-  let n = 0;
-  for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
-    if (periods.some(r => r.from <= d && (!r.to || d <= r.to))) n++;
+// Resolved day by day (not just from the week's own Saturday) so a period
+// that only reaches partway into the week — say Sunday to Tuesday of a
+// Sunday-to-Saturday pay week — still prices those days correctly, instead
+// of the whole week falling back to nothing just because the rate lookup
+// missed on the one day it happened to check.
+const staffOutstationForWeek = (db, s, weekStart, weekEnd) => {
+  const periods = (db.wageRates || []).filter(r => r.personId === s.id && r.from);
+  if (periods.length) {
+    let days = 0, pay = 0, perDay = 0;
+    for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
+      const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+      if (!hit) continue;
+      const blank = hit.outstation === "" || hit.outstation == null;
+      const rate = blank ? 0 : (+hit.outstation || 0);
+      if (rate > 0) { days += 1; pay += rate; perDay = rate; }
+    }
+    if (days > 0) return { days, pay, perDay, auto: true };
   }
-  return n;
+  const std = +s.outstationWage || 0;
+  const manualDays = std > 0 ? (((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0) : 0;
+  return { days: manualDays, pay: manualDays * std, perDay: std, auto: false };
 };
 
 // A staff member's gross pay for one week: the flat local wage, plus
@@ -3669,12 +3682,8 @@ const periodDaysInWeek = (db, personId, weekStart, weekEnd) => {
 // figure, plus the same separate Batta allowance as above.
 const staffWeekPay = (db, s, weekEnd) => {
   const { start: weekStart } = weekRange(weekEnd);
-  const sr = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0);
-  const local = sr.local, perDay = sr.out;
-  const manualDays = ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0;
-  const autoDays = periodDaysInWeek(db, s.id, weekStart, weekEnd);
-  const outDays = perDay > 0 ? (autoDays > 0 ? autoDays : manualDays) : 0;
-  const outPay = outDays * perDay;
+  const local = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0).local;
+  const { days: outDays, pay: outPay, perDay } = staffOutstationForWeek(db, s, weekStart, weekEnd);
   const wage = local + outPay;
   const batta = battaFor(db, s.id, weekEnd);
   return { local, outDays, perDay, outPay, wage, batta, gross: wage + batta };
@@ -9567,7 +9576,7 @@ function VibeCRM() {
         if (!s) return null;
         const wp = staffWeekPay(db, s, weekEnd);
         const { start: wkStart } = weekRange(weekEnd);
-        const autoDays = periodDaysInWeek(db, personId, wkStart, weekEnd) > 0;
+        const autoDays = staffOutstationForWeek(db, s, wkStart, weekEnd).auto;
         return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays, autoDays }} kind="staff" weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
           onSetStaffOut={(days) => {
             const id = personId + "_" + weekEnd;
