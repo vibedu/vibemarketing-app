@@ -1687,7 +1687,11 @@ const payrollPages = async ({ s, title, periodLabel, cols, rows }) => {
     else { g.fillStyle = DOC_INK; F("800", 28); g.fillText((s.company || "Vibe Marketing").toUpperCase(), M, y + 24); }
     g.textAlign = "right"; g.fillStyle = DOC_ORANGE; F("800", 30); g.fillText(title, RIGHT, y + 24);
     g.fillStyle = DOC_MUTE; F("500", 16); g.fillText(periodLabel, RIGHT, y + 48);
-    y += 84;
+    // The pay period says which week/month/campaign this is; downloaded-on
+    // says when this particular copy was pulled — the two read differently
+    // and finance wants both on the page, not just the period.
+    F("500", 13); g.fillText("Downloaded " + dmy(today()), RIGHT, y + 68);
+    y += 104;
     g.strokeStyle = DOC_LINE; g.lineWidth = 1.2; g.beginPath(); g.moveTo(M, y); g.lineTo(RIGHT, y); g.stroke();
     y += 22;
 
@@ -3645,14 +3649,31 @@ const driverWeek = (db, driver, weekStart, weekEnd) => {
   return { days: days.length, outDays, localPay, outPay, wage, batta, gross, advance: deduct, owed, net: gross - deduct, records: days };
 };
 
+// A rate period's own From/To is often exactly the campaign's dates — set
+// once on the person's form — so a week that falls inside one is counted as
+// worked automatically, without a separate manual day-count every week.
+const periodDaysInWeek = (db, personId, weekStart, weekEnd) => {
+  const periods = (db.wageRates || []).filter(r => r.personId === personId && r.from);
+  if (!periods.length) return 0;
+  let n = 0;
+  for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
+    if (periods.some(r => r.from <= d && (!r.to || d <= r.to))) n++;
+  }
+  return n;
+};
+
 // A staff member's gross pay for one week: the flat local wage, plus
-// outstation pay for whichever days were logged out of town that week
-// (db.staffOuts) — the flat-wage equivalent of a driver's dayPay — combined
-// into one wage figure, plus the same separate Batta allowance as above.
+// outstation pay for whichever days were logged out of town that week —
+// from a rate period's own date range when the person has one, falling back
+// to the manual day count (db.staffOuts) otherwise — combined into one wage
+// figure, plus the same separate Batta allowance as above.
 const staffWeekPay = (db, s, weekEnd) => {
+  const { start: weekStart } = weekRange(weekEnd);
   const sr = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0);
   const local = sr.local, perDay = sr.out;
-  const outDays = perDay > 0 ? ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0 : 0;
+  const manualDays = ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0;
+  const autoDays = periodDaysInWeek(db, s.id, weekStart, weekEnd);
+  const outDays = perDay > 0 ? (autoDays > 0 ? autoDays : manualDays) : 0;
   const outPay = outDays * perDay;
   const wage = local + outPay;
   const batta = battaFor(db, s.id, weekEnd);
@@ -6049,14 +6070,26 @@ function BattaForm({ person, kind, week, weekEnd, onToggleDuty, onSetStaffOut, c
           ))}
         </>
       ) : (
-        <div className="vz-kv" style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10 }}>
-          <span>Outstation days this week{person.perDay ? " · " + inr(person.perDay) + " each" : ""}</span>
-          <span style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
-            <button className="vz-chip c-grey" disabled={person.outDays <= 0} onClick={() => onSetStaffOut(person.outDays - 1)}>−</button>
-            <b style={{ minWidth:18, textAlign:"center" }}>{person.outDays}</b>
-            <button className="vz-chip c-green" disabled={person.outDays >= 7} onClick={() => onSetStaffOut(person.outDays + 1)}>+</button>
-          </span>
-        </div>
+        <>
+          <div className="vz-kv" style={{ background:"#fff", padding:"11px 13px", border:"1px solid var(--line)", borderRadius:10 }}>
+            <span>Outstation days this week{person.perDay ? " · " + inr(person.perDay) + " each" : ""}</span>
+            {person.autoDays ? (
+              <b style={{ minWidth:18, textAlign:"center" }}>{person.outDays}</b>
+            ) : (
+              <span style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+                <button className="vz-chip c-grey" disabled={person.outDays <= 0} onClick={() => onSetStaffOut(person.outDays - 1)}>−</button>
+                <b style={{ minWidth:18, textAlign:"center" }}>{person.outDays}</b>
+                <button className="vz-chip c-green" disabled={person.outDays >= 7} onClick={() => onSetStaffOut(person.outDays + 1)}>+</button>
+              </span>
+            )}
+          </div>
+          {person.autoDays && (
+            <div className="vz-meta" style={{ marginTop:0 }}>
+              Counted automatically from the rate period's own dates (set on this person's form) —
+              remove or shorten that period to change the day count for this week.
+            </div>
+          )}
+        </>
       )}
     </Sheet>
   );
@@ -6445,10 +6478,11 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         // entirely rather than a row of dashes and zeroes for this period.
         const activeRows = rows.filter(r => r.pay || (+r.days || 0) > 0 || (+r.outDays || 0) > 0);
         const csvRows = () => {
-          const out = [["Period", "Name", "Type", "Campaign", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
-          activeRows.forEach(r => out.push([periodLabel, r.name, typeOf(r), r.campaign || "",
+          const out = [["Downloaded " + dmy(today())], [periodLabel],
+            ["Name", "Type", "Campaign", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
+          activeRows.forEach(r => out.push([r.name, typeOf(r), r.campaign || "",
             r.days, r.outDays || "", r.wage, r.batta, r.advance || 0, r.pay]));
-          out.push([]); out.push(["", "", "", "", "", "", "", "", "TOTAL", bill]);
+          out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", bill]);
           return out;
         };
         const pdfCols = [
@@ -9532,7 +9566,9 @@ function VibeCRM() {
         const s = (db.staff || []).find(x => x.id === personId);
         if (!s) return null;
         const wp = staffWeekPay(db, s, weekEnd);
-        return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays }} kind="staff" weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
+        const { start: wkStart } = weekRange(weekEnd);
+        const autoDays = periodDaysInWeek(db, personId, wkStart, weekEnd) > 0;
+        return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays, autoDays }} kind="staff" weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
           onSetStaffOut={(days) => {
             const id = personId + "_" + weekEnd;
             if (days <= 0) drop("staffOuts", id); else put("staffOuts", { id, staffId: personId, weekEnd, days });
