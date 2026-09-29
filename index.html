@@ -3619,32 +3619,44 @@ const dayPay = (db, driver, att) => {
   return { base: r.local, extra: outstation ? r.out - r.local : 0, pay: outstation ? r.out : r.local };
 };
 
-/* What a driver is owed for one week, and what comes off it.
-   Wage is per day on duty at the local rate; batta is what each outstation day
-   pays over that (see dayPay); advances taken during the week are recovered
-   from that week's pay, never more than it. */
+// The Batta allowance for one person's week — a separate, manually-entered
+// amount (set from the "Edit batta" dialog), distinct from the wage: wage is
+// what the local/outstation rate earns for the days actually worked; batta is
+// whatever extra was handed over on top of that, if anything.
+const battaFor = (db, personId, weekEnd) => +(((db.weekNotes || []).find(x => x.id === personId + "_" + weekEnd) || {}).batta) || 0;
+
+/* What a driver is owed for one week, and what comes off it. Wage is
+   whatever the day's rate earned — local or outstation, whichever applied
+   (see dayPay) — combined into one figure, the way finance's own sheet
+   reads it; batta is the separate allowance above. Advances taken during
+   the week are recovered from that week's pay, never more than it. */
 const driverWeek = (db, driver, weekStart, weekEnd) => {
   const days = (db.attendance || []).filter(a => a.driverId === driver.id
     && String(a.date || "") >= weekStart && String(a.date || "") <= weekEnd);
   const outDays = days.filter(a => a.outstation).length;
   const pays = days.map(a => dayPay(db, driver, a));
-  const wage = pays.reduce((s, p) => s + p.base, 0);
-  const batta = pays.reduce((s, p) => s + p.extra, 0);
+  const localPay = pays.reduce((s, p) => s + p.base, 0);
+  const outPay = pays.reduce((s, p) => s + p.extra, 0);
+  const wage = localPay + outPay;
+  const batta = battaFor(db, driver.id, weekEnd);
   const gross = wage + batta;
   const owed = advanceOwed(db, driver.id, weekEnd);
   const deduct = Math.min(owed, gross);
-  return { days: days.length, outDays, wage, batta, gross, advance: deduct, owed, net: gross - deduct, records: days };
+  return { days: days.length, outDays, localPay, outPay, wage, batta, gross, advance: deduct, owed, net: gross - deduct, records: days };
 };
 
 // A staff member's gross pay for one week: the flat local wage, plus
 // outstation pay for whichever days were logged out of town that week
-// (db.staffOuts) — the flat-wage equivalent of a driver's dayPay.
+// (db.staffOuts) — the flat-wage equivalent of a driver's dayPay — combined
+// into one wage figure, plus the same separate Batta allowance as above.
 const staffWeekPay = (db, s, weekEnd) => {
   const sr = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0);
   const local = sr.local, perDay = sr.out;
   const outDays = perDay > 0 ? ((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0 : 0;
   const outPay = outDays * perDay;
-  return { local, outDays, perDay, outPay, gross: local + outPay };
+  const wage = local + outPay;
+  const batta = battaFor(db, s.id, weekEnd);
+  return { local, outDays, perDay, outPay, wage, batta, gross: wage + batta };
 };
 
 /* An advance is money handed over ahead of the wage; it is outstanding until
@@ -6007,10 +6019,18 @@ function AdvanceForm({ person, kind, db, onSave, onDelete, onClose }) {
    the week, alongside the campaign the days were worked for. Previously this
    lived inline inside the payroll row; now it has its own screen so entering
    it doesn't fight for space with the rest of the row. */
-function BattaForm({ person, kind, week, weekEnd, onToggleDuty, onSetStaffOut, campaign, onSetCampaign, onClose }) {
+function BattaForm({ person, kind, week, weekEnd, onToggleDuty, onSetStaffOut, campaign, onSetCampaign, batta, onSetBatta, onClose }) {
   const [note, setNote] = useState(campaign || "");
+  const [amt, setAmt] = useState(batta ? String(batta) : "");
   return (
     <Sheet title={"Batta · " + person.name} onClose={onClose}>
+      <F label="Batta ₹ this week">
+        <input type="number" inputMode="numeric" value={amt} onChange={e => setAmt(e.target.value)} onBlur={() => onSetBatta(amt)} placeholder="0" />
+      </F>
+      <div className="vz-meta" style={{ marginTop:-4 }}>
+        A separate allowance handed over on top of the wage — not the outstation rate,
+        which is already folded into the wage itself.
+      </div>
       <F label="Campaign / job this week (optional)">
         <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => onSetCampaign(note)} placeholder="Which campaign these days were for" />
       </F>
@@ -6081,11 +6101,13 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
       const campaign = campaignOf(d.id, we);
       return { id: d.id, kind: "driver", name: d.name, w, rec: d, campaign,
           // Flat aliases so the CSV/PDF export can read week- and month-scope
-          // rows (drivers and staff alike) through one common shape.
+          // rows (drivers and staff alike) through one common shape. Wage
+          // already combines local and outstation pay; batta is the separate
+          // manual allowance, not the outstation rate.
           days: w.days, outDays: w.outDays, wage: w.wage, batta: w.batta, advance: w.advance,
           sub: w.days + " day" + (w.days === 1 ? "" : "s")
-          + (w.outDays > 0 ? " (" + w.outDays + " outstation)" : "") + " · local " + inr(w.wage)
-          + (w.batta !== 0 ? (w.batta > 0 ? " + outstation " : " − outstation ") + inr(Math.abs(w.batta)) : "")
+          + (w.outDays > 0 ? " (" + w.outDays + " outstation)" : "") + " · wage " + inr(w.wage)
+          + (w.batta > 0 ? " + batta " + inr(w.batta) : "")
           + (w.advance > 0 ? " − advance " + inr(w.advance) : "")
           + (campaign ? " · " + campaign : ""),
         pay: w.net };
@@ -6102,10 +6124,12 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         return { id: s.id, kind: "staff", name: s.name, local: wp.local, outDays: wp.outDays, outPay: wp.outPay, perDay: wp.perDay,
           advance, owed, campaign,
           // Same flat aliases as the driver row above — "days" has no meaning
-          // for a flat weekly wage, so it's left blank rather than zero.
-          days: "", wage: wp.local, batta: wp.outPay,
+          // for a flat weekly local wage, so it only carries the outstation
+          // day count, the one day-based figure staff pay actually has.
+          days: wp.outDays || "", wage: wp.wage, batta: wp.batta,
           sub: "local " + inr(wp.local) + "/wk" + (wp.outDays > 0 ? " + " + wp.outDays + " outstation day" + (wp.outDays === 1 ? "" : "s") + " × " + inr(wp.perDay) : "")
-            + (s.role ? " · " + s.role : "") + (advance > 0 ? " − advance " + inr(advance) : "") + (campaign ? " · " + campaign : ""),
+            + (s.role ? " · " + s.role : "") + (wp.batta > 0 ? " + batta " + inr(wp.batta) : "")
+            + (advance > 0 ? " − advance " + inr(advance) : "") + (campaign ? " · " + campaign : ""),
           pay: wp.gross - advance, rec: s };
       });
     return { driverRows, staffRows };
@@ -6133,8 +6157,10 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
     });
     rows = Object.values(byId).map(a => {
       const campaign = [...a.campaigns].join(", ");
-      const sub = (a.days ? a.days + " day" + (a.days === 1 ? "" : "s") + " · " : "") + "wage " + inr(a.wage)
-        + (a.outDays > 0 ? " + outstation " + a.outDays + " day" + (a.outDays === 1 ? "" : "s") + " " + inr(a.batta) : "")
+      const sub = (a.days ? a.days + " day" + (a.days === 1 ? "" : "s") : "")
+        + (a.outDays > 0 ? (a.days ? " (" : "") + a.outDays + " outstation" + (a.days ? ")" : " outstation day" + (a.outDays === 1 ? "" : "s")) : "")
+        + ((a.days || a.outDays) ? " · " : "") + "wage " + inr(a.wage)
+        + (a.batta > 0 ? " + batta " + inr(a.batta) : "")
         + (a.advance > 0 ? " − advance " + inr(a.advance) : "") + (campaign ? " · " + campaign : "");
       return { ...a, campaign, sub };
     }).sort((a, b) => b.pay - a.pay);
@@ -6289,7 +6315,8 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
               {open && (
                 <div style={{ padding:"0 13px 12px" }}>
                   <div className="vz-kv"><span>Local wage</span><b className="vz-money">{inr(r.local)}</b></div>
-                  {r.outPay > 0 && <div className="vz-kv"><span>Outstation · {r.outDays} day(s) × {inr(r.perDay)}</span><b className="vz-money">{inr(r.outPay)}</b></div>}
+                  {r.outPay > 0 && <div className="vz-kv"><span>Outstation wage · {r.outDays} day(s) × {inr(r.perDay)}</span><b className="vz-money">{inr(r.outPay)}</b></div>}
+                  {r.batta > 0 && <div className="vz-kv"><span>Batta</span><b className="vz-money">{inr(r.batta)}</b></div>}
                   {r.advance > 0 && <div className="vz-kv"><span>Advance recovered</span><b className="vz-money" style={{ color:"#B4262A" }}>− {inr(r.advance)}</b></div>}
                   {r.owed > r.advance && <div className="vz-meta" style={{ color:"#8A6100" }}>
                     {inr(r.owed - r.advance)} of advance still to recover after this week.
@@ -6328,8 +6355,8 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
                       : (a.outstation ? <Chip c="c-green">Outstation</Chip> : <span className="vz-meta">Local</span>)}
                   </div>
                 ))}
-                <div className="vz-kv"><span>Local wage · {r.w.days} day(s)</span><b className="vz-money">{inr(r.w.wage)}</b></div>
-                {r.w.batta !== 0 && <div className="vz-kv"><span>Outstation · {r.w.outDays} day(s) at the outstation rate</span><b className="vz-money">{r.w.batta > 0 ? "" : "− "}{inr(Math.abs(r.w.batta))}</b></div>}
+                <div className="vz-kv"><span>Wage · {r.w.days} day(s){r.w.outDays > 0 ? " (" + r.w.outDays + " outstation)" : ""}</span><b className="vz-money">{inr(r.w.wage)}</b></div>
+                {r.w.batta > 0 && <div className="vz-kv"><span>Batta</span><b className="vz-money">{inr(r.w.batta)}</b></div>}
                 {r.w.advance > 0 && <div className="vz-kv"><span>Advance recovered</span><b className="vz-money" style={{ color:"#B4262A" }}>− {inr(r.w.advance)}</b></div>}
                 {r.w.owed > r.w.advance && <div className="vz-meta" style={{ color:"#8A6100" }}>
                   {inr(r.w.owed - r.w.advance)} of advance still to recover after this week.
@@ -7527,7 +7554,7 @@ function VibeCRM() {
         lines: rows.map(r => r.kind === "driver"
           ? { id: r.id, name: r.name, kind: "driver", days: r.w.days, outDays: r.w.outDays,
               wage: r.w.wage, batta: r.w.batta, advance: r.w.advance, net: r.w.net }
-          : { id: r.id, name: r.name, kind: "staff", outDays: r.outDays || 0, wage: r.local, batta: r.outPay || 0, advance: r.advance || 0, net: r.pay }),
+          : { id: r.id, name: r.name, kind: "staff", outDays: r.outDays || 0, wage: r.wage, batta: r.batta || 0, advance: r.advance || 0, net: r.pay }),
       });
       setToast("Released for payment · " + inr(total));
       return;
@@ -7539,13 +7566,18 @@ function VibeCRM() {
     setToast("Week ending " + dmy(weekEnd) + " marked paid");
   };
 
-  // Which campaign a person's outstation days that week were worked for — a
-  // manual note (db.weekNotes), same collection for drivers and staff alike.
-  const setCampaign = (personId, weekEnd, text) => {
+  // A person's weekNotes record carries two independent, manually-entered
+  // things — which campaign that week's days were for, and any Batta
+  // allowance — so setting one must never erase the other, and the record
+  // is only dropped once neither is left.
+  const weekNote = (personId, weekEnd) => (db.weekNotes || []).find(x => x.id === personId + "_" + weekEnd);
+  const saveWeekNote = (personId, weekEnd, patch) => {
     const id = personId + "_" + weekEnd;
-    const t = (text || "").trim();
-    if (!t) drop("weekNotes", id); else put("weekNotes", { id, personId, weekEnd, campaign: t });
+    const next = { campaign: "", batta: 0, ...weekNote(personId, weekEnd), ...patch, id, personId, weekEnd };
+    if (!next.campaign && !next.batta) drop("weekNotes", id); else put("weekNotes", next);
   };
+  const setCampaign = (personId, weekEnd, text) => saveWeekNote(personId, weekEnd, { campaign: (text || "").trim() });
+  const setBatta = (personId, weekEnd, amount) => saveWeekNote(personId, weekEnd, { batta: +amount || 0 });
 
   /* What a driver is handed, in the language he reads. He cannot see the app's
      payroll screen, so this is the only account he gets of his own week. */
@@ -7555,15 +7587,15 @@ function VibeCRM() {
     const lines = ta
       ? ["*VIBE MARKETING* — ஊதிய விவரம்", "",
          drv.name, dmy(start) + " முதல் " + dmy(weekEnd) + " வரை", "",
-         "வேலை நாட்கள்: " + w.days + " (உள்ளூர்) = " + inr(w.wage),
-         w.batta !== 0 ? "வெளியூர்: " + w.outDays + " நாள் = " + (w.batta > 0 ? "+" : "−") + inr(Math.abs(w.batta)) : "",
+         "வேலை நாட்கள்: " + w.days + (w.outDays > 0 ? " (" + w.outDays + " வெளியூர்)" : "") + " = " + inr(w.wage),
+         w.batta > 0 ? "படி: +" + inr(w.batta) : "",
          w.advance > 0 ? "முன்பணம் பிடித்தம்: −" + inr(w.advance) : "",
          "", "*கையில் கிடைப்பது: " + inr(w.net) + "*",
          w.owed > w.advance ? "மீதி முன்பணம்: " + inr(w.owed - w.advance) : ""]
       : ["*VIBE MARKETING* — wage slip", "",
          drv.name, "Week " + dmy(start) + " to " + dmy(weekEnd), "",
-         "Days worked: " + w.days + " (local rate) = " + inr(w.wage),
-         w.batta !== 0 ? "Outstation: " + w.outDays + " day(s) at the outstation rate = " + (w.batta > 0 ? "+" : "−") + inr(Math.abs(w.batta)) : "",
+         "Days worked: " + w.days + (w.outDays > 0 ? " (" + w.outDays + " outstation)" : "") + " = " + inr(w.wage),
+         w.batta > 0 ? "Batta: +" + inr(w.batta) : "",
          w.advance > 0 ? "Advance recovered: −" + inr(w.advance) : "",
          "", "*Net paid: " + inr(w.net) + "*",
          w.owed > w.advance ? "Advance still to recover: " + inr(w.owed - w.advance) : ""];
@@ -9483,8 +9515,9 @@ function VibeCRM() {
       )}
       {sheet?.type === "batta" && (() => {
         const { personId, kind, weekEnd } = sheet.data;
-        const campaign = ((db.weekNotes || []).find(x => x.id === personId + "_" + weekEnd) || {}).campaign || "";
+        const note = weekNote(personId, weekEnd) || {};
         const onSetCampaign = (text) => setCampaign(personId, weekEnd, text);
+        const onSetBatta = (amount) => setBatta(personId, weekEnd, amount);
         const onClose = () => setSheet({ type:"attendance" });
         if (kind === "driver") {
           const d = (db.drivers || []).find(x => x.id === personId);
@@ -9492,19 +9525,19 @@ function VibeCRM() {
           const { start } = weekRange(weekEnd);
           const week = (db.attendance || []).filter(a => a.driverId === personId && String(a.date || "") >= start && String(a.date || "") <= weekEnd)
             .slice().sort((a, b) => (a.date < b.date ? -1 : 1));
-          return <BattaForm person={d} kind="driver" week={week} weekEnd={weekEnd} campaign={campaign}
+          return <BattaForm person={d} kind="driver" week={week} weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
             onToggleDuty={(a, on) => setDb(d2 => ({ ...d2, attendance: (d2.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }))}
-            onSetCampaign={onSetCampaign} onClose={onClose} />;
+            onSetCampaign={onSetCampaign} onSetBatta={onSetBatta} onClose={onClose} />;
         }
         const s = (db.staff || []).find(x => x.id === personId);
         if (!s) return null;
         const wp = staffWeekPay(db, s, weekEnd);
-        return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays }} kind="staff" weekEnd={weekEnd} campaign={campaign}
+        return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays }} kind="staff" weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
           onSetStaffOut={(days) => {
             const id = personId + "_" + weekEnd;
             if (days <= 0) drop("staffOuts", id); else put("staffOuts", { id, staffId: personId, weekEnd, days });
           }}
-          onSetCampaign={onSetCampaign} onClose={onClose} />;
+          onSetCampaign={onSetCampaign} onSetBatta={onSetBatta} onClose={onClose} />;
       })()}
       {sheet?.type === "receivables" && (
         <ReceivablesSheet db={db} paidOn={paidOn} onClose={() => setSheet(null)}
