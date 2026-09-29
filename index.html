@@ -2633,7 +2633,7 @@ function ConfirmForm({ order, vendor, onSave, onClose }) {
    The driver's own GPS punch-in log (db.attendance) is separate and lives on
    the vehicle's Fleet screen — this is finance's record, kept apart so
    neither can quietly overwrite the other. */
-function KmLogSheet({ db, put, drop, onAdd, onClose }) {
+function KmLogSheet({ db, put, drop, onAdd, onPdf, pdfBusy, onClose }) {
   const vehicles = db.vehicles || [];
   const [vehicleId, setVehicleId] = useState(vehicles[0] ? vehicles[0].id : "");
   const [from, setFrom] = useState(today().slice(0, 7) + "-01");
@@ -2697,6 +2697,26 @@ function KmLogSheet({ db, put, drop, onAdd, onClose }) {
     downloadCsv("kilometres-" + plate.replace(/\s+/g, "") + "-" + from + "_to_" + to + ".csv", out);
   };
 
+  // Same table as the CSV above, as a PDF — reuses the generic paginated
+  // table renderer the payroll screen's PDF download already built.
+  const exportPdf = () => {
+    const plate = veh ? veh.plate : "vehicle";
+    const dd = (d) => dmy(d).replace(/\//g, "-");
+    const cols = [
+      { key:"n", label:"S.no", w:8, align:"left" }, { key:"date", label:"Date", w:14, align:"left" },
+      { key:"open", label:"Starting Km", w:14, align:"right" }, { key:"close", label:"Closing KM", w:14, align:"right" },
+      { key:"running", label:"Running", w:12, align:"right" }, { key:"name", label:"Driver Name", w:24, align:"left" },
+      { key:"salary", label:"Salary", w:14, align:"right" },
+    ];
+    const pdfRows = rows.map(r => ({
+      n: r.n, date: dd(r.date), open: r.open != null ? r.open : (r.startHint != null ? r.startHint : "—"),
+      close: r.close != null ? r.close : "—", running: r.running != null ? r.running : "—",
+      name: r.name || "—", salary: r.salary != null ? inr(r.salary) : "—",
+    }));
+    pdfRows.push({ _total:true, n:"", date:"", open:"", close:"TOTAL", running: totalKm.toLocaleString("en-IN"), name:"", salary: inr(totalSalary) });
+    onPdf(plate.toUpperCase(), dd(from) + " to " + dd(to), cols, pdfRows, "kilometres-" + plate.replace(/\s+/g, "") + "-" + from + "_to_" + to + ".pdf");
+  };
+
   const cell = { width:92, boxSizing:"border-box", padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, font:"inherit", textAlign:"right" };
   return (
     <Sheet title="Daily kilometres" onClose={onClose}>
@@ -2711,6 +2731,9 @@ function KmLogSheet({ db, put, drop, onAdd, onClose }) {
         <button className="vz-btn alt" style={{ margin:0 }} onClick={() => onAdd(vehicleId)}>+ Log one day</button>
         <button className="vz-btn alt" style={{ margin:0 }} disabled={!rows.length} onClick={exportCsv}>Download Excel</button>
       </div>
+      <button className="vz-btn alt" disabled={!rows.length || pdfBusy} onClick={exportPdf}>
+        {pdfBusy ? "Building…" : "Download as PDF"}
+      </button>
       <div className="vz-grid" style={{ margin:"10px 0 6px" }}>
         <div className="vz-stat"><i>Total running</i><b style={{ fontSize:18 }}>{totalKm.toLocaleString("en-IN")} km</b><small>{rows.length} day{rows.length === 1 ? "" : "s"}</small></div>
         <div className="vz-stat"><i>Driver salary</i><b style={{ fontSize:18 }}>{inr(totalSalary)}</b><small>{veh ? veh.plate : "—"}</small></div>
@@ -9407,7 +9430,8 @@ function VibeCRM() {
       )}
       {sheet?.type === "kmlog" && (
         <KmLogSheet db={db} put={put} drop={drop} onClose={() => setSheet(null)}
-          onAdd={(vehicleId) => setSheet({ type:"kmlogform", vehicleId })} />
+          onAdd={(vehicleId) => setSheet({ type:"kmlogform", vehicleId })}
+          onPdf={buildPayrollPdf} pdfBusy={payDocBusy} />
       )}
       {sheet?.type === "kmlogform" && (
         <KmLogForm init={sheet.data} vehicles={db.vehicles} defaultVehicleId={sheet.vehicleId} onClose={() => setSheet({ type:"kmlog" })}
