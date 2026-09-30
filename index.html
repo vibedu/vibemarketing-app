@@ -3688,37 +3688,47 @@ const activeRatePeriod = (db, personId, weekStart, weekEnd) => {
 // Sunday-to-Saturday pay week — still prices those days correctly, instead
 // of the whole week falling back to nothing just because the rate lookup
 // missed on the one day it happened to check.
-const staffOutstationForWeek = (db, s, weekStart, weekEnd) => {
+//
+// A period's Local rate is priced exactly like its Outstation rate — per
+// day actually worked, not once for the whole week regardless of how many
+// of its days fall in this one. That only differs from the plain rule
+// (a flat weekly local wage, see below) once a person has a dated period at
+// all: everyone currently paid through periods is, in practice, a day-rate
+// worker whether that day happens to be priced as "local" or "outstation".
+const staffPeriodDaysForWeek = (db, s, weekStart, weekEnd) => {
   const periods = (db.wageRates || []).filter(r => r.personId === s.id && r.from);
   if (periods.length) {
-    let days = 0, pay = 0, perDay = 0;
+    let days = 0, outDays = 0, localPay = 0, outPay = 0, perDay = 0;
     for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
       const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
       if (!hit) continue;
-      const blank = hit.outstation === "" || hit.outstation == null;
-      const rate = blank ? 0 : (+hit.outstation || 0);
-      if (rate > 0) { days += 1; pay += rate; perDay = rate; }
+      const outBlank = hit.outstation === "" || hit.outstation == null;
+      const outRate = outBlank ? 0 : (+hit.outstation || 0);
+      const localRate = +hit.local || 0;
+      if (outRate > 0) { days += 1; outDays += 1; outPay += outRate; perDay = outRate; }
+      else if (localRate > 0) { days += 1; localPay += localRate; perDay = localRate; }
     }
-    if (days > 0) return { days, pay, perDay, auto: true };
+    if (days > 0) return { days, outDays, localPay, outPay, perDay, auto: true };
   }
   const std = +s.outstationWage || 0;
   const manualDays = std > 0 ? (((db.staffOuts || []).find(x => x.id === s.id + "_" + weekEnd) || {}).days || 0) : 0;
-  return { days: manualDays, pay: manualDays * std, perDay: std, auto: false };
+  return { days: manualDays, outDays: manualDays, localPay: 0, outPay: manualDays * std, perDay: std, auto: false };
 };
 
-// A staff member's gross pay for one week: the flat local wage, plus
-// outstation pay for whichever days were logged out of town that week —
-// from a rate period's own date range when the person has one, falling back
-// to the manual day count (db.staffOuts) otherwise — combined into one wage
-// figure, plus the same separate Batta allowance as above.
+// A staff member's gross pay for one week. Someone with a dated rate period
+// is priced day by day off it (staffPeriodDaysForWeek), local days and
+// outstation days alike; someone with none is paid the plain way — a flat
+// weekly local wage regardless of days, plus outstation pay for however many
+// days were manually marked out of town — combined into one wage figure,
+// plus the same separate Batta allowance as above.
 const staffWeekPay = (db, s, weekEnd) => {
   const { start: weekStart } = weekRange(weekEnd);
-  const period = activeRatePeriod(db, s.id, weekStart, weekEnd);
-  const local = period ? (+period.local || 0) : (+s.weeklyWage || 0);
-  const { days: outDays, pay: outPay, perDay } = staffOutstationForWeek(db, s, weekStart, weekEnd);
+  const p = staffPeriodDaysForWeek(db, s, weekStart, weekEnd);
+  const local = p.auto ? p.localPay : (+s.weeklyWage || 0);
+  const outDays = p.outDays, outPay = p.outPay, perDay = p.perDay;
   const wage = local + outPay;
   const batta = battaFor(db, s.id, weekEnd);
-  return { local, outDays, perDay, outPay, wage, batta, gross: wage + batta };
+  return { local, days: p.days, outDays, perDay, outPay, wage, batta, gross: wage + batta };
 };
 
 /* One row per date, for the day-wise report — a driver's real duty days
@@ -3745,15 +3755,20 @@ const dayRowsFor = (db, person, kind, from, to) => {
         rate: dp.pay, pay: dp.pay, vehicle: att.vehiclePlate || plateOf(att.vehicleId), openKm: km.open, closeKm: km.close });
     }
   } else {
+    // A period's Local rate is priced per day, exactly like Outstation —
+    // whichever one is set on the period that covers this date.
     const periods = (db.wageRates || []).filter(r => r.personId === person.id && r.from);
     for (let d = from; d <= to; d = addDays(d, 1)) {
       const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
       if (!hit) continue;
-      const blank = hit.outstation === "" || hit.outstation == null;
-      const rate = blank ? 0 : (+hit.outstation || 0);
+      const outBlank = hit.outstation === "" || hit.outstation == null;
+      const outRate = outBlank ? 0 : (+hit.outstation || 0);
+      const localRate = +hit.local || 0;
+      const outstation = outRate > 0;
+      const rate = outstation ? outRate : localRate;
       if (rate <= 0) continue;
       const km = kmFor(hit.vehicleId, d);
-      rows.push({ date: d, outstation: true, wageType: "Outstation", rate, pay: rate, campaign: hit.campaign || "",
+      rows.push({ date: d, outstation, wageType: outstation ? "Outstation" : "Local", rate, pay: rate, campaign: hit.campaign || "",
         vehicle: plateOf(hit.vehicleId), openKm: km.open, closeKm: km.close });
     }
   }
@@ -6362,13 +6377,17 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
           ? kmRangeFor(period.vehicleId, period.from > start ? period.from : start, (period.to && period.to < we) ? period.to : we)
           : { open: null, close: null };
         const wageType = wp.outDays > 0 ? "Outstation" : (wp.local > 0 ? "Local" : "");
+        // A period prices every day it covers, local or outstation alike, so
+        // "days" here is whichever ones actually happened this week — not
+        // just the outstation ones — unless nothing but the flat weekly wage
+        // applies at all, in which case there's no day to count.
+        const dayNote = wp.days > 0
+          ? wp.days + " day" + (wp.days === 1 ? "" : "s") + (wp.outDays > 0 ? " (" + wp.outDays + " outstation)" : "")
+          : "local " + inr(wp.local) + "/wk";
         return { id: s.id, kind: "staff", name: s.name, local: wp.local, outDays: wp.outDays, outPay: wp.outPay, perDay: wp.perDay,
           advance, owed, campaign, vehicle, wageType, openKm: km.open, closeKm: km.close,
-          // Same flat aliases as the driver row above — "days" has no meaning
-          // for a flat weekly local wage, so it only carries the outstation
-          // day count, the one day-based figure staff pay actually has.
-          days: wp.outDays || "", wage: wp.wage, batta: wp.batta,
-          sub: "local " + inr(wp.local) + "/wk" + (wp.outDays > 0 ? " + " + wp.outDays + " outstation day" + (wp.outDays === 1 ? "" : "s") + " × " + inr(wp.perDay) : "")
+          days: wp.days || "", wage: wp.wage, batta: wp.batta,
+          sub: dayNote + " · wage " + inr(wp.wage)
             + (s.role ? " · " + s.role : "") + (wp.batta > 0 ? " + batta " + inr(wp.batta) : "")
             + (advance > 0 ? " − advance " + inr(advance) : "") + (campaign ? " · " + campaign : ""),
           pay: wp.gross - advance, rec: s };
@@ -9819,7 +9838,7 @@ function VibeCRM() {
         if (!s) return null;
         const wp = staffWeekPay(db, s, weekEnd);
         const { start: wkStart } = weekRange(weekEnd);
-        const autoDays = staffOutstationForWeek(db, s, wkStart, weekEnd).auto;
+        const autoDays = staffPeriodDaysForWeek(db, s, wkStart, weekEnd).auto;
         return <BattaForm person={{ ...s, perDay: wp.perDay, outDays: wp.outDays, autoDays }} kind="staff" weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
           onSetStaffOut={(days) => {
             const id = personId + "_" + weekEnd;
