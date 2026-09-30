@@ -3664,6 +3664,22 @@ const driverWeek = (db, driver, weekStart, weekEnd) => {
   return { days: days.length, outDays, localPay, outPay, wage, batta, gross, advance: deduct, owed, net: gross - deduct, records: days };
 };
 
+// Whichever rate period actually covered a day within the week — checked
+// day by day, not just the week's own Saturday, so a period covering only
+// part of the week (the common case: a short campaign entered as its own
+// dates) is still found. Whichever day it was last active on wins, so a
+// mid-week rate change is reflected by the later period.
+const activeRatePeriod = (db, personId, weekStart, weekEnd) => {
+  const periods = (db.wageRates || []).filter(r => r.personId === personId && r.from);
+  if (!periods.length) return null;
+  let found = null;
+  for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
+    const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+    if (hit) found = hit;
+  }
+  return found;
+};
+
 // A rate period's own From/To is often exactly the campaign's dates — set
 // once on the person's form — so a week that falls inside one is counted as
 // worked automatically, without a separate manual day-count every week.
@@ -3697,7 +3713,8 @@ const staffOutstationForWeek = (db, s, weekStart, weekEnd) => {
 // figure, plus the same separate Batta allowance as above.
 const staffWeekPay = (db, s, weekEnd) => {
   const { start: weekStart } = weekRange(weekEnd);
-  const local = rateFor(db, s.id, weekEnd, { local: +s.weeklyWage || 0, out: +s.outstationWage || 0 }, 0).local;
+  const period = activeRatePeriod(db, s.id, weekStart, weekEnd);
+  const local = period ? (+period.local || 0) : (+s.weeklyWage || 0);
   const { days: outDays, pay: outPay, perDay } = staffOutstationForWeek(db, s, weekStart, weekEnd);
   const wage = local + outPay;
   const batta = battaFor(db, s.id, weekEnd);
@@ -6281,31 +6298,26 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
   // that's also where a campaign name can be typed in (on the Staff/Driver
   // form itself), and a report shouldn't look blank just because the note
   // was entered in the other of those two places.
-  // Whichever period actually covered a day in this week — checked day by
-  // day like staffOutstationForWeek, not just the week's own Saturday, so a
-  // period covering only part of the week (the common case: a short
-  // campaign entered as its own dates) is still found. The last day the
-  // period was active on wins, so a mid-week rate change shows the latest.
-  const activePeriodForWeek = (personId, weekStart, weekEnd) => {
-    const periods = (db.wageRates || []).filter(r => r.personId === personId && r.from);
-    if (!periods.length) return null;
-    let found = null;
-    for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
-      const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
-      if (hit) found = hit;
-    }
-    return found;
-  };
   const campaignOf = (personId, weekStart, we) => {
     const note = ((db.weekNotes || []).find(x => x.id === personId + "_" + we) || {}).campaign;
     if (note) return note;
-    const hit = activePeriodForWeek(personId, weekStart, we);
+    const hit = activeRatePeriod(db, personId, weekStart, we);
     return (hit && hit.campaign) || "";
   };
   const vehicleOf = (personId, weekStart, we) => {
-    const hit = activePeriodForWeek(personId, weekStart, we);
+    const hit = activeRatePeriod(db, personId, weekStart, we);
     const v = hit && hit.vehicleId && (db.vehicles || []).find(x => x.id === hit.vehicleId);
     return v ? v.plate : "";
+  };
+  // The vehicle's odometer range for the days it was actually assigned this
+  // week — from db.kmLogs, the same records the Daily Kilometres screen and
+  // the rate-period form's own KM fields read and write.
+  const kmRangeFor = (vehicleId, from, to) => {
+    if (!vehicleId || !from) return { open: null, close: null };
+    const logs = (db.kmLogs || []).filter(k => k.vehicleId === vehicleId && k.date >= from && k.date <= (to || from))
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (!logs.length) return { open: null, close: null };
+    return { open: logs[0].openKm != null ? logs[0].openKm : null, close: logs[logs.length - 1].closeKm != null ? logs[logs.length - 1].closeKm : null };
   };
 
   const weekRecs = (db.attendance || []).filter(a => inWeek(String(a.date || "")));
@@ -6317,9 +6329,12 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
     const driverRows = db.drivers.map(d => {
       const w = driverWeek(db, d, start, we);
       const campaign = campaignOf(d.id, start, we);
-      const vehicle = [...new Set(w.records.map(r => r.vehiclePlate).filter(Boolean))].join(", ");
+      const sortedRecs = w.records.slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+      const vehicle = [...new Set(sortedRecs.map(r => r.vehiclePlate).filter(Boolean))].join(", ");
+      const lastVehicleId = sortedRecs.length ? sortedRecs[sortedRecs.length - 1].vehicleId : "";
+      const km = sortedRecs.length ? kmRangeFor(lastVehicleId, sortedRecs[0].date, sortedRecs[sortedRecs.length - 1].date) : { open: null, close: null };
       const wageType = w.outDays > 0 ? "Outstation" : (w.wage > 0 ? "Local" : "");
-      return { id: d.id, kind: "driver", name: d.name, w, rec: d, campaign, vehicle, wageType,
+      return { id: d.id, kind: "driver", name: d.name, w, rec: d, campaign, vehicle, wageType, openKm: km.open, closeKm: km.close,
           // Flat aliases so the CSV/PDF export can read week- and month-scope
           // rows (drivers and staff alike) through one common shape. Wage
           // already combines local and outstation pay; batta is the separate
@@ -6342,9 +6357,13 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         const advance = Math.min(owed, wp.gross);
         const campaign = campaignOf(s.id, start, we);
         const vehicle = vehicleOf(s.id, start, we);
+        const period = activeRatePeriod(db, s.id, start, we);
+        const km = period && period.vehicleId
+          ? kmRangeFor(period.vehicleId, period.from > start ? period.from : start, (period.to && period.to < we) ? period.to : we)
+          : { open: null, close: null };
         const wageType = wp.outDays > 0 ? "Outstation" : (wp.local > 0 ? "Local" : "");
         return { id: s.id, kind: "staff", name: s.name, local: wp.local, outDays: wp.outDays, outPay: wp.outPay, perDay: wp.perDay,
-          advance, owed, campaign, vehicle, wageType,
+          advance, owed, campaign, vehicle, wageType, openKm: km.open, closeKm: km.close,
           // Same flat aliases as the driver row above — "days" has no meaning
           // for a flat weekly local wage, so it only carries the outstation
           // day count, the one day-based figure staff pay actually has.
@@ -6676,26 +6695,31 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         const totalDaysInWeek = scope === "month" ? "" : 7;
         const csvRows = () => {
           const out = [["Downloaded " + dmy(today())], [periodLabel],
-            ["Name", "Type", "Campaign / Week", "Vehicle Number", "Days", "Total Days in Week", "Wage Type", "Daily Wage", "Batta", "Advance recovered", "Net payable"]];
+            ["Name", "Type", "Campaign / Week", "Vehicle Number", "Days", "Total Days in Week", "Wage Type", "Daily Wage",
+             "Opening KM", "Closing KM", "Batta", "Advance recovered", "Net payable"]];
           activeRows.forEach(r => out.push([r.name, typeOf(r), r.campaign || "", r.vehicle || "",
-            r.days, totalDaysInWeek, r.wageType || "", r.wage, r.batta, r.advance || 0, r.pay]));
-          out.push([]); out.push(["", "", "", "", "", "", "", "", "", "TOTAL", bill]);
+            r.days, totalDaysInWeek, r.wageType || "", r.wage,
+            r.openKm != null ? r.openKm : "", r.closeKm != null ? r.closeKm : "", r.batta, r.advance || 0, r.pay]));
+          out.push([]); out.push(["", "", "", "", "", "", "", "", "", "", "", "TOTAL", bill]);
           return out;
         };
         const pdfCols = [
-          { key:"name", label:"Name", w:13, align:"left" }, { key:"type", label:"Type", w:7, align:"left" },
-          { key:"campaign", label:"Campaign / Week", w:13, align:"left" }, { key:"vehicle", label:"Vehicle Number", w:11, align:"left" },
-          { key:"days", label:"Days", w:5, align:"right" }, { key:"totalDays", label:"Total Days", w:7, align:"right" },
-          { key:"wageType", label:"Wage Type", w:9, align:"left" }, { key:"wage", label:"Daily Wage", w:9, align:"right" },
-          { key:"batta", label:"Batta", w:8, align:"right" }, { key:"advance", label:"Advance", w:9, align:"right" },
-          { key:"net", label:"Net payable", w:9, align:"right" },
+          { key:"name", label:"Name", w:11, align:"left" }, { key:"type", label:"Type", w:6, align:"left" },
+          { key:"campaign", label:"Campaign / Week", w:11, align:"left" }, { key:"vehicle", label:"Vehicle Number", w:9, align:"left" },
+          { key:"days", label:"Days", w:4, align:"right" }, { key:"totalDays", label:"Total Days", w:6, align:"right" },
+          { key:"wageType", label:"Wage Type", w:8, align:"left" }, { key:"wage", label:"Daily Wage", w:8, align:"right" },
+          { key:"openKm", label:"Opening KM", w:8, align:"right" }, { key:"closeKm", label:"Closing KM", w:8, align:"right" },
+          { key:"batta", label:"Batta", w:7, align:"right" }, { key:"advance", label:"Advance", w:7, align:"right" },
+          { key:"net", label:"Net payable", w:7, align:"right" },
         ];
         const pdfRows = activeRows.map(r => ({
           name: r.name, type: typeOf(r), campaign: r.campaign || "—", vehicle: r.vehicle || "—",
-          days: r.days || "—", totalDays: totalDaysInWeek || "—", wageType: r.wageType || "—", wage: inr(r.wage), batta: inr(r.batta),
-          advance: r.advance ? "− " + inr(r.advance) : "—", net: inr(r.pay),
+          days: r.days || "—", totalDays: totalDaysInWeek || "—", wageType: r.wageType || "—", wage: inr(r.wage),
+          openKm: r.openKm != null ? r.openKm : "—", closeKm: r.closeKm != null ? r.closeKm : "—",
+          batta: inr(r.batta), advance: r.advance ? "− " + inr(r.advance) : "—", net: inr(r.pay),
         }));
-        pdfRows.push({ _total:true, name:"TOTAL", type:"", campaign:"", vehicle:"", days:"", totalDays:"", wageType:"", wage:"", batta:"", advance:"", net: inr(bill) });
+        pdfRows.push({ _total:true, name:"TOTAL", type:"", campaign:"", vehicle:"", days:"", totalDays:"", wageType:"", wage:"",
+          openKm:"", closeKm:"", batta:"", advance:"", net: inr(bill) });
         return (
           <div className="vz-2">
             <button className="vz-btn alt" style={{ margin:0 }} disabled={!activeRows.length} onClick={() => downloadCsv("payroll-" + fileTag + ".csv", csvRows())}>
