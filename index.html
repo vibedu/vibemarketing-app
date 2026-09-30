@@ -2909,7 +2909,7 @@ function RatePeriods({ rates, onChange, localLabel, outLabel, vehicles }) {
     <>
       <div className="vz-eyebrow">
         Rate for a period
-        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "", campaign: "", vehicleId: "" }])}>+ Add period</button>
+        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "", campaign: "", vehicleId: "", openKm: "", closeKm: "" }])}>+ Add period</button>
       </div>
       {rates.length === 0 && (
         <div className="vz-meta" style={{ marginTop:-4 }}>
@@ -2935,6 +2935,16 @@ function RatePeriods({ rates, onChange, localLabel, outLabel, vehicles }) {
               <F label="Vehicle for this period (optional)">
                 <PlatePicker value={r.vehicleId || ""} vehicles={vehicles} title="Select a vehicle" placeholder="— no vehicle —" onChange={(id) => set(r.id, { vehicleId: id })} />
               </F>
+            )}
+            {vehicles && r.vehicleId && (
+              <div className="vz-2">
+                <F label={"Opening KM · " + dmy(r.from)}>
+                  <input type="number" inputMode="numeric" value={r.openKm || ""} onChange={e => set(r.id, { openKm: e.target.value })} placeholder="odometer reading" />
+                </F>
+                <F label={"Closing KM · " + dmy(r.to || r.from)}>
+                  <input type="number" inputMode="numeric" value={r.closeKm || ""} onChange={e => set(r.id, { closeKm: e.target.value })} placeholder="odometer reading" />
+                </F>
+              </div>
             )}
             {bad && <div className="vz-meta" style={{ color:"#B4262A", marginTop:0 }}>Needs a From date, and To can't be earlier than From.</div>}
             {!touched && <div className="vz-meta" style={{ marginTop:0 }}>Not saved until it has a rate — fine to leave blank, or remove it below.</div>}
@@ -7304,6 +7314,16 @@ function VibeCRM() {
     }
     return next;
   });
+  // A person's rate periods, with each one's Opening/Closing KM read back
+  // from db.kmLogs (where they actually live) so reopening the form shows
+  // what was entered last, not a blank field.
+  const ratesWithKm = (personId) => (db.wageRates || []).filter(r => r.personId === personId).map(r => {
+    if (!r.vehicleId) return r;
+    const openLog = (db.kmLogs || []).find(k => k.vehicleId === r.vehicleId && k.date === r.from);
+    const closeLog = (db.kmLogs || []).find(k => k.vehicleId === r.vehicleId && k.date === (r.to || r.from));
+    return { ...r, openKm: openLog && openLog.openKm != null ? openLog.openKm : "", closeKm: closeLog && closeLog.closeKm != null ? closeLog.closeKm : "" };
+  });
+
   /* Save a person's dated wage rates alongside them: drop the periods that
      were removed, add or update the rest. Rows without a From date and a rate
      are never saved (the form blocks them; this is the backstop). */
@@ -7315,6 +7335,22 @@ function VibeCRM() {
       const rec = { id: r.id, personId, from: r.from, to: r.to || "", local: +r.local || 0, outstation: r.outstation === "" ? "" : (+r.outstation || 0), campaign: r.campaign || "", vehicleId: r.vehicleId || "" };
       const old = cur.find(c => c.id === r.id);
       if (!old || old.from !== rec.from || old.to !== rec.to || old.local !== rec.local || old.outstation !== rec.outstation || old.campaign !== rec.campaign || old.vehicleId !== rec.vehicleId) put("wageRates", rec);
+      // A period's own Opening/Closing KM are entered here but kept in
+      // db.kmLogs — the same record the Daily Kilometres screen reads and
+      // writes — so there is one place these numbers live, not two.
+      if (r.vehicleId) {
+        const putKm = (date, field, val) => {
+          if (!date || val === "" || val == null) return;
+          const id = r.vehicleId + "_" + date;
+          const log = (db.kmLogs || []).find(k => k.id === id) || {};
+          if (log[field] === +val) return;
+          put("kmLogs", { id, vehicleId: r.vehicleId, date, note: log.note || "",
+            openKm: log.openKm != null ? log.openKm : null, closeKm: log.closeKm != null ? log.closeKm : null,
+            [field]: +val });
+        };
+        putKm(r.from, "openKm", r.openKm);
+        putKm(r.to || r.from, "closeKm", r.closeKm);
+      }
     });
   };
   const savePic = (id, dataUrl) => setPics(p => {
@@ -9812,7 +9848,7 @@ function VibeCRM() {
           onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }} />
       )}
       {sheet?.type === "staff" && (
-        <StaffForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} vehicles={db.vehicles} onClose={() => setSheet(null)}
+        <StaffForm init={sheet.data} initRates={sheet.data ? ratesWithKm(sheet.data.id) : []} vehicles={db.vehicles} onClose={() => setSheet(null)}
           onSave={(x, rates) => { put("staff", x); saveRates(x.id, rates); setSheet(null); }}
           onDelete={(id) => { if (window.confirm("Remove this person from staff? Past weeks stay in the record.")) { drop("staff", id); setSheet(null); } }} />
       )}
@@ -9926,7 +9962,7 @@ function VibeCRM() {
           }} />
       )}
       {sheet?.type === "driver" && (
-        <DriverForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} vehicles={db.vehicles} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
+        <DriverForm init={sheet.data} initRates={sheet.data ? ratesWithKm(sheet.data.id) : []} vehicles={db.vehicles} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
           onSave={(x, rates) => {
             x = { ...x, updatedAt: new Date().toISOString() };
             put("drivers", x); saveRates(x.id, rates); setSheet(null);
