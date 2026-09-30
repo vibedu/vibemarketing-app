@@ -2781,7 +2781,7 @@ function KmLogSheet({ db, put, drop, onAdd, onPdf, pdfBusy, onClose }) {
   );
 }
 
-function DriverForm({ init, initRates, pics, canEdit = true, canDel = true, onPhoto, onSave, onDelete, onClose }) {
+function DriverForm({ init, initRates, vehicles, pics, canEdit = true, canDel = true, onPhoto, onSave, onDelete, onClose }) {
   const [f, set] = useState(() => {
     const base = init || {
       name:"", phone:"", wage:700, batta:"", joined:today(), aadhaar:"", pan:"", dl:"", dlExpiry:"",
@@ -2840,7 +2840,7 @@ function DriverForm({ init, initRates, pics, canEdit = true, canDel = true, onPh
       <div className="vz-meta" style={{ marginTop:-4 }}>
         A day ticked as outstation on the payroll sheet pays this instead of the local wage.
       </div>
-      <RatePeriods rates={rates} onChange={setRates} localLabel="Local wage ₹ per day" outLabel="Outstation wage ₹ per day" />
+      <RatePeriods rates={rates} onChange={setRates} localLabel="Local wage ₹ per day" outLabel="Outstation wage ₹ per day" vehicles={vehicles} />
       <F label="Home address"><textarea rows={2} value={f.address} onChange={u("address")} /></F>
 
       <div className="vz-eyebrow" style={{ marginTop:14 }}>Driving licence</div>
@@ -2903,13 +2903,13 @@ function DriverForm({ init, initRates, pics, canEdit = true, canDel = true, onPh
 const ratePeriodsOk = (rates) => (rates || [])
   .filter(r => +r.local > 0 || +r.outstation > 0)
   .every(r => r.from && (!r.to || r.to >= r.from));
-function RatePeriods({ rates, onChange, localLabel, outLabel }) {
+function RatePeriods({ rates, onChange, localLabel, outLabel, vehicles }) {
   const set = (id, patch) => onChange(rates.map(r => (r.id === id ? { ...r, ...patch } : r)));
   return (
     <>
       <div className="vz-eyebrow">
         Rate for a period
-        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "", campaign: "" }])}>+ Add period</button>
+        <button onClick={() => onChange([...rates, { id: uid(), from: today(), to: "", local: "", outstation: "", campaign: "", vehicleId: "" }])}>+ Add period</button>
       </div>
       {rates.length === 0 && (
         <div className="vz-meta" style={{ marginTop:-4 }}>
@@ -2931,6 +2931,11 @@ function RatePeriods({ rates, onChange, localLabel, outLabel }) {
               <F label={outLabel}><input type="number" inputMode="numeric" value={r.outstation} onChange={e => set(r.id, { outstation: e.target.value })} placeholder="same as local" /></F>
             </div>
             <F label="Campaign / job name (optional)"><input value={r.campaign || ""} onChange={e => set(r.id, { campaign: e.target.value })} placeholder="Which campaign this period is for" /></F>
+            {vehicles && (
+              <F label="Vehicle for this period (optional)">
+                <PlatePicker value={r.vehicleId || ""} vehicles={vehicles} title="Select a vehicle" placeholder="— no vehicle —" onChange={(id) => set(r.id, { vehicleId: id })} />
+              </F>
+            )}
             {bad && <div className="vz-meta" style={{ color:"#B4262A", marginTop:0 }}>Needs a From date, and To can't be earlier than From.</div>}
             {!touched && <div className="vz-meta" style={{ marginTop:0 }}>Not saved until it has a rate — fine to leave blank, or remove it below.</div>}
             <button className="vz-chip c-red" onClick={() => onChange(rates.filter(x => x.id !== r.id))}>Remove this period</button>
@@ -2945,7 +2950,7 @@ function RatePeriods({ rates, onChange, localLabel, outLabel }) {
    driver, paid the same amount every Saturday whether or not there is
    anything to sign in for. Kept separate from drivers, whose pay depends on
    which days they actually worked. */
-function StaffForm({ init, initRates, onSave, onDelete, onClose }) {
+function StaffForm({ init, initRates, vehicles, onSave, onDelete, onClose }) {
   const [f, set] = useState(init || { name:"", phone:"", role:"", weeklyWage:"", outstationWage:"", joined:today(), active:true, bankAccount:"", ifsc:"" });
   const [rates, setRates] = useState(initRates || []);
   const u = (k) => (e) => set({ ...f, [k]: e.target.value });
@@ -2969,7 +2974,7 @@ function StaffForm({ init, initRates, onSave, onDelete, onClose }) {
         The local wage is paid every week. The outstation wage is added on top for each day they
         are out of town — you enter those days on the payroll sheet.
       </div>
-      <RatePeriods rates={rates} onChange={setRates} localLabel="Local wage ₹ per week" outLabel="Outstation wage ₹ per day" />
+      <RatePeriods rates={rates} onChange={setRates} localLabel="Local wage ₹ per week" outLabel="Outstation wage ₹ per day" vehicles={vehicles} />
       <div className="vz-2">
         <F label="Bank account number"><input value={f.bankAccount || ""} onChange={u("bankAccount")} inputMode="numeric" /></F>
         <F label="IFSC code"><input value={f.ifsc || ""} onChange={e => set({ ...f, ifsc: e.target.value.toUpperCase() })} style={{ textTransform:"uppercase" }} /></F>
@@ -3693,15 +3698,24 @@ const staffWeekPay = (db, s, weekEnd) => {
    (db.attendance), or a staff member's dated rate periods, whichever the
    kind calls for. A staff member's local wage is paid once a week, not once
    a day, so it never appears here — only the days that actually had a rate
-   (i.e. outstation-style day-pay) show a row. */
+   (i.e. outstation-style day-pay) show a row. Each row also carries that
+   day's vehicle and odometer reading (db.kmLogs), when there is one on file
+   for that exact vehicle and date. */
 const dayRowsFor = (db, person, kind, from, to) => {
+  const kmFor = (vehicleId, d) => {
+    const k = (db.kmLogs || []).find(x => x.vehicleId === vehicleId && x.date === d);
+    return { open: k && k.openKm != null ? k.openKm : null, close: k && k.closeKm != null ? k.closeKm : null };
+  };
+  const plateOf = (vehicleId) => { const v = (db.vehicles || []).find(x => x.id === vehicleId); return v ? v.plate : ""; };
   const rows = [];
   if (kind === "driver") {
     for (let d = from; d <= to; d = addDays(d, 1)) {
       const att = (db.attendance || []).find(a => a.driverId === person.id && a.date === d);
       if (!att) continue;
       const dp = dayPay(db, person, att);
-      rows.push({ date: d, outstation: !!att.outstation, rate: dp.pay, pay: dp.pay, vehicle: att.vehiclePlate || "" });
+      const km = kmFor(att.vehicleId, d);
+      rows.push({ date: d, outstation: !!att.outstation, wageType: att.outstation ? "Outstation" : "Local",
+        rate: dp.pay, pay: dp.pay, vehicle: att.vehiclePlate || plateOf(att.vehicleId), openKm: km.open, closeKm: km.close });
     }
   } else {
     const periods = (db.wageRates || []).filter(r => r.personId === person.id && r.from);
@@ -3711,7 +3725,9 @@ const dayRowsFor = (db, person, kind, from, to) => {
       const blank = hit.outstation === "" || hit.outstation == null;
       const rate = blank ? 0 : (+hit.outstation || 0);
       if (rate <= 0) continue;
-      rows.push({ date: d, outstation: true, rate, pay: rate, campaign: hit.campaign || "" });
+      const km = kmFor(hit.vehicleId, d);
+      rows.push({ date: d, outstation: true, wageType: "Outstation", rate, pay: rate, campaign: hit.campaign || "",
+        vehicle: plateOf(hit.vehicleId), openKm: km.open, closeKm: km.close });
     }
   }
   return rows;
@@ -6152,18 +6168,25 @@ function DayWiseSheet({ db, onPdf, pdfBusy, onClose }) {
   const fileTag = (person ? person.name.replace(/\s+/g, "") : "report") + "-" + from + "_to_" + to;
 
   const exportCsv = () => {
-    const out = [[person ? person.name : ""], ["Date", "Outstation", "Rate", "Campaign", "Amount"]];
-    rows.forEach(r => out.push([dmy(r.date), r.outstation ? "Yes" : "No", r.rate, r.campaign || "", r.pay]));
-    out.push([]); out.push(["", "", "", "TOTAL", total]);
+    const out = [[person ? person.name : ""], ["S.No", "Date", "Vehicle Number", "Wage Type", "Daily Wage", "Opening KM", "Closing KM", "Campaign", "Amount"]];
+    rows.forEach((r, i) => out.push([i + 1, dmy(r.date), r.vehicle || "", r.wageType, r.rate,
+      r.openKm != null ? r.openKm : "", r.closeKm != null ? r.closeKm : "", r.campaign || "", r.pay]));
+    out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", total]);
     downloadCsv("day-wise-" + fileTag + ".csv", out);
   };
   const exportPdf = () => {
     const cols = [
-      { key:"date", label:"Date", w:18, align:"left" }, { key:"campaign", label:"Campaign", w:37, align:"left" },
-      { key:"rate", label:"Rate", w:20, align:"right" }, { key:"pay", label:"Amount", w:25, align:"right" },
+      { key:"n", label:"S.No", w:6, align:"left" }, { key:"date", label:"Date", w:12, align:"left" },
+      { key:"vehicle", label:"Vehicle", w:14, align:"left" }, { key:"type", label:"Wage Type", w:11, align:"left" },
+      { key:"rate", label:"Daily Wage", w:11, align:"right" }, { key:"open", label:"Opening KM", w:11, align:"right" },
+      { key:"close", label:"Closing KM", w:11, align:"right" }, { key:"campaign", label:"Campaign", w:14, align:"left" },
+      { key:"pay", label:"Amount", w:10, align:"right" },
     ];
-    const pdfRows = rows.map(r => ({ date: dmy(r.date), campaign: r.campaign || r.vehicle || "—", rate: inr(r.rate), pay: inr(r.pay) }));
-    pdfRows.push({ _total:true, date:"", campaign:"", rate:"TOTAL", pay: inr(total) });
+    const pdfRows = rows.map((r, i) => ({
+      n: i + 1, date: dmy(r.date), vehicle: r.vehicle || "—", type: r.wageType, rate: inr(r.rate),
+      open: r.openKm != null ? r.openKm : "—", close: r.closeKm != null ? r.closeKm : "—", campaign: r.campaign || "—", pay: inr(r.pay),
+    }));
+    pdfRows.push({ _total:true, n:"", date:"", vehicle:"", type:"", rate:"", open:"", close:"", campaign:"TOTAL", pay: inr(total) });
     onPdf("DAY-WISE REPORT", (person ? person.name + " · " : "") + dmy(from) + " to " + dmy(to), cols, pdfRows, "day-wise-" + fileTag + ".pdf");
   };
 
@@ -6194,17 +6217,25 @@ function DayWiseSheet({ db, onPdf, pdfBusy, onClose }) {
       {rows.length > 0 && (
         <div className="vz-tablewrap">
           <table className="vz-table">
-            <thead><tr><th>Date</th><th>Campaign</th><th className="n">Rate</th><th className="n">Amount</th></tr></thead>
+            <thead><tr>
+              <th>S.No</th><th>Date</th><th>Vehicle</th><th>Type</th><th className="n">Wage</th>
+              <th className="n">Opening KM</th><th className="n">Closing KM</th><th>Campaign</th><th className="n">Amount</th>
+            </tr></thead>
             <tbody>
-              {rows.map(r => (
+              {rows.map((r, i) => (
                 <tr key={r.date}>
+                  <td>{i + 1}</td>
                   <td>{dmy(r.date)}</td>
-                  <td>{r.campaign || r.vehicle || "—"}</td>
+                  <td>{r.vehicle || "—"}</td>
+                  <td>{r.wageType}</td>
                   <td className="n">{inr(r.rate)}</td>
+                  <td className="n">{r.openKm != null ? r.openKm : "—"}</td>
+                  <td className="n">{r.closeKm != null ? r.closeKm : "—"}</td>
+                  <td>{r.campaign || "—"}</td>
                   <td className="n">{inr(r.pay)}</td>
                 </tr>
               ))}
-              <tr className="tot"><td colSpan={3}>Total</td><td className="n">{inr(total)}</td></tr>
+              <tr className="tot"><td colSpan={8}>Total</td><td className="n">{inr(total)}</td></tr>
             </tbody>
           </table>
         </div>
@@ -6240,13 +6271,31 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
   // that's also where a campaign name can be typed in (on the Staff/Driver
   // form itself), and a report shouldn't look blank just because the note
   // was entered in the other of those two places.
-  const campaignOf = (personId, we) => {
+  // Whichever period actually covered a day in this week — checked day by
+  // day like staffOutstationForWeek, not just the week's own Saturday, so a
+  // period covering only part of the week (the common case: a short
+  // campaign entered as its own dates) is still found. The last day the
+  // period was active on wins, so a mid-week rate change shows the latest.
+  const activePeriodForWeek = (personId, weekStart, weekEnd) => {
+    const periods = (db.wageRates || []).filter(r => r.personId === personId && r.from);
+    if (!periods.length) return null;
+    let found = null;
+    for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
+      const hit = periods.filter(r => r.from <= d && (!r.to || d <= r.to)).sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+      if (hit) found = hit;
+    }
+    return found;
+  };
+  const campaignOf = (personId, weekStart, we) => {
     const note = ((db.weekNotes || []).find(x => x.id === personId + "_" + we) || {}).campaign;
     if (note) return note;
-    const hit = (db.wageRates || [])
-      .filter(r => r.personId === personId && r.from && r.from <= we && (!r.to || we <= r.to))
-      .sort((a, b) => (a.from < b.from ? 1 : -1))[0];
+    const hit = activePeriodForWeek(personId, weekStart, we);
     return (hit && hit.campaign) || "";
+  };
+  const vehicleOf = (personId, weekStart, we) => {
+    const hit = activePeriodForWeek(personId, weekStart, we);
+    const v = hit && hit.vehicleId && (db.vehicles || []).find(x => x.id === hit.vehicleId);
+    return v ? v.plate : "";
   };
 
   const weekRecs = (db.attendance || []).filter(a => inWeek(String(a.date || "")));
@@ -6257,8 +6306,10 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
     const { start } = weekRange(we);
     const driverRows = db.drivers.map(d => {
       const w = driverWeek(db, d, start, we);
-      const campaign = campaignOf(d.id, we);
-      return { id: d.id, kind: "driver", name: d.name, w, rec: d, campaign,
+      const campaign = campaignOf(d.id, start, we);
+      const vehicle = [...new Set(w.records.map(r => r.vehiclePlate).filter(Boolean))].join(", ");
+      const wageType = w.outDays > 0 ? "Outstation" : (w.wage > 0 ? "Local" : "");
+      return { id: d.id, kind: "driver", name: d.name, w, rec: d, campaign, vehicle, wageType,
           // Flat aliases so the CSV/PDF export can read week- and month-scope
           // rows (drivers and staff alike) through one common shape. Wage
           // already combines local and outstation pay; batta is the separate
@@ -6279,9 +6330,11 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         const wp = staffWeekPay(db, s, we);
         const owed = staffAdvanceOwed(db, s.id, we);
         const advance = Math.min(owed, wp.gross);
-        const campaign = campaignOf(s.id, we);
+        const campaign = campaignOf(s.id, start, we);
+        const vehicle = vehicleOf(s.id, start, we);
+        const wageType = wp.outDays > 0 ? "Outstation" : (wp.local > 0 ? "Local" : "");
         return { id: s.id, kind: "staff", name: s.name, local: wp.local, outDays: wp.outDays, outPay: wp.outPay, perDay: wp.perDay,
-          advance, owed, campaign,
+          advance, owed, campaign, vehicle, wageType,
           // Same flat aliases as the driver row above — "days" has no meaning
           // for a flat weekly local wage, so it only carries the outstation
           // day count, the one day-based figure staff pay actually has.
@@ -6308,20 +6361,23 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
     weeksInMonth.forEach(we => {
       const wk = rowsForWeek(we);
       [...wk.driverRows, ...wk.staffRows].forEach(r => {
-        if (!byId[r.id]) byId[r.id] = { id: r.id, kind: r.kind, name: r.name, rec: r.rec, days: 0, outDays: 0, wage: 0, batta: 0, advance: 0, pay: 0, campaigns: new Set() };
+        if (!byId[r.id]) byId[r.id] = { id: r.id, kind: r.kind, name: r.name, rec: r.rec, days: 0, outDays: 0, wage: 0, batta: 0, advance: 0, pay: 0, campaigns: new Set(), vehicles: new Set(), wageType: "" };
         const a = byId[r.id];
         a.days += (+r.days || 0); a.outDays += (+r.outDays || 0); a.wage += r.wage; a.batta += r.batta; a.advance += r.advance; a.pay += r.pay;
         if (r.campaign) a.campaigns.add(r.campaign);
+        if (r.vehicle) a.vehicles.add(r.vehicle);
+        if (r.wageType) a.wageType = r.wageType;
       });
     });
     rows = Object.values(byId).map(a => {
       const campaign = [...a.campaigns].join(", ");
+      const vehicle = [...a.vehicles].join(", ");
       const sub = (a.days ? a.days + " day" + (a.days === 1 ? "" : "s") : "")
         + (a.outDays > 0 ? (a.days ? " (" : "") + a.outDays + " outstation" + (a.days ? ")" : " outstation day" + (a.outDays === 1 ? "" : "s")) : "")
         + ((a.days || a.outDays) ? " · " : "") + "wage " + inr(a.wage)
         + (a.batta > 0 ? " + batta " + inr(a.batta) : "")
         + (a.advance > 0 ? " − advance " + inr(a.advance) : "") + (campaign ? " · " + campaign : "");
-      return { ...a, campaign, sub };
+      return { ...a, campaign, vehicle, sub };
     }).sort((a, b) => b.pay - a.pay);
     driverRows = rows.filter(r => r.kind === "driver");
     staffRows = rows.filter(r => r.kind === "staff");
@@ -6604,27 +6660,32 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
         // Nobody worked and nothing was paid — leave them off the report
         // entirely rather than a row of dashes and zeroes for this period.
         const activeRows = rows.filter(r => r.pay || (+r.days || 0) > 0 || (+r.outDays || 0) > 0);
+        // A pay week is always Sunday to Saturday — 7 days — regardless of
+        // how many of them a person actually worked; a month roll-up has no
+        // single week length to show, so it's left blank there.
+        const totalDaysInWeek = scope === "month" ? "" : 7;
         const csvRows = () => {
           const out = [["Downloaded " + dmy(today())], [periodLabel],
-            ["Name", "Type", "Campaign", "Days", "Outstation days", "Wage", "Batta", "Advance recovered", "Net payable"]];
-          activeRows.forEach(r => out.push([r.name, typeOf(r), r.campaign || "",
-            r.days, r.outDays || "", r.wage, r.batta, r.advance || 0, r.pay]));
-          out.push([]); out.push(["", "", "", "", "", "", "", "TOTAL", bill]);
+            ["Name", "Type", "Campaign / Week", "Vehicle Number", "Days", "Total Days in Week", "Wage Type", "Daily Wage", "Batta", "Advance recovered", "Net payable"]];
+          activeRows.forEach(r => out.push([r.name, typeOf(r), r.campaign || "", r.vehicle || "",
+            r.days, totalDaysInWeek, r.wageType || "", r.wage, r.batta, r.advance || 0, r.pay]));
+          out.push([]); out.push(["", "", "", "", "", "", "", "", "", "TOTAL", bill]);
           return out;
         };
         const pdfCols = [
-          { key:"name", label:"Name", w:18, align:"left" }, { key:"type", label:"Type", w:8, align:"left" },
-          { key:"campaign", label:"Campaign", w:16, align:"left" }, { key:"days", label:"Days", w:6, align:"right" },
-          { key:"out", label:"Out. days", w:8, align:"right" }, { key:"wage", label:"Wage", w:10, align:"right" },
-          { key:"batta", label:"Batta", w:10, align:"right" }, { key:"advance", label:"Advance", w:11, align:"right" },
-          { key:"net", label:"Net payable", w:13, align:"right" },
+          { key:"name", label:"Name", w:13, align:"left" }, { key:"type", label:"Type", w:7, align:"left" },
+          { key:"campaign", label:"Campaign / Week", w:13, align:"left" }, { key:"vehicle", label:"Vehicle Number", w:11, align:"left" },
+          { key:"days", label:"Days", w:5, align:"right" }, { key:"totalDays", label:"Total Days", w:7, align:"right" },
+          { key:"wageType", label:"Wage Type", w:9, align:"left" }, { key:"wage", label:"Daily Wage", w:9, align:"right" },
+          { key:"batta", label:"Batta", w:8, align:"right" }, { key:"advance", label:"Advance", w:9, align:"right" },
+          { key:"net", label:"Net payable", w:9, align:"right" },
         ];
         const pdfRows = activeRows.map(r => ({
-          name: r.name, type: typeOf(r), campaign: r.campaign || "—",
-          days: r.days || "—", out: r.outDays || "—", wage: inr(r.wage), batta: inr(r.batta),
+          name: r.name, type: typeOf(r), campaign: r.campaign || "—", vehicle: r.vehicle || "—",
+          days: r.days || "—", totalDays: totalDaysInWeek || "—", wageType: r.wageType || "—", wage: inr(r.wage), batta: inr(r.batta),
           advance: r.advance ? "− " + inr(r.advance) : "—", net: inr(r.pay),
         }));
-        pdfRows.push({ _total:true, name:"TOTAL", type:"", campaign:"", days:"", out:"", wage:"", batta:"", advance:"", net: inr(bill) });
+        pdfRows.push({ _total:true, name:"TOTAL", type:"", campaign:"", vehicle:"", days:"", totalDays:"", wageType:"", wage:"", batta:"", advance:"", net: inr(bill) });
         return (
           <div className="vz-2">
             <button className="vz-btn alt" style={{ margin:0 }} disabled={!activeRows.length} onClick={() => downloadCsv("payroll-" + fileTag + ".csv", csvRows())}>
@@ -7251,9 +7312,9 @@ function VibeCRM() {
     const keep = (rates || []).filter(r => r.from && (+r.local > 0 || +r.outstation > 0));
     cur.filter(c => !keep.some(r => r.id === c.id)).forEach(c => drop("wageRates", c.id));
     keep.forEach(r => {
-      const rec = { id: r.id, personId, from: r.from, to: r.to || "", local: +r.local || 0, outstation: r.outstation === "" ? "" : (+r.outstation || 0), campaign: r.campaign || "" };
+      const rec = { id: r.id, personId, from: r.from, to: r.to || "", local: +r.local || 0, outstation: r.outstation === "" ? "" : (+r.outstation || 0), campaign: r.campaign || "", vehicleId: r.vehicleId || "" };
       const old = cur.find(c => c.id === r.id);
-      if (!old || old.from !== rec.from || old.to !== rec.to || old.local !== rec.local || old.outstation !== rec.outstation || old.campaign !== rec.campaign) put("wageRates", rec);
+      if (!old || old.from !== rec.from || old.to !== rec.to || old.local !== rec.local || old.outstation !== rec.outstation || old.campaign !== rec.campaign || old.vehicleId !== rec.vehicleId) put("wageRates", rec);
     });
   };
   const savePic = (id, dataUrl) => setPics(p => {
@@ -9751,7 +9812,7 @@ function VibeCRM() {
           onOpenOrder={(id) => { setSheet(null); setOpenOrder(id); }} />
       )}
       {sheet?.type === "staff" && (
-        <StaffForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} onClose={() => setSheet(null)}
+        <StaffForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} vehicles={db.vehicles} onClose={() => setSheet(null)}
           onSave={(x, rates) => { put("staff", x); saveRates(x.id, rates); setSheet(null); }}
           onDelete={(id) => { if (window.confirm("Remove this person from staff? Past weeks stay in the record.")) { drop("staff", id); setSheet(null); } }} />
       )}
@@ -9865,7 +9926,7 @@ function VibeCRM() {
           }} />
       )}
       {sheet?.type === "driver" && (
-        <DriverForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
+        <DriverForm init={sheet.data} initRates={sheet.data ? (db.wageRates || []).filter(r => r.personId === sheet.data.id) : []} vehicles={db.vehicles} pics={pics} canEdit={perm.fleetEdit} canDel={perm.fleetEdit} onPhoto={savePic} onClose={() => setSheet(null)}
           onSave={(x, rates) => {
             x = { ...x, updatedAt: new Date().toISOString() };
             put("drivers", x); saveRates(x.id, rates); setSheet(null);
