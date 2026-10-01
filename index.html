@@ -3063,10 +3063,10 @@ function RatePeriods({ rates, onChange, localLabel, outLabel, vehicles }) {
             )}
             {vehicles && r.vehicleId && (
               <div className="vz-2">
-                <F label={"Opening KM · " + dmy(today())}>
+                <F label={"Opening KM · " + dmy(r.from)}>
                   <input type="number" inputMode="numeric" value={r.openKm || ""} onChange={e => set(r.id, { openKm: e.target.value })} placeholder="odometer reading" />
                 </F>
-                <F label={"Closing KM · " + dmy(r.to || r.from)}>
+                <F label={"Closing KM · " + dmy(today())}>
                   <input type="number" inputMode="numeric" value={r.closeKm || ""} onChange={e => set(r.id, { closeKm: e.target.value })} placeholder="odometer reading" />
                 </F>
               </div>
@@ -7487,15 +7487,16 @@ function VibeCRM() {
   });
   // A person's rate periods, with each one's Opening/Closing KM read back
   // from db.kmLogs (where they actually live) so reopening the form shows
-  // what was entered last, not a blank field. Opening KM is today's running
-  // checkpoint — logged under today's date, not the period's fixed From
-  // date — so it naturally shows a blank field (and a fresh prompt) each
-  // new day until that day's reading is entered; Closing KM stays tied to
-  // the period's own To date, the actual end-of-period reading.
+  // what was entered last, not a blank field. Opening KM stays tied to the
+  // period's own From date — the reading taken when it started. Closing KM
+  // is today's running checkpoint — logged under today's date, not the
+  // period's fixed To date — so it naturally shows a blank field (and a
+  // fresh prompt) each new day until that day's reading is entered, right
+  // up until the period is actually given an end date.
   const ratesWithKm = (personId) => (db.wageRates || []).filter(r => r.personId === personId).map(r => {
     if (!r.vehicleId) return r;
-    const openLog = (db.kmLogs || []).find(k => k.vehicleId === r.vehicleId && k.date === today());
-    const closeLog = (db.kmLogs || []).find(k => k.vehicleId === r.vehicleId && k.date === (r.to || r.from));
+    const openLog = (db.kmLogs || []).find(k => k.vehicleId === r.vehicleId && k.date === r.from);
+    const closeLog = (db.kmLogs || []).find(k => k.vehicleId === r.vehicleId && k.date === today());
     return { ...r, openKm: openLog && openLog.openKm != null ? openLog.openKm : "", closeKm: closeLog && closeLog.closeKm != null ? closeLog.closeKm : "" };
   });
 
@@ -7513,8 +7514,8 @@ function VibeCRM() {
       // A period's own Opening/Closing KM are entered here but kept in
       // db.kmLogs — the same record the Daily Kilometres screen reads and
       // writes — so there is one place these numbers live, not two. Opening
-      // KM is logged under today's date (a running checkpoint, re-entered
-      // as the period goes on); Closing KM under the period's own To date.
+      // KM is logged under the period's own From date; Closing KM under
+      // today's date (a running checkpoint, re-entered as the period goes on).
       if (r.vehicleId) {
         const putKm = (date, field, val) => {
           if (!date || val === "" || val == null) return;
@@ -7525,8 +7526,8 @@ function VibeCRM() {
             openKm: log.openKm != null ? log.openKm : null, closeKm: log.closeKm != null ? log.closeKm : null,
             [field]: +val });
         };
-        putKm(today(), "openKm", r.openKm);
-        putKm(r.to || r.from, "closeKm", r.closeKm);
+        putKm(r.from, "openKm", r.openKm);
+        putKm(today(), "closeKm", r.closeKm);
       }
     });
   };
