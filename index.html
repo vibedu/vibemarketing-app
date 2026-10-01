@@ -8662,12 +8662,12 @@ function VibeCRM() {
                         </div>
                       </div>
                     </div>
-                    <div className="vz-row" style={{ marginTop:9, alignItems:"center" }}>
+                    <div className="vz-row" style={{ marginTop:9, alignItems:"center", flexWrap:"wrap" }}>
                       <div style={{ display:"flex", gap:5 }}>
                         <Chip c={p.sentVendor ? "c-green" : "c-grey"}>{p.sentVendor ? "Customer ✓" : "Customer –"}</Chip>
                         <Chip c={p.sentManager ? "c-green" : "c-grey"}>{p.sentManager ? "Manager ✓" : "Manager –"}</Chip>
                       </div>
-                      <div className="vz-inline">
+                      <div className="vz-inline" style={{ flexWrap:"wrap" }}>
                         {!p.sentVendor && <button className="vz-chip c-blue" onClick={() => sendProof(p, "vendor")}>Send customer</button>}
                         {!p.sentManager && <button className="vz-chip c-yellow" onClick={() => sendProof(p, "manager")}>Manager</button>}
                       </div>
