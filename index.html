@@ -9001,10 +9001,10 @@ function VibeCRM() {
       <>
         <div className="vz-eyebrow">Invoicing pipeline</div>
         <div className="vz-grid" style={{ marginBottom:6 }}>
-          <div className="vz-stat"><i>Awaiting confirmation</i><b style={{ fontSize:18 }}>{awaitingConfirm.length}</b><small>quotations out</small></div>
-          <div className="vz-stat"><i>Advance to collect</i><b style={{ fontSize:18, color: advanceDue.length ? "#E5484D" : undefined }}>{advanceDue.length}</b><small>confirmed, not paid up</small></div>
-          <div className="vz-stat"><i>Ready to invoice</i><b style={{ fontSize:18, color: readyToInvoice.length ? "#178951" : undefined }}>{readyToInvoice.length}</b><small>work done, no tax invoice</small></div>
-          <div className="vz-stat"><i>Awaiting payment</i><b style={{ fontSize:18, color: awaitingPayment.length ? "#E5484D" : undefined }}>{awaitingPayment.length}</b><small>{inr(awaitingPayment.reduce((s, r) => s + r.due, 0))} due</small></div>
+          <IconStat icon="order" c="orange" label="Awaiting confirmation" value={awaitingConfirm.length} sub="quotations out" />
+          <IconStat icon="alert" c={advanceDue.length ? "red" : "ink"} label="Advance to collect" value={advanceDue.length} sub="confirmed, not paid up" />
+          <IconStat icon="check" c={readyToInvoice.length ? "green" : "ink"} label="Ready to invoice" value={readyToInvoice.length} sub="work done, no tax invoice" />
+          <IconStat icon="trendDown" c={awaitingPayment.length ? "red" : "ink"} label="Awaiting payment" value={awaitingPayment.length} sub={inr(awaitingPayment.reduce((s, r) => s + r.due, 0)) + " due"} />
         </div>
 
         {readyToInvoice.length > 0 && <>
