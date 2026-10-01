@@ -213,7 +213,8 @@ const CSS = `
 .vz-stat2[data-c="red"] .vz-stat2-badge { background:var(--red); }
 .vz-stat2-body { min-width:0; flex:1; }
 .vz-stat2-body i { font-style:normal; font-size:9.5px; letter-spacing:1.1px; text-transform:uppercase; color:var(--muted); font-weight:700; display:block; }
-.vz-stat2-body b { font-size:19px; font-weight:800; display:block; margin-top:3px; letter-spacing:-.4px; font-variant-numeric:tabular-nums; }
+.vz-stat2-body b { font-size:19px; font-weight:800; display:block; margin-top:3px; letter-spacing:-.4px; font-variant-numeric:tabular-nums;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .vz-stat2-body small { font-size:10.5px; color:var(--muted); display:block; margin-top:1px; }
 @media (min-width:768px){ .vz-stat2-body b { font-size:21px; } }
 
@@ -8266,8 +8267,19 @@ function VibeCRM() {
 
   const Vendors = () => {
     const list = db.vendors.filter(v => (v.name + v.cat + v.area).toLowerCase().includes(q.toLowerCase()));
+    const valueOf = (v) => db.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + orderMath(o).total, 0);
+    const top = db.vendors.length ? db.vendors.reduce((best, v) => (valueOf(v) > valueOf(best) ? v : best), db.vendors[0]) : null;
+    const runningCount = db.orders.filter(o => o.stage === "Running").length;
     return (
       <>
+        {db.vendors.length > 0 && (
+          <div className="vz-grid" style={{ marginBottom:10 }}>
+            <IconStat icon="vendor" label="Customers" value={db.vendors.length} sub="on file" />
+            <IconStat icon="order" c="orange" label="Running" value={runningCount} sub="campaigns right now" />
+            <IconStat icon="wallet" c="green" label="Total value" value={inr(db.orders.reduce((s, o) => s + orderMath(o).total, 0))} sub="all campaigns" />
+            {top && <IconStat icon="trendUp" c="blue" label="Top customer" value={top.name} sub={inr(valueOf(top))} />}
+          </div>
+        )}
         <input className="vz-search" placeholder="Search customers" value={q} onChange={e => setQ(e.target.value)} />
         {list.length === 0 && <Empty head="No customers yet" sub="Add the shops you run campaigns for." />}
         {list.map(v => {
@@ -8293,8 +8305,31 @@ function VibeCRM() {
     );
   };
 
-  const Orders = () => (
+  const Orders = () => {
+    const mth = today().slice(0, 7);
+    const stageCounts = { Proforma:0, Confirmed:0, "Advance paid":0, Running:0, Completed:0 };
+    db.orders.forEach(o => { if (stageCounts[o.stage] != null) stageCounts[o.stage]++; });
+    const STAGE_HEX = { Proforma:"#9AA6BE", Confirmed:"#2C6FD1", "Advance paid":"#FFC629", Running:"#178951", Completed:"#12192A" };
+    const monthValue = db.orders.filter(o => String(o.start || o.created || "").slice(0, 7) === mth)
+      .reduce((s, o) => s + orderMath(o).total, 0);
+    return (
     <>
+      {db.orders.length > 0 && (
+        <>
+          <div className="vz-grid" style={{ marginBottom:10 }}>
+            <IconStat icon="order" c="green" label="Running" value={stageCounts.Running} sub="campaigns on the road" />
+            <IconStat icon="order" c="orange" label="Awaiting confirmation" value={stageCounts.Proforma} sub="quotations out" />
+            <IconStat icon="check" c="blue" label="Completed" value={stageCounts.Completed} sub="all time" />
+            <IconStat icon="wallet" label="This month" value={inr(monthValue)} sub="campaign value" />
+          </div>
+          <div className="vz-card" style={{ marginBottom:10 }}>
+            <div className="vz-eyebrow" style={{ marginTop:0 }}>Campaigns by stage</div>
+            <Donut total={db.orders.length} centerLabel={db.orders.length} segments={
+              Object.keys(stageCounts).filter(k => stageCounts[k] > 0).map(k => ({ label: k, value: stageCounts[k], color: STAGE_HEX[k] }))
+            } />
+          </div>
+        </>
+      )}
       {db.orders.length === 0 && <Empty head="No campaigns yet" sub="Create a campaign and send its quotation to start one." />}
       {db.orders.map(o => {
         const v = vendorOf(o.vendorId), m = orderMath(o), paid = paidOn(o.id);
@@ -8320,7 +8355,8 @@ function VibeCRM() {
         );
       })}
     </>
-  );
+    );
+  };
 
   /* The campaign's four documents, in the order they happen, each with its own
      number and only the buttons that make sense at that point. A step that
@@ -8573,8 +8609,17 @@ function VibeCRM() {
     const list = [...db.proofs]
       .filter(p => !fieldVeh || p.vehicleId === fieldVeh)
       .sort((a, b) => (a.at < b.at ? 1 : -1));
+    const vehCovered = new Set(db.proofs.map(p => p.vehicleId).filter(Boolean)).size;
+    const latest = db.proofs.length ? db.proofs.reduce((mx, p) => (p.at > mx ? p.at : mx), db.proofs[0].at) : null;
     return (
       <>
+        {db.proofs.length > 0 && (
+          <div className="vz-grid" style={{ marginBottom:10 }}>
+            <IconStat icon="camera" label="Photos on file" value={db.proofs.length} sub="geo-stamped" />
+            <IconStat icon="fleet" c="blue" label="Vehicles covered" value={vehCovered} sub={"of " + db.vehicles.length} />
+            <IconStat icon="calendar" c="orange" label="Most recent" value={latest ? dmy(localDay(latest)) : "—"} sub="last capture" />
+          </div>
+        )}
         <div className="vz-meta" style={{ marginTop:0 }}>
           A history of the geo-stamped photos field visits used to produce. Nothing new is added here anymore.
         </div>
@@ -8673,6 +8718,12 @@ function VibeCRM() {
     const maxLoad = Math.max(1, ...monthLoad.map(m => m.n));
     return (
     <>
+      <div className="vz-grid" style={{ marginBottom:10 }}>
+        <IconStat icon="fleet" label="Vehicles" value={db.vehicles.length} sub="in the fleet" />
+        <IconStat icon="user" c="blue" label="Drivers" value={db.drivers.length} sub="on file" />
+        <IconStat icon="gear" c={stats.workshop ? "red" : "green"} label="Workshop" value={stats.workshop} sub="right now" />
+        <IconStat icon="alert" c={stats.alerts.length ? "orange" : "green"} label="Papers due" value={stats.alerts.length} sub="FC, insurance, PUC" />
+      </div>
       <div className="vz-seg">
         <button data-on={fleetView === "vehicles" ? "1" : "0"} onClick={() => setFleetView("vehicles")}>Vehicles ({db.vehicles.length})</button>
         <button data-on={fleetView === "drivers" ? "1" : "0"} onClick={() => setFleetView("drivers")}>Drivers ({db.drivers.length})</button>
@@ -8861,17 +8912,8 @@ function VibeCRM() {
         <>
           <div className="vz-card">
             <div className="vz-eyebrow" style={{ margin:0 }}>Renewal load, next 12 months</div>
-            <div style={{ display:"flex", gap:3, alignItems:"flex-end", marginTop:10 }}>
-              {monthLoad.map(m => (
-                <div key={m.tag} style={{ flex:1, textAlign:"center", minWidth:0 }}>
-                  <div style={{ height:44, display:"flex", alignItems:"flex-end" }}>
-                    <div style={{ width:"100%", height: Math.max(3, Math.round((m.n / maxLoad) * 44)),
-                      background: m.n ? "var(--yellow)" : "#E5E8EE", borderRadius:2 }} />
-                  </div>
-                  <div style={{ fontSize:9.5, fontFamily:"var(--mono)", fontWeight:700, marginTop:3 }}>{m.n || ""}</div>
-                  <div style={{ fontSize:8, color:"var(--muted)", fontWeight:700, letterSpacing:.2 }}>{m.label}</div>
-                </div>
-              ))}
+            <div style={{ marginTop:10 }}>
+              <MiniBarChart cols={monthLoad.map(m => ({ label: m.label, value: m.n }))} />
             </div>
           </div>
 
