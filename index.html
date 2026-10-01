@@ -7001,6 +7001,7 @@ function VibeCRM() {
   const [dashDay, setDashDay] = useState(today());
   const [dashMonth, setDashMonth] = useState(today().slice(0, 7));
   const [dashCustom, setDashCustom] = useState({ from: today(), to: today() });
+  const [dashCampaignId, setDashCampaignId] = useState("");
   const [pickVeh, setPickVeh] = useState("");
   const [fieldVeh, setFieldVeh] = useState("");
   const [q, setQ] = useState("");
@@ -8909,6 +8910,9 @@ function VibeCRM() {
       return { start: t, end: t };
     })();
     const cash = cashFlow(db, dashRange.start, dashRange.end);
+    const campOrder = dashPeriod === "campaign" ? db.orders.find(o => o.id === dashCampaignId) : null;
+    const campP = campOrder ? campaignPnl(db, campOrder) : null;
+    const campReceived = campOrder ? paidOn(campOrder.id) : 0;
     const runningNow = db.vehicles.map(v => ({
       v, a: (db.attendance || []).find(a => a.vehicleId === v.id && a.date === today() && !a.outAt),
     })).filter(x => x.a);
@@ -8924,6 +8928,7 @@ function VibeCRM() {
             <option value="month">A month</option>
             <option value="year">This year</option>
             <option value="custom">Custom range</option>
+            <option value="campaign">A campaign</option>
           </select>
         </F>
         {dashPeriod === "day" && (
@@ -8938,12 +8943,46 @@ function VibeCRM() {
             <F label="To"><input type="date" value={dashCustom.to} min={dashCustom.from} onChange={e => setDashCustom({ ...dashCustom, to: e.target.value })} /></F>
           </div>
         )}
-        <div className="vz-grid" style={{ marginBottom:6 }}>
-          <div className="vz-stat"><i>Opening balance</i><b style={{ fontSize:17 }}>{inr(cash.opening)}</b><small>as of {dmy(cash.openingAsOf)}</small></div>
-          <div className="vz-stat"><i>Closing balance</i><b style={{ fontSize:17, color: cash.closing >= 0 ? "#178951" : "#E5484D" }}>{inr(cash.closing)}</b><small>{dmy(dashRange.end)}</small></div>
-          <div className="vz-stat"><i>Income</i><b style={{ fontSize:17, color:"#178951" }}>{inr(cash.income)}</b><small>received in period</small></div>
-          <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(cash.expenses)}</b><small>paid out, incl. payroll</small></div>
-        </div>
+        {dashPeriod === "campaign" && (
+          <F label="Campaign">
+            <select value={dashCampaignId} onChange={e => setDashCampaignId(e.target.value)}>
+              <option value="">— choose a campaign —</option>
+              {db.orders.slice().sort((a, b) => (a.no < b.no ? 1 : -1)).map(o => {
+                const v = vendorOf(o.vendorId);
+                return <option key={o.id} value={o.id}>{o.no}{v ? " · " + v.name : ""}</option>;
+              })}
+            </select>
+          </F>
+        )}
+
+        {dashPeriod === "campaign" ? (
+          campOrder ? (
+            <>
+              <div className="vz-grid" style={{ marginBottom:6 }}>
+                <div className="vz-stat"><i>Invoice total</i><b style={{ fontSize:17 }}>{inr(campP.m.total)}</b><small>{campOrder.no}</small></div>
+                <div className="vz-stat"><i>Received</i><b style={{ fontSize:17, color:"#178951" }}>{inr(campReceived)}</b><small>incl. TDS settled</small></div>
+                <div className="vz-stat"><i>Balance due</i><b style={{ fontSize:17, color: campP.m.total - campReceived > 0 ? "#E5484D" : "#178951" }}>{inr(Math.max(0, campP.m.total - campReceived))}</b><small>on this campaign</small></div>
+                <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(campP.cost)}</b><small>wages, workshop &amp; running</small></div>
+              </div>
+              <div className="vz-card">
+                <div className="vz-kv"><span>Driver wages{campP.battas > 0 ? " + batta" : ""}</span><b className="vz-money">{inr(campP.wages + campP.battas)}</b></div>
+                {campP.workshop > 0 && <div className="vz-kv"><span>Workshop</span><b className="vz-money">{inr(campP.workshop)}</b></div>}
+                {campP.production > 0 && <div className="vz-kv"><span>Production (fabrication/flex)</span><b className="vz-money">{inr(campP.production)}</b></div>}
+                {campP.running > 0 && <div className="vz-kv"><span>Running costs</span><b className="vz-money">{inr(campP.running)}</b></div>}
+                <div className="vz-kv"><span style={{ fontWeight:700 }}>Margin</span><b className="vz-money" style={{ color: campP.margin >= 0 ? "#178951" : "#E5484D" }}>{inr(campP.margin)}</b></div>
+              </div>
+            </>
+          ) : (
+            <div className="vz-card"><div className="vz-meta">Choose a campaign above to see its income and expenses.</div></div>
+          )
+        ) : (
+          <div className="vz-grid" style={{ marginBottom:6 }}>
+            <div className="vz-stat"><i>Opening balance</i><b style={{ fontSize:17 }}>{inr(cash.opening)}</b><small>as of {dmy(cash.openingAsOf)}</small></div>
+            <div className="vz-stat"><i>Closing balance</i><b style={{ fontSize:17, color: cash.closing >= 0 ? "#178951" : "#E5484D" }}>{inr(cash.closing)}</b><small>{dmy(dashRange.end)}</small></div>
+            <div className="vz-stat"><i>Income</i><b style={{ fontSize:17, color:"#178951" }}>{inr(cash.income)}</b><small>received in period</small></div>
+            <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(cash.expenses)}</b><small>paid out, incl. payroll</small></div>
+          </div>
+        )}
 
         {InvoicingPipeline()}
 
