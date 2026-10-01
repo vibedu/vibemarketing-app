@@ -189,12 +189,12 @@ const CSS = `
 .vz-row { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
 .vz-title { font-weight:700; font-size:14.5px; letter-spacing:-.2px; }
 .vz-meta { font-size:11.5px; color:var(--muted); margin-top:3px; line-height:1.5; }
-.vz-money { font-family: var(--mono); font-weight:700; font-variant-numeric: tabular-nums; letter-spacing:-.5px; }
+.vz-money { font-weight:700; font-variant-numeric: tabular-nums; letter-spacing:-.2px; }
 
 .vz-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
 .vz-stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
 .vz-stat i { font-style:normal; font-size:9.5px; letter-spacing:1.3px; text-transform:uppercase; color:var(--muted); font-weight:700; display:block; }
-.vz-stat b { font-family:var(--mono); font-size:22px; font-weight:700; display:block; margin-top:5px; letter-spacing:-1px; }
+.vz-stat b { font-size:22px; font-weight:700; display:block; margin-top:5px; letter-spacing:-.5px; font-variant-numeric: tabular-nums; }
 .vz-stat small { font-size:11px; color:var(--muted); }
 
 .vz-chip { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase;
@@ -424,7 +424,7 @@ const CSS = `
 .vz-table { border-collapse:collapse; width:100%; font-size:12.5px; }
 .vz-table th, .vz-table td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
 .vz-table th { font-size:9.5px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; }
-.vz-table td.n, .vz-table th.n { text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.vz-table td.n, .vz-table th.n { text-align:right; font-variant-numeric:tabular-nums; }
 .vz-table tr.tot td { font-weight:800; border-top:2px solid var(--ink); border-bottom:none; }
 
 /* Vehicle chooser: the closed field is shaped exactly like the other inputs so
@@ -6998,6 +6998,8 @@ function VibeCRM() {
   // not mounted as its own component, so this has to live up here rather
   // than as local state inside it.
   const [dashPeriod, setDashPeriod] = useState("today");
+  const [dashDay, setDashDay] = useState(today());
+  const [dashMonth, setDashMonth] = useState(today().slice(0, 7));
   const [dashCustom, setDashCustom] = useState({ from: today(), to: today() });
   const [pickVeh, setPickVeh] = useState("");
   const [fieldVeh, setFieldVeh] = useState("");
@@ -8896,11 +8898,11 @@ function VibeCRM() {
     // one calendar convention for the whole screen, not two.
     const dashRange = (() => {
       const t = today();
+      if (dashPeriod === "day") return { start: dashDay, end: dashDay };
       if (dashPeriod === "week") return weekRange(weekEnding(t));
       if (dashPeriod === "month") {
-        const d = new Date(t + "T12:00:00Z");
-        const end = localDay(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 12)));
-        return { start: t.slice(0, 7) + "-01", end: end < t ? end : t };
+        const mr = monthRange(dashMonth);
+        return { start: mr.from, end: mr.to < t ? mr.to : t };
       }
       if (dashPeriod === "year") return { start: fyStart, end: t };
       if (dashPeriod === "custom") return { start: dashCustom.from, end: dashCustom.to };
@@ -8917,12 +8919,19 @@ function VibeCRM() {
         <F label="Period">
           <select value={dashPeriod} onChange={e => setDashPeriod(e.target.value)}>
             <option value="today">Today</option>
+            <option value="day">A specific date</option>
             <option value="week">This week</option>
-            <option value="month">This month</option>
+            <option value="month">A month</option>
             <option value="year">This year</option>
             <option value="custom">Custom range</option>
           </select>
         </F>
+        {dashPeriod === "day" && (
+          <F label="Date"><input type="date" value={dashDay} max={today()} onChange={e => setDashDay(e.target.value)} /></F>
+        )}
+        {dashPeriod === "month" && (
+          <F label="Month"><input type="month" value={dashMonth} max={today().slice(0, 7)} onChange={e => setDashMonth(e.target.value)} /></F>
+        )}
         {dashPeriod === "custom" && (
           <div className="vz-2">
             <F label="From"><input type="date" value={dashCustom.from} onChange={e => setDashCustom({ ...dashCustom, from: e.target.value })} /></F>
