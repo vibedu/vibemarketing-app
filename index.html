@@ -9096,10 +9096,10 @@ function VibeCRM() {
           campOrder ? (
             <>
               <div className="vz-grid" style={{ marginBottom:6 }}>
-                <div className="vz-stat"><i>Invoice total</i><b style={{ fontSize:17 }}>{inr(campP.m.total)}</b><small>{campOrder.no}</small></div>
-                <div className="vz-stat"><i>Received</i><b style={{ fontSize:17, color:"#178951" }}>{inr(campReceived)}</b><small>incl. TDS settled</small></div>
-                <div className="vz-stat"><i>Balance due</i><b style={{ fontSize:17, color: campP.m.total - campReceived > 0 ? "#E5484D" : "#178951" }}>{inr(Math.max(0, campP.m.total - campReceived))}</b><small>on this campaign</small></div>
-                <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(campP.cost)}</b><small>wages, workshop &amp; running</small></div>
+                <IconStat icon="order" label="Invoice total" value={inr(campP.m.total)} sub={campOrder.no} />
+                <IconStat icon="wallet" c="green" label="Received" value={inr(campReceived)} sub="incl. TDS settled" />
+                <IconStat icon={campP.m.total - campReceived > 0 ? "alert" : "check"} c={campP.m.total - campReceived > 0 ? "red" : "green"} label="Balance due" value={inr(Math.max(0, campP.m.total - campReceived))} sub="on this campaign" />
+                <IconStat icon="trendDown" c="red" label="Expenses" value={inr(campP.cost)} sub="wages, workshop & running" />
               </div>
               <div className="vz-card">
                 <div className="vz-kv"><span>Driver wages{campP.battas > 0 ? " + batta" : ""}</span><b className="vz-money">{inr(campP.wages + campP.battas)}</b></div>
@@ -9114,10 +9114,10 @@ function VibeCRM() {
           )
         ) : (
           <div className="vz-grid" style={{ marginBottom:6 }}>
-            <div className="vz-stat"><i>Opening balance</i><b style={{ fontSize:17 }}>{inr(cash.opening)}</b><small>as of {dmy(cash.openingAsOf)}</small></div>
-            <div className="vz-stat"><i>Closing balance</i><b style={{ fontSize:17, color: cash.closing >= 0 ? "#178951" : "#E5484D" }}>{inr(cash.closing)}</b><small>{dmy(dashRange.end)}</small></div>
-            <div className="vz-stat"><i>Income</i><b style={{ fontSize:17, color:"#178951" }}>{inr(cash.income)}</b><small>received in period</small></div>
-            <div className="vz-stat"><i>Expenses</i><b style={{ fontSize:17, color:"#E5484D" }}>{inr(cash.expenses)}</b><small>paid out, incl. payroll</small></div>
+            <IconStat icon="wallet" label="Opening balance" value={inr(cash.opening)} sub={"as of " + dmy(cash.openingAsOf)} />
+            <IconStat icon="wallet" c={cash.closing >= 0 ? "green" : "red"} label="Closing balance" value={inr(cash.closing)} sub={dmy(dashRange.end)} />
+            <IconStat icon="trendUp" c="green" label="Income" value={inr(cash.income)} sub="received in period" />
+            <IconStat icon="trendDown" c="red" label="Expenses" value={inr(cash.expenses)} sub="paid out, incl. payroll" />
           </div>
         )}
 
@@ -9140,11 +9140,41 @@ function VibeCRM() {
         </div>
 
         <div className="vz-grid">
-          <div className="vz-stat"><i>Invoiced</i><b style={{ fontSize:18 }}>{inr(stats.billed)}</b><small>confirmed orders</small></div>
-          <div className="vz-stat"><i>Received</i><b style={{ fontSize:18, color:"#178951" }}>{inr(stats.collected)}</b><small>{tdsYtd > 0 ? "plus " + inr(tdsYtd) + " TDS this FY" : "all modes"}</small></div>
-          <div className="vz-stat"><i>Pending</i><b style={{ fontSize:18, color:"#E5484D" }}>{inr(rec.total)}</b><small>{rec.overdue > 0 ? inr(rec.overdue) + " past due" : "none past due"}</small></div>
-          <div className="vz-stat"><i>Monthly costs</i><b style={{ fontSize:18 }}>{inr(spend + wages + thisMonthSpend)}</b><small>wages, workshop &amp; running</small></div>
+          <IconStat icon="order" label="Invoiced" value={inr(stats.billed)} sub="confirmed orders" />
+          <IconStat icon="wallet" c="green" label="Received" value={inr(stats.collected)} sub={tdsYtd > 0 ? "plus " + inr(tdsYtd) + " TDS this FY" : "all modes"} />
+          <IconStat icon="alert" c={rec.total > 0 ? "red" : "green"} label="Pending" value={inr(rec.total)} sub={rec.overdue > 0 ? inr(rec.overdue) + " past due" : "none past due"} />
+          <IconStat icon="trendDown" label="Monthly costs" value={inr(spend + wages + thisMonthSpend)} sub="wages, workshop & running" />
         </div>
+
+        {stats.billed > 0 && (() => {
+          const pct = Math.min(100, Math.round((stats.collected / stats.billed) * 100));
+          return (
+            <div className="vz-card">
+              <div className="vz-eyebrow" style={{ marginTop:0 }}>Collected vs invoiced, all time</div>
+              <Donut total={stats.billed} centerLabel={pct + "%"} segments={[
+                { label:"Received", value: stats.collected, color:"#178951" },
+                { label:"Pending", value: Math.max(0, stats.billed - stats.collected), color:"#E5484D" },
+              ]} />
+            </div>
+          );
+        })()}
+
+        {(() => {
+          const months = Array.from({ length: 6 }, (_, i) => {
+            const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - (5 - i));
+            const ym = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+            const mr = monthRange(ym);
+            const value = (db.payments || []).filter(p => String(p.date || "") >= mr.from && String(p.date || "") <= mr.to)
+              .reduce((s, p) => s + (+p.amount || 0) + (+p.tds || 0), 0);
+            return { label: d.toLocaleDateString("en-IN", { month:"short" }), value: Math.round(value) };
+          });
+          return (
+            <div className="vz-card">
+              <div className="vz-eyebrow" style={{ marginTop:0 }}>Income, last 6 months</div>
+              <MiniBarChart cols={months} barColor="var(--orange)" />
+            </div>
+          );
+        })()}
 
         {/* The morning's work, before anything else: which cards are empty and
             who has to be called back today. */}
