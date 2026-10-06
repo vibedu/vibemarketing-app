@@ -2068,7 +2068,7 @@ const blankData = () => ({
     bankOpeningBalance: 0, bankOpeningDate: today(),
   },
   users: [], vendors: [], suppliers: [], vehicles: [], drivers: [], managers: [], staff: [], orders: [], payments: [], jobs: [],
-  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [], wageRates: [], weekNotes: [],
+  advances: [], creditNotes: [], expenses: [], payruns: [], pettyTopups: [], bankClears: [], kmLogs: [], staffOuts: [], wageRates: [], weekNotes: [], dutyAdj: [],
   fuelCards: [], fuelTxns: [], followups: [], tallyMarks: [], vouchers: [], filings: [],
   proofs: [], renewals: [], attendance: [], occasions: [], reminderLog: {}, snoozes: {}, session: "", role: "", userId: "", mgr: null,
   adminToken: "", adminName: "", adminRole: "", payLinks: [],
@@ -2081,11 +2081,11 @@ const blankData = () => ({
 const SYNC_KEYS = { vendors:"vendor", suppliers:"supplier", orders:"order", payments:"payment", vehicles:"vehicle", staff:"staff",
                     advances:"advance", creditNotes:"creditnote", expenses:"expense", payruns:"payrun", pettyTopups:"pettytopup",
                     fuelCards:"fuelcard", fuelTxns:"fueltxn", followups:"followup", tallyMarks:"tallymark", vouchers:"voucher", filings:"filing",
-                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout", wageRates:"wagerate", weekNotes:"weeknote" };
+                    bankClears:"bankclear", kmLogs:"kmlog", staffOuts:"staffout", wageRates:"wagerate", weekNotes:"weeknote", dutyAdj:"dutyadj" };
 const SYNC_KEY_OF = { vendor:"vendors", supplier:"suppliers", order:"orders", payment:"payments", vehicle:"vehicles", staff:"staff",
                       advance:"advances", creditnote:"creditNotes", expense:"expenses", payrun:"payruns", pettytopup:"pettyTopups",
                       fuelcard:"fuelCards", fueltxn:"fuelTxns", followup:"followups", tallymark:"tallyMarks", voucher:"vouchers", filing:"filings",
-                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts", wagerate:"wageRates", weeknote:"weekNotes" };
+                      bankclear:"bankClears", kmlog:"kmLogs", staffout:"staffOuts", wagerate:"wageRates", weeknote:"weekNotes", dutyadj:"dutyAdj" };
 
 /* Festival / occasion campaigns to remind customers about ahead of time.
    Dates are approximate — the admin can edit or add more. Reminders fire at each offset. */
@@ -3764,6 +3764,24 @@ const dayPay = (db, driver, att) => {
   return { base: r.local, extra: outstation ? r.out - r.local : 0, pay: outstation ? r.out : r.local };
 };
 
+/* The duty days payroll should count: the driver's real punch-ins, less any day
+   the office removed (db.dutyAdj, action "remove"), plus any day the office
+   added by hand (action "add") that has no punch-in of its own. Punch-ins are
+   never edited or deleted, so the server's copy and the 15-second pull are
+   untouched; the correction lives alongside them and syncs on its own. */
+const effAttendance = (db) => {
+  const adj = db.dutyAdj || [];
+  const real = db.attendance || [];
+  if (!adj.length) return real;
+  const gone = new Set(adj.filter(x => x.action === "remove").map(x => x.driverId + "_" + x.date));
+  const kept = real.filter(a => !gone.has(a.driverId + "_" + a.date));
+  const added = adj.filter(x => x.action === "add" && !kept.some(a => a.driverId === x.driverId && a.date === x.date))
+    .map(x => ({ id: "adj_" + x.id, driverId: x.driverId, driverName: x.driverName || "", date: x.date,
+      vehicleId: x.vehicleId || "", vehiclePlate: x.vehiclePlate || "", outstation: !!x.outstation, manual: true,
+      openKm: null, closeKm: null, inAt: x.date + "T09:00:00", outAt: x.date + "T18:00:00" }));
+  return [...kept, ...added];
+};
+
 // The Batta allowance for one person's week — a separate, manually-entered
 // amount (set from the "Edit batta" dialog), distinct from the wage: wage is
 // what the local/outstation rate earns for the days actually worked; batta is
@@ -3776,7 +3794,7 @@ const battaFor = (db, personId, weekEnd) => +(((db.weekNotes || []).find(x => x.
    reads it; batta is the separate allowance above. Advances taken during
    the week are recovered from that week's pay, never more than it. */
 const driverWeek = (db, driver, weekStart, weekEnd) => {
-  const days = (db.attendance || []).filter(a => a.driverId === driver.id
+  const days = effAttendance(db).filter(a => a.driverId === driver.id
     && String(a.date || "") >= weekStart && String(a.date || "") <= weekEnd);
   const outDays = days.filter(a => a.outstation).length;
   const pays = days.map(a => dayPay(db, driver, a));
@@ -3873,7 +3891,7 @@ const dayRowsFor = (db, person, kind, from, to) => {
   const rows = [];
   if (kind === "driver") {
     for (let d = from; d <= to; d = addDays(d, 1)) {
-      const att = (db.attendance || []).find(a => a.driverId === person.id && a.date === d);
+      const att = effAttendance(db).find(a => a.driverId === person.id && a.date === d);
       if (!att) continue;
       const dp = dayPay(db, person, att);
       const km = kmFor(att.vehicleId, d);
@@ -3922,7 +3940,7 @@ const advanceOwed = (db, driverId, uptoWeekEnd) => {
     const drv = (db.drivers || []).find(d => d.id === driverId) || {};
     for (let w = weekEnding(first); w < uptoWeekEnd; w = addDays(w, 7)) {
       const { start } = weekRange(w);
-      const days = (db.attendance || []).filter(a => a.driverId === driverId
+      const days = effAttendance(db).filter(a => a.driverId === driverId
         && String(a.date || "") >= start && String(a.date || "") <= w);
       const takenBy = (db.advances || []).filter(a => a.driverId === driverId && String(a.date || "") <= w)
         .reduce((s, a) => s + (+a.amount || 0), 0);
@@ -3980,7 +3998,7 @@ const campaignPnl = (db, order) => {
   // un-tagged expense that vehicle has ever had, at any other time.
   const { start: winStart, end: winEnd } = effectiveWindow(order);
   let wages = 0, battas = 0, dutyDays = 0;
-  (db.attendance || []).forEach(a => {
+  effAttendance(db).forEach(a => {
     if (!ids.includes(a.vehicleId)) return;
     const date = String(a.date || "");
     if (date < winStart || date > winEnd) return;
@@ -5966,7 +5984,7 @@ function ForecastSheet({ db, paidOn, onClose }) {
      showed a payroll of nothing at all. */
   for (let i = 0; i <= 4; i++) {
     const w = addDays(curWeek, -7 * i), { start } = weekRange(w);
-    const recs = (db.attendance || []).filter(a => String(a.date || "") >= start && String(a.date || "") <= w);
+    const recs = effAttendance(db).filter(a => String(a.date || "") >= start && String(a.date || "") <= w);
     if (!recs.length) continue;
     weeks++;
     wageSum += (db.drivers || []).reduce((s, d) => {
@@ -6420,7 +6438,36 @@ function DayWiseSheet({ db, onPdf, pdfBusy, onClose }) {
   );
 }
 
-function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onEditDriver, onOutstation, onStaffOut, onAdvance, onBatta, onPayWeek, onPayslip, onPdf, pdfBusy, onDayWise, onClose }) {
+/* Add a duty day the driver worked but never punched in for. Only days in the
+   week on screen, not already counted, and not in the future. */
+function AddDutyDay({ driver, weekStart, weekEnd, taken, vehicles, onAdd }) {
+  const free = [];
+  for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) if (d <= today() && !taken.includes(d)) free.push(d);
+  const [date, setDate] = useState("");
+  const [vehicleId, setVehicleId] = useState("");
+  if (!free.length) return null;
+  const pick = free.includes(date) ? date : free[0];
+  return (
+    <div className="vz-card" style={{ background:"#FAFBFC", padding:"10px 12px", margin:"8px 0" }}>
+      <div className="vz-2">
+        <F label="Add a duty day">
+          <select value={pick} onChange={e => setDate(e.target.value)}>
+            {free.map(d => <option key={d} value={d}>{dmy(d)}</option>)}
+          </select>
+        </F>
+        <F label="Vehicle (optional)">
+          <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}>
+            <option value="">— none —</option>
+            {(vehicles || []).map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}
+          </select>
+        </F>
+      </div>
+      <button className="vz-chip c-green" onClick={() => { onAdd(driver, pick, vehicleId); setDate(""); }}>+ Add this day</button>
+    </div>
+  );
+}
+
+function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEditStaff, onEditDriver, onOutstation, onAddDay, onRemoveDay, onStaffOut, onAdvance, onBatta, onPayWeek, onPayslip, onPdf, pdfBusy, onDayWise, onClose }) {
   const [closing, setClosing] = useState(null);   // {id, km} while ending a duty
   const [openRow, setOpenRow] = useState("");     // driver whose week is expanded
   // Payroll runs Sunday to Saturday and is keyed by the Saturday it is paid
@@ -6750,12 +6797,17 @@ function AttendanceSheet({ db, vehOf, drvOf, perm, onPunchIn, onPunchOut, onEdit
                     <span>{dmy(a.date)} · {a.vehiclePlate || (vehOf(a.vehicleId) || {}).plate || "—"}
                       {(a.openKm != null && a.closeKm != null) ? "  " + (a.closeKm - a.openKm) + " km" : ""}</span>
                     {perm.money
-                      ? <button className={"vz-chip " + (a.outstation ? "c-green" : "c-grey")} onClick={() => onOutstation(a, !a.outstation)}>
-                          {a.outstation ? "Outstation ✓" : "Outstation"}
-                        </button>
+                      ? <span className="vz-inline">
+                          <button className={"vz-chip " + (a.outstation ? "c-green" : "c-grey")} onClick={() => onOutstation(a, !a.outstation)}>
+                            {a.outstation ? "Outstation ✓" : "Outstation"}
+                          </button>
+                          <button className="vz-chip c-red" onClick={() => { if (window.confirm("Remove " + dmy(a.date) + " from " + r.name + "'s duty days?")) onRemoveDay(a); }}>Remove</button>
+                        </span>
                       : (a.outstation ? <Chip c="c-green">Outstation</Chip> : <span className="vz-meta">Local</span>)}
                   </div>
                 ))}
+                {perm.money && <AddDutyDay driver={r.rec} weekStart={weekStart} weekEnd={weekEnd}
+                  taken={r.w.records.map(a => a.date)} vehicles={db.vehicles} onAdd={onAddDay} />}
                 <div className="vz-kv"><span>Wage · {r.w.days} day(s){r.w.outDays > 0 ? " (" + r.w.outDays + " outstation)" : ""}</span><b className="vz-money">{inr(r.w.wage)}</b></div>
                 {r.w.batta > 0 && <div className="vz-kv"><span>Batta</span><b className="vz-money">{inr(r.w.batta)}</b></div>}
                 {r.w.advance > 0 && <div className="vz-kv"><span>Advance recovered</span><b className="vz-money" style={{ color:"#B4262A" }}>− {inr(r.w.advance)}</b></div>}
@@ -7787,6 +7839,27 @@ function VibeCRM() {
       in_at: a.inAt, out_at: out, lat: a.lat, lng: a.lng, open_km: a.openKm, close_km: +km });
     setToast("Duty ended · " + (a.driverName || ""));
     return true;
+  };
+
+  /* Office corrections to a driver's counted days (see effAttendance). */
+  const setDutyOutstation = (a, on) => {
+    if (a.manual) {
+      const adj = (db.dutyAdj || []).find(x => "adj_" + x.id === a.id);
+      if (adj) put("dutyAdj", { ...adj, outstation: on });
+      return;
+    }
+    setDb(d => ({ ...d, attendance: (d.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }));
+  };
+  const addDutyDay = (driver, date, vehicleId) => {
+    const veh = vehicleId ? vehOf(vehicleId) : null;
+    put("dutyAdj", { id: driver.id + "_" + date, driverId: driver.id, driverName: driver.name, date, action: "add",
+      vehicleId: vehicleId || "", vehiclePlate: veh ? veh.plate : "", outstation: false });
+    setToast("Duty day added · " + driver.name + " · " + dmy(date));
+  };
+  const removeDutyDay = (a) => {
+    if (a.manual) drop("dutyAdj", a.id.slice(4));
+    else put("dutyAdj", { id: a.driverId + "_" + a.date, driverId: a.driverId, driverName: a.driverName || "", date: a.date, action: "remove" });
+    setToast("Duty day removed · " + dmy(a.date));
   };
 
   const importRef = useRef(null);
@@ -9074,7 +9147,7 @@ function VibeCRM() {
   const Money = () => {
     const spend = db.jobs.reduce((s, j) => s + j.cost, 0);
     const mth = today().slice(0, 7);
-    const wages = (db.attendance || []).filter(a => String(a.date).slice(0, 7) === mth)
+    const wages = effAttendance(db).filter(a => String(a.date).slice(0, 7) === mth)
       .reduce((s, a) => { const d = drvOf(a.driverId); return s + (d ? dayPay(db, d, a).pay : 0); }, 0);
     const rec = receivables(db, paidOn);
     const thisMonthSpend = expenseTotal(expensesIn(db, mth));
@@ -10010,7 +10083,7 @@ function VibeCRM() {
         onPunchIn={officePunchIn} onPunchOut={officePunchOut}
         onEditStaff={(s) => setSheet({ type:"staff", data:s })}
         onEditDriver={(d) => setSheet({ type:"driver", data:d, fromPayroll:true })}
-        onOutstation={(a, on) => setDb(d => ({ ...d, attendance: (d.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }))}
+        onOutstation={setDutyOutstation} onAddDay={addDutyDay} onRemoveDay={removeDutyDay}
         onStaffOut={(staffId, weekEnd, days) => {
           const id = staffId + "_" + weekEnd;
           if (days <= 0) drop("staffOuts", id);
@@ -10106,10 +10179,10 @@ function VibeCRM() {
           const d = (db.drivers || []).find(x => x.id === personId);
           if (!d) return null;
           const { start } = weekRange(weekEnd);
-          const week = (db.attendance || []).filter(a => a.driverId === personId && String(a.date || "") >= start && String(a.date || "") <= weekEnd)
+          const week = effAttendance(db).filter(a => a.driverId === personId && String(a.date || "") >= start && String(a.date || "") <= weekEnd)
             .slice().sort((a, b) => (a.date < b.date ? -1 : 1));
           return <BattaForm person={d} kind="driver" week={week} weekEnd={weekEnd} campaign={note.campaign} batta={note.batta}
-            onToggleDuty={(a, on) => setDb(d2 => ({ ...d2, attendance: (d2.attendance || []).map(x => (x.id === a.id ? { ...x, outstation: on } : x)) }))}
+            onToggleDuty={setDutyOutstation}
             onSetCampaign={onSetCampaign} onSetBatta={onSetBatta} onClose={onClose} />;
         }
         const s = (db.staff || []).find(x => x.id === personId);
