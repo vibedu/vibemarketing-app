@@ -8425,6 +8425,9 @@ function VibeCRM() {
               Object.keys(stageCounts).filter(k => stageCounts[k] > 0).map(k => ({ label: k, value: stageCounts[k], color: STAGE_HEX[k] }))
             } />
           </div>
+          {perm.invoice && (
+            <button className="vz-btn go" style={{ marginTop:0 }} onClick={() => setSheet({ type:"newinvoice" })}>+ Create tax invoice</button>
+          )}
         </>
       )}
       {db.orders.length === 0 && <Empty head="No campaigns yet" sub="Create a campaign and send its quotation to start one." />}
@@ -9096,7 +9099,10 @@ function VibeCRM() {
     );
     return (
       <>
-        <div className="vz-eyebrow">Invoicing pipeline</div>
+        <div className="vz-eyebrow">
+          Invoicing pipeline
+          {perm.invoice && <button onClick={() => setSheet({ type:"newinvoice" })}>+ Create tax invoice</button>}
+        </div>
         <div className="vz-grid" style={{ marginBottom:6 }}>
           <IconStat icon="order" c="orange" label="Awaiting confirmation" value={awaitingConfirm.length} sub="quotations out" />
           <IconStat icon="alert" c={advanceDue.length ? "red" : "ink"} label="Advance to collect" value={advanceDue.length} sub="confirmed, not paid up" />
@@ -10102,6 +10108,64 @@ function VibeCRM() {
       {sheet?.type === "daywise" && (
         <DayWiseSheet db={db} onPdf={buildPayrollPdf} pdfBusy={payDocBusy} onClose={() => setSheet({ type:"attendance" })} />
       )}
+      {/* One list, every campaign with billing left: ready ones raise the
+          invoice right here; blocked ones say which step is missing and
+          offer it — so "make the invoice" never starts with a hunt. */}
+      {sheet?.type === "newinvoice" && (() => {
+        const rows = db.orders.map(o => {
+          const v = vendorOf(o.vendorId);
+          const m = orderMath(o), gate = invoiceGate(o, v);
+          const monthly = billingOf(o, v) === "monthly";
+          const more = monthly ? !!nextSlice(o, v) : !hasInvoice(o);
+          return { o, v, m, gate, monthly, more };
+        }).filter(r => r.more)
+          .sort((a, b) => ((b.gate.ok ? 1 : 0) - (a.gate.ok ? 1 : 0)) || (a.o.created < b.o.created ? 1 : -1));
+        return (
+          <Sheet title="Create a tax invoice" onClose={() => setSheet(null)}>
+            {rows.length === 0 && (
+              <div className="vz-card"><div className="vz-meta">
+                Every campaign is fully invoiced — nothing left to bill. New campaigns appear here once created.
+              </div></div>
+            )}
+            {rows.map(r => (
+              <div className="vz-card" key={r.o.id} style={{ padding:"10px 12px", marginBottom:6 }}>
+                <div className="vz-row" style={{ alignItems:"flex-start" }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="vz-title" style={{ fontSize:13.5 }}>{r.v ? r.v.name : "—"}</div>
+                    <div className="vz-meta">{r.o.title} · {r.o.no}{r.monthly ? " · billed monthly" : ""}</div>
+                  </div>
+                  <b className="vz-money" style={{ fontSize:14 }}>{inr(r.m.total)}</b>
+                </div>
+                {r.gate.ok ? (
+                  <div className="vz-inline" style={{ marginTop:7, flexWrap:"wrap" }}>
+                    <button className="vz-chip c-green" onClick={() => { setSheet(null); openInvoice(r.o); }}>Raise tax invoice</button>
+                    <button className="vz-chip c-grey" onClick={() => { setSheet(null); setOpenOrder(r.o.id); }}>Open campaign</button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="vz-meta" style={{ color:"#8A6100", marginTop:6 }}>{r.gate.why}</div>
+                    <div className="vz-inline" style={{ marginTop:7, flexWrap:"wrap" }}>
+                      {!isConfirmed(r.o) && perm.campaign && (
+                        <button className="vz-chip c-green" onClick={() => setSheet({ type:"confirm", orderId:r.o.id })}>Record confirmation</button>
+                      )}
+                      {isConfirmed(r.o) && perm.campaign && (
+                        <button className="vz-chip c-blue" onClick={() => put("orders", { ...r.o, stage: r.monthly ? "Running" : "Completed" })}>
+                          {r.monthly ? "Mark campaign running" : "Mark campaign completed"}
+                        </button>
+                      )}
+                      <button className="vz-chip c-grey" onClick={() => { setSheet(null); setOpenOrder(r.o.id); }}>Open campaign</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+            <div className="vz-meta">
+              A tax invoice needs the customer's confirmation recorded and the work under way — running for
+              monthly billing, completed for one-time billing. Anything not ready shows its missing step above.
+            </div>
+          </Sheet>
+        );
+      })()}
       {sheet?.type === "expenses" && (
         <ExpensesSheet db={db} vehOf={vehOf} onClose={() => setSheet(null)}
           onAdd={() => setSheet({ type:"expense" })}
