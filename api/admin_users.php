@@ -11,7 +11,7 @@
 require __DIR__ . '/db.php';
 require_director();
 
-const ADMIN_ROLES = ['Director', 'Finance'];
+const ADMIN_ROLES = ['Director', 'Finance', 'Field manager'];
 
 /* Say plainly when the role column hasn't been added yet, rather than dying
    with an empty 500 that reaches the app as "could not load". */

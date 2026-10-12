@@ -571,7 +571,11 @@ const ROLES = {
      Home and Field are also on (read-only, like Fleet) so she has the
      same control-room overview and field-proof feed as everyone else. */
   "Finance":       { tabs:["money","vendors","orders","fleet","home","field"],  money:true, settings:true, users:false, fleetEdit:false, del:true,  invoice:true,  campaign:true, renewals:false },
-  "Field manager": { tabs:["home","orders","field","fleet"],                   money:false, settings:false, users:false, fleetEdit:true, del:true,  invoice:false, campaign:true, renewals:true },
+  /* The manager runs sales as well as the field (Suresh, Oct 2026): he
+     raises proforma and tax invoices, records collections, and watches
+     client balances — so money and invoicing are on, full visibility,
+     same as Finance. Settings stay the admin's job, so settings is off. */
+  "Field manager": { tabs:["home","vendors","orders","field","fleet","money"], money:true,  settings:false, users:false, fleetEdit:true, del:true,  invoice:true,  campaign:true, renewals:true },
 };
 // office roles a Director can assign to office users
 const ROLE_NAMES = ["Director", "Finance", "Field manager"];
@@ -627,7 +631,6 @@ const fyLabel = (d) => {
 };
 const invSeq = (n) => +String(n == null ? "" : n).split("/").pop() || 0;
 
-const roleOf = (u) => ROLES[u && u.role] || ROLES["Field manager"];
 const addMonths = (iso, n) => {
   const p = String(iso || today()).slice(0, 10).split("-").map(Number);
   let y = p[0], mo = p[1] - 1 + n;
@@ -3394,6 +3397,7 @@ function OfficeUsersSheet({ setToast, onClose }) {
       <F label="Role">
         <select value={f.role} onChange={e => set({ ...f, role: e.target.value })}>
           <option value="Finance">Finance — customers, campaigns, money and GST</option>
+          <option value="Field manager">Manager — sales, invoices, money and fleet; no settings or logins</option>
           <option value="Director">Director — everything, including these logins</option>
         </select>
       </F>
@@ -7684,7 +7688,7 @@ function VibeCRM() {
   /* The payment rule is strict, so it gets the one alert in the app meant to
      be heard: a chime the moment a campaign becomes due or overdue on its
      advance or its midpoint balance, for whoever can actually chase the
-     money — a Field manager has no money permission and never sees this.
+     money — any role without the money permission never sees this.
      The chime fires once per distinct set of urgent campaigns, not once per
      poll tick, so it does not nag on every 15-second sync; it fires again
      the moment the set changes, whether that is a new campaign falling
@@ -8185,7 +8189,7 @@ function VibeCRM() {
       {/* We do not run on credit. This sits above everything else on Home,
           in full — customer, campaign, vehicles, dates, what is short — so
           it cannot be scrolled past the way a badge can be ignored. Only
-          whoever can act on money sees it; a Field manager has none. */}
+          whoever can act on money sees it. */}
       {perm.money && stats.paymentAlerts.some(a => a.level === "overdue") && (
         <div className="vz-card" style={{ background:"#FFF6F6", borderColor:"#E5484D", borderWidth:2 }}>
           <div className="vz-row" style={{ marginBottom:2 }}>
